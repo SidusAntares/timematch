@@ -51,6 +51,8 @@ class LTAE(nn.Module):
         super(LTAE, self).__init__()
         self.in_channels = in_channels
         self.n_neurons = copy.deepcopy(n_neurons)
+        self.T = T
+        self.max_position = max_position
         self.max_temporal_shift = max_temporal_shift
 
         if d_model is not None:
@@ -81,9 +83,31 @@ class LTAE(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
+    def _resize_positional_encoding_if_needed(self, positions):
+        min_pos = int(positions.min().item())
+        max_pos = int(positions.max().item())
+        required_shift = max(
+            self.max_temporal_shift,
+            -min_pos,
+            max(0, max_pos - (self.max_position - 1)),
+        )
+
+        if required_shift <= self.max_temporal_shift:
+            return
+
+        self.max_temporal_shift = required_shift
+        table = get_positional_encoding(
+            self.max_position + 2 * self.max_temporal_shift,
+            self.d_model,
+            T=self.T,
+        ).to(self.positional_enc.weight.device)
+        self.positional_enc = nn.Embedding.from_pretrained(table, freeze=True)
+
     def forward(self, x, positions, return_att=False):
         if self.inconv is not None:
             x = self.inconv(x)
+
+        self._resize_positional_encoding_if_needed(positions)
         enc_output = x + self.positional_enc(positions + self.max_temporal_shift)
 
         enc_output, attn = self.attention_heads(enc_output)
