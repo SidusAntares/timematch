@@ -5,6 +5,7 @@ from copy import deepcopy
 
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils import data
 from torchvision import transforms
@@ -76,17 +77,30 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         loss_meter = AverageMeter()
 
         if config.estimate_shift:
-            estimated_class_distr = estimate_class_distribution(all_pseudo_labels, config.num_classes)
+            confident_pseudo_labels = np.array([])
+            if 'all_pseudo_labels' in locals():
+                pseudo_labels_np = np.array(all_pseudo_labels)
+                pseudo_mask_np = np.array(all_pseudo_mask, dtype=bool) if 'all_pseudo_mask' in locals() else None
+                if pseudo_mask_np is not None and len(pseudo_mask_np) == len(pseudo_labels_np):
+                    confident_pseudo_labels = pseudo_labels_np[pseudo_mask_np]
+                elif len(pseudo_labels_np) > 0:
+                    confident_pseudo_labels = pseudo_labels_np
+
+            if len(confident_pseudo_labels) > 0:
+                estimated_class_distr = estimate_class_distribution(confident_pseudo_labels, config.num_classes)
+            else:
+                estimated_class_distr = estimate_class_distribution(all_pseudo_labels, config.num_classes)
+
             writer.add_scalar("train/kl_d", kl_divergence(actual_class_distr, estimated_class_distr), epoch)
             target_to_source_shift = estimate_temporal_shift(teacher,
                     target_loader_no_aug, device, estimated_class_distr,
                     min_shift=min_shift, max_shift=max_shift, sample_size=config.sample_size,
                     shift_estimator=config.shift_estimator)
+            if config.shift_source:
+                source_to_target_shift = -target_to_source_shift
+            else:
+                source_to_target_shift = 0
             if epoch == 0:
-                if config.shift_source:
-                    source_to_target_shift = -target_to_source_shift
-                else:
-                    source_to_target_shift = 0
                 min_shift, max_shift = min(target_to_source_shift, 0), max(0, target_to_source_shift)
             writer.add_scalar("train/temporal_shift", target_to_source_shift, epoch)
 
@@ -165,16 +179,17 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         if config.run_validation:
             if config.output_student:
                 student.eval()
-                best_f1 = validation(best_f1, None, config, criterion, device, epoch, student, val_loader, writer)
+                best_f1 = validation(best_f1, best_model_path, config, criterion, device, epoch, student, val_loader, writer)
             else:
                 teacher.eval()
-                best_f1 = validation(best_f1, None, config, criterion, device, epoch, teacher, val_loader, writer)
+                best_f1 = validation(best_f1, best_model_path, config, criterion, device, epoch, teacher, val_loader, writer)
 
-    # Save model final model 
-    if config.output_student:
-        torch.save({'state_dict': student.state_dict()}, best_model_path)
-    else:
-        torch.save({'state_dict': teacher.state_dict()}, best_model_path)
+    # If validation is disabled, fall back to the final epoch weights.
+    if not config.run_validation:
+        if config.output_student:
+            torch.save({'state_dict': student.state_dict()}, best_model_path)
+        else:
+            torch.save({'state_dict': teacher.state_dict()}, best_model_path)
 
 def estimate_class_distribution(labels, num_classes):
     return np.bincount(labels, minlength=num_classes) / len(labels)
@@ -182,8 +197,32 @@ def estimate_class_distribution(labels, num_classes):
 def kl_divergence(actual, estimated):
     return np.sum(actual * (np.log(actual + 1e-5) - np.log(estimated + 1e-5)))
 
+def sync_teacher_temporal_encoder(student, teacher):
+    student_encoder = getattr(student, "temporal_encoder", None)
+    teacher_encoder = getattr(teacher, "temporal_encoder", None)
+
+    if student_encoder is None or teacher_encoder is None:
+        return
+
+    student_positional_enc = getattr(student_encoder, "positional_enc", None)
+    teacher_positional_enc = getattr(teacher_encoder, "positional_enc", None)
+
+    if student_positional_enc is None or teacher_positional_enc is None:
+        return
+
+    if teacher_positional_enc.weight.shape == student_positional_enc.weight.shape:
+        teacher_encoder.max_temporal_shift = student_encoder.max_temporal_shift
+        return
+
+    teacher_encoder.max_temporal_shift = student_encoder.max_temporal_shift
+    teacher_encoder.positional_enc = nn.Embedding.from_pretrained(
+        student_positional_enc.weight.detach().clone(),
+        freeze=True,
+    ).to(student_positional_enc.weight.device)
+
 @torch.no_grad()
 def update_ema_variables(model, ema, decay=0.99):
+    sync_teacher_temporal_encoder(model, ema)
     for ema_v, model_v in zip(ema.state_dict().values(), model.state_dict().values()):
         ema_v.copy_(decay * ema_v + (1. - decay) * model_v)
 
@@ -195,16 +234,23 @@ def get_data_loaders(splits, config, balance_source=True):
         ToTensor(),
     ])
 
-    strong_aug = transforms.Compose([
-            RandomSamplePixels(config.num_pixels),
-            RandomSampleTimeSteps(config.seq_length),
-            RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
-            Normalize(),
-            ToTensor(),
+    source_aug = transforms.Compose([
+        RandomSamplePixels(config.num_pixels),
+        RandomSampleTimeSteps(config.seq_length),
+        Normalize(),
+        ToTensor(),
+    ])
+
+    target_strong_aug = transforms.Compose([
+        RandomSamplePixels(config.num_pixels),
+        RandomSampleTimeSteps(config.seq_length),
+        RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
+        Normalize(),
+        ToTensor(),
     ])
 
     source_dataset = PixelSetData(config.data_root, config.source,
-            config.classes, strong_aug,
+            config.classes, source_aug,
             indices=splits[config.source]['train'],)
 
     if balance_source:
@@ -237,7 +283,7 @@ def get_data_loaders(splits, config, balance_source=True):
             indices=splits[config.target]['train'])
 
     strong_dataset = deepcopy(target_dataset)
-    strong_dataset.transform = strong_aug
+    strong_dataset.transform = target_strong_aug
     weak_dataset = deepcopy(target_dataset)
     weak_dataset.transform = weak_aug
     target_dataset_weak_strong = TupleDataset(weak_dataset, strong_dataset)
@@ -306,7 +352,10 @@ def estimate_temporal_shift(model, target_loader, device, class_distribution=Non
 
     # shift_f1_scores = [f1_score(labels, shift_predictions, num_classes) for shift_predictions in all_shift_predictions]
     shift_acc_scores = [(labels == predictions).mean() for predictions in np.moveaxis(shift_predictions, 0, 1)]
-    print(f"Most accurate shift {shifts[np.argmax(shift_acc_scores)]} with {np.max(shift_acc_scores):.3f}")
+    best_acc_idx = int(np.argmax(shift_acc_scores))
+    best_acc_shift = shifts[best_acc_idx]
+    best_acc_score = float(np.max(shift_acc_scores))
+    print(f"Most accurate shift {best_acc_shift} with {best_acc_score:.3f}")
 
     p_yx = shift_softmaxes # (N, n_shifts, n_classes)
     p_y = shift_softmaxes.mean(axis=0)  # (n_shifts, n_classes)
@@ -344,10 +393,30 @@ def estimate_temporal_shift(model, target_loader, device, class_distribution=Non
         kl_d = np.sum(c_train * (np.log(c_train + 1e-5) - np.log(one_hot_p_y + 1e-5)), axis=1)
         entropy = np.mean(np.sum(-p_yx * np.log(p_yx + 1e-5), axis=2), axis=0)
         am = kl_d + entropy
-        shift_indices_ranked = np.argsort(am)  # min is best
-        best_shift_idx = shift_indices_ranked[0]
+        acc_scores = np.array(shift_acc_scores)
+        # Keep AM from jumping to a far-away shift when several candidates have similar
+        # classification quality. We only search among shifts close to the best accuracy.
+        acc_margin = 0.02
+        candidate_indices = np.where(acc_scores >= best_acc_score - acc_margin)[0]
+        if len(candidate_indices) == 0:
+            candidate_indices = np.array([best_acc_idx])
+
+        local_radius = 6
+        candidate_indices = np.array([
+            idx for idx in candidate_indices
+            if abs(shifts[idx] - best_acc_shift) <= local_radius
+        ])
+        if len(candidate_indices) == 0:
+            candidate_indices = np.array([best_acc_idx])
+
+        best_local = candidate_indices[np.argmin(am[candidate_indices])]
+        best_shift_idx = int(best_local)
         best_shift = shifts[best_shift_idx]
-        print(f"Best AM Score shift {best_shift} with accuracy {shift_acc_scores[best_shift_idx]:.3f}")
+        candidate_shifts = [shifts[idx] for idx in candidate_indices.tolist()]
+        print(
+            f"Best AM Score shift {best_shift} with accuracy {shift_acc_scores[best_shift_idx]:.3f} "
+            f"(candidates near accuracy peak: {candidate_shifts})"
+        )
 
         return best_shift
     elif shift_estimator == 'ACC':  # for upperbound comparison

@@ -29,7 +29,6 @@ from utils.metrics import overall_classification_report
 from utils.train_utils import AverageMeter, bool_flag, to_cuda
 
 
-
 def main(config):
     random.seed(config.seed)
     np.random.seed(config.seed)
@@ -37,7 +36,8 @@ def main(config):
     device = torch.device(config.device)
 
     # Select classes that appear at least 200 times source
-    source_classes = label_utils.get_classes(cfg.source.split('/')[0], combine_spring_and_winter=cfg.combine_spring_and_winter)
+    source_classes = label_utils.get_classes(cfg.source.split('/')[0],
+                                             combine_spring_and_winter=cfg.combine_spring_and_winter)
     source_data = PixelSetData(cfg.data_root, cfg.source, source_classes)
     labels, counts = np.unique(source_data.get_labels(), return_counts=True)
     source_classes = [source_classes[i] for i in labels[counts >= 200]]
@@ -46,8 +46,10 @@ def main(config):
     cfg.num_classes = len(source_classes)
 
     # Randomly assign parcels to train/val/test
-    indices = {config.source: len(source_data), config.target: len(PixelSetData(config.data_root, config.target, source_classes))}
-    folds = create_train_val_test_folds([config.source, config.target], config.num_folds, indices, config.val_ratio, config.test_ratio)
+    indices = {config.source: len(source_data),
+               config.target: len(PixelSetData(config.data_root, config.target, source_classes))}
+    folds = create_train_val_test_folds([config.source, config.target], config.num_folds, indices, config.val_ratio,
+                                        config.test_ratio)
 
     if config.overall:
         overall_performance(config)
@@ -72,7 +74,7 @@ def main(config):
             model = PseGru(input_dim=config.input_dim, num_classes=config.num_classes, with_extra=config.with_extra)
         else:
             raise NotImplementedError()
-        
+
         model.to(config.device)
 
         best_model_path = os.path.join(config.fold_dir, 'model.pt')
@@ -81,12 +83,12 @@ def main(config):
             print(model)
             print('Number of trainable parameters:', get_num_trainable_params(model))
 
-            if os.path.isfile(best_model_path):
-                answer = input(f'Model already exists at {best_model_path}! Override y/[n]? ')
-                override = strtobool(answer) if len(answer) > 0 else False
-                if not override:
-                    print('Skipping fold', fold_num)
-                    continue
+            # if os.path.isfile(best_model_path):
+            #     answer = input(f'Model already exists at {best_model_path}! Override y/[n]? ')
+            #     override = strtobool(answer) if len(answer) > 0 else False
+            #     if not override:
+            #         print('Skipping fold', fold_num)
+            #         continue
 
             writer = SummaryWriter(log_dir=f'{config.tensorboard_log_dir}_fold{fold_num}', purge_step=0)
             if config.method == 'timematch':
@@ -109,7 +111,8 @@ def main(config):
 
         test_metrics = evaluation(model, test_loader, device, config.classes, mode='test')
 
-        print(f"Test result for {config.experiment_name}: accuracy={test_metrics['accuracy']:.4f}, f1={test_metrics['macro_f1']:.4f}")
+        print(
+            f"Test result for {config.experiment_name}: accuracy={test_metrics['accuracy']:.4f}, f1={test_metrics['macro_f1']:.4f}")
         print(test_metrics['classification_report'])
 
         save_results(test_metrics, config)
@@ -120,9 +123,11 @@ def main(config):
 def get_num_trainable_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+
 def get_dataset_size(data_root, dataset):
     dir = os.path.join(data_root, dataset)
     return len([name for name in os.listdir(os.path.join(dir, 'data')) if name.endswith('.zarr')])
+
 
 def train_supervised(model, config, writer, splits, val_loader, device, best_model_path):
     model.to(device)
@@ -133,7 +138,8 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
     train_transform = transforms.Compose([
         RandomSamplePixels(config.num_pixels),
         RandomSampleTimeSteps(config.seq_length),
-        RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
+        RandomTemporalShift(max_shift=config.max_shift_aug,
+                            p=config.shift_aug_p) if config.with_shift_aug else Identity(),
         Normalize(),
         ToTensor(),
     ])
@@ -141,7 +147,8 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
     if config.train_on_target:
         dataset_name = config.target
 
-    dataset = PixelSetData(config.data_root, dataset_name, config.classes, train_transform, splits[dataset_name]['train'])
+    dataset = PixelSetData(config.data_root, dataset_name, config.classes, train_transform,
+                           splits[dataset_name]['train'])
     data_loader = create_train_loader(dataset, config.batch_size, config.num_workers)
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
 
@@ -236,7 +243,7 @@ def overall_performance(config):
         cm = pkl.load(open(os.path.join(fold_dir, f'conf_mat_{target_name}.pkl'), 'rb'))
         cms.append(cm)
 
-    for i,row in enumerate(np.mean(cms, axis=0)):
+    for i, row in enumerate(np.mean(cms, axis=0)):
         print(config.classes[i], row.astype(int))
 
     print(f'Overall result across {config.num_folds} folds:')
@@ -257,26 +264,29 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # Setup parameters
-    parser.add_argument('--data_root', default='/media/data/timematch_data', type=str,
+    parser.add_argument('--data_root', default='/data/user/DBL/timematch_data', type=str,
                         help='Path to datasets root directory')
-    parser.add_argument('--num_blocks', default=100, type=int, help='Number of geographical blocks in dataset for splitting. Default 100.')
+    parser.add_argument('--num_blocks', default=100, type=int,
+                        help='Number of geographical blocks in dataset for splitting. Default 100.')
 
     available_tiles = ['denmark/32VNH/2017', 'france/30TXT/2017', 'france/31TCJ/2017', 'austria/33UVP/2017']
 
     parser.add_argument('--source', default='denmark/32VNH/2017', help='source dataset', choices=available_tiles)
     parser.add_argument('--target', default='france/30TXT/2017', help='target dataset', choices=available_tiles)
-    parser.add_argument('--num_folds', default=3, type=int, help='Number of train/test folds for cross validation')
+    parser.add_argument('--num_folds', default=1, type=int, help='Number of train/test folds for cross validation')
     parser.add_argument("--val_ratio", default=0.1, type=float,
                         help='Ratio of training data to use for validation. Default 10%.')
     parser.add_argument("--test_ratio", default=0.2, type=float,
                         help='Ratio of training data to use for testing. Default 20%.')
-    parser.add_argument('--sample_pixels_val', type=bool_flag, default=True, help='speed up validation at the cost of randomness')
+    parser.add_argument('--sample_pixels_val', type=bool_flag, default=True,
+                        help='speed up validation at the cost of randomness')
     parser.add_argument('--output_dir', default='outputs', help='Path to the folder where the results should be stored')
     parser.add_argument('-e', '--experiment_name', default=None, help='Name of the experiment')
     parser.add_argument('--num_workers', default=8, type=int, help='Number of data loading workers')
-    parser.add_argument('--seed', default=1, type=int, help='Random seed')
+    parser.add_argument('--seed', default=111, type=int, help='Random seed')
     parser.add_argument('--device', default='cuda', type=str, help='Name of device to use for tensor computations')
-    parser.add_argument('--log_step', default=10, type=int, help='Interval in batches between display of training metrics')
+    parser.add_argument('--log_step', default=10, type=int,
+                        help='Interval in batches between display of training metrics')
     parser.add_argument('--eval', action='store_true', help='run only evaluation')
     parser.add_argument('--overall', action='store_true', help='print overall results, if exists')
     parser.add_argument('--combine_spring_and_winter', default=False, type=bool_flag)
@@ -288,17 +298,23 @@ if __name__ == '__main__':
     parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight decay rate')
     parser.add_argument('--focal_loss_gamma', default=1.0, type=float, help='gamma value for focal loss')
     parser.add_argument('--num_pixels', default=64, type=int, help='Number of pixels to sample from the input sample')
-    parser.add_argument('--seq_length', default=30, type=int, help='Number of time steps to sample from the input sample')
+    parser.add_argument('--seq_length', default=30, type=int,
+                        help='Number of time steps to sample from the input sample')
     parser.add_argument('--model', default='pseltae', choices=['psetae', 'pseltae', 'psetcnn', 'psegru'])
     parser.add_argument('--input_dim', default=10, type=int, help='Number of channels of input sample')
-    parser.add_argument('--with_extra', default=False, type=bool_flag, help='whether to input extra geometric features to the PSE')
+    parser.add_argument('--with_extra', default=False, type=bool_flag,
+                        help='whether to input extra geometric features to the PSE')
     parser.add_argument('--tensorboard_log_dir', default='runs')
-    parser.add_argument('--train_on_target', default=False, action='store_true', help='supervised training on target for upper bound comparison')
+    parser.add_argument('--train_on_target', default=False, action='store_true',
+                        help='supervised training on target for upper bound comparison')
 
     # TODO 
-    parser.add_argument('--with_shift_aug', default=True, action='store_true', help='whether to apply random temporal shift augmentation')
-    parser.add_argument('--shift_aug_p', default=1.0, type=float, help='probability to apply temporal shift augmentation')
-    parser.add_argument('--max_shift_aug', default=60, type=int, help='highest shift to apply for temporal shift augmentation')
+    parser.add_argument('--with_shift_aug', default=True, action='store_true',
+                        help='whether to apply random temporal shift augmentation')
+    parser.add_argument('--shift_aug_p', default=1.0, type=float,
+                        help='probability to apply temporal shift augmentation')
+    parser.add_argument('--max_shift_aug', default=60, type=int,
+                        help='highest shift to apply for temporal shift augmentation')
 
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')
@@ -341,31 +357,36 @@ if __name__ == '__main__':
     alda.add_argument('--epochs', default=20, type=int, help='Number of epochs per fold')
     alda.add_argument('--lr', default=0.001, type=float, help='Learning rate')
     alda.add_argument("--trade_off", default=1.0, type=float, help='weight of adversarial loss')
-    alda.add_argument("--pseudo_threshold", default=0.7, type=float, help='confidence threshold for assigning pseudo labels')
-
+    alda.add_argument("--pseudo_threshold", default=0.7, type=float,
+                      help='confidence threshold for assigning pseudo labels')
 
     # TimeMatch
     timematch = subparsers.add_parser('timematch')
     timematch.add_argument('--weights', type=str, help='path to source trained model weights')
     timematch.add_argument('--lr', default=0.0001, type=float, help='Learning rate')
-    timematch.add_argument("--pseudo_threshold", default=0.9, type=float, help='confidence threshold for assigning pseudo labels')
+    timematch.add_argument("--pseudo_threshold", default=0.9, type=float,
+                           help='confidence threshold for assigning pseudo labels')
     timematch.add_argument("--ema_decay", default=0.9999, type=float, help='decay rate for mean teacher')
     timematch.add_argument("--trade_off", type=float, default=2.0, help='weight for unsupervised loss')
-    timematch.add_argument("--estimate_shift", type=bool_flag, default=True, help='whether to account for temporal shift')
+    timematch.add_argument("--estimate_shift", type=bool_flag, default=True,
+                           help='whether to account for temporal shift')
     timematch.add_argument('--epochs', default=20, type=int, help='Number of epochs per fold')
     timematch.add_argument("--steps_per_epoch", type=int, default=500, help='n steps per epoch')
     timematch.add_argument("--balance_source", type=bool_flag, default=True, help='class balanced batches for source')
     timematch.add_argument("--use_focal_loss", type=bool_flag, default=True, help='use focal loss or cross entropy')
-    timematch.add_argument("--shift_source", type=bool_flag, default=True, help='whether to apply temporal shift to source data')
-    timematch.add_argument("--sample_size", type=int, default=100, help='number of batches to sample for estimating shift')
+    timematch.add_argument("--shift_source", type=bool_flag, default=True,
+                           help='whether to apply temporal shift to source data')
+    timematch.add_argument("--sample_size", type=int, default=100,
+                           help='number of batches to sample for estimating shift')
     timematch.add_argument("--max_temporal_shift", type=int, default=60, help='maximum temporal shift to consider')
-    timematch.add_argument("--domain_specific_bn", type=bool_flag, default=True, help='whether to use domain specific batch normalization')
+    timematch.add_argument("--domain_specific_bn", type=bool_flag, default=True,
+                           help='whether to use domain specific batch normalization')
     timematch.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT'])
-    timematch.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
+    timematch.add_argument('--run_validation', default=True, action='store_true',
+                           help='whether to run validation each epoch')
     timematch.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
 
     cfg = parser.parse_args()
-
 
     # Setup folders based on name
     if cfg.experiment_name is not None:
@@ -375,7 +396,6 @@ if __name__ == '__main__':
     os.makedirs(cfg.output_dir, exist_ok=True)
     for fold in range(cfg.num_folds):
         os.makedirs(os.path.join(cfg.output_dir, 'fold_{}'.format(fold)), exist_ok=True)
-
 
     # write training config to file
     if not cfg.eval:
