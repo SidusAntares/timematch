@@ -43,6 +43,7 @@ write_summary_csv() {
     local source_tag
     local target_tag
     local timestamp
+    local results_root
     local result_dir
     local csv_path
     local target_file_name
@@ -54,7 +55,8 @@ write_summary_csv() {
     source_tag="$(match "$source_path")"
     target_tag="$(match "$target_path")"
     timestamp="$(date +"%Y%m%d_%H%M%S")"
-    result_dir="$SCRIPT_DIR/$source_tag/$target_tag/$timestamp"
+    results_root="$SCRIPT_DIR/result"
+    result_dir="$results_root/$source_tag/$target_tag/$timestamp"
     mkdir -p "$result_dir"
 
     target_file_name="${target_path//\//_}"
@@ -66,8 +68,8 @@ write_summary_csv() {
 
     csv_path="$result_dir/results.csv"
     {
-        echo "timestamp,source_domain,target_domain,source_tag,target_tag,seed,source_experiment,timematch_experiment,source_macro_f1,timematch_macro_f1"
-        echo "$timestamp,$source_path,$target_path,$source_tag,$target_tag,$seed,$source_exp,$timematch_exp,$source_macro_f1,$timematch_macro_f1"
+        echo "source,target,timematch_macro_f1,source_f1,timestamp,source_tag,target_tag,seed,source_experiment,timematch_experiment"
+        echo "$source_path,$target_path,$timematch_macro_f1,$source_macro_f1,$timestamp,$source_tag,$target_tag,$seed,$source_exp,$timematch_exp"
     } > "$csv_path"
 
     echo "[INFO] 实验结果已保存到: $csv_path"
