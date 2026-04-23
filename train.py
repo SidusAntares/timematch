@@ -47,6 +47,7 @@ def main(config):
     print('Using classes:', source_classes)
     cfg.classes = source_classes
     cfg.num_classes = len(source_classes)
+    cfg.unknown_class_idx = source_classes.index('unknown') if 'unknown' in source_classes else None
 
     if config.compute_separability:
         compute_and_save_separability(config)
@@ -280,10 +281,27 @@ def save_results(metrics, config):
     conf_mat = metrics.pop('confusion_matrix')
     class_report = metrics.pop('classification_report')
     target_name = str(config.target).replace('/', '_')
+    metrics['experiment_name'] = config.experiment_name
+    metrics['method'] = config.method
+    metrics['source'] = config.source
+    metrics['target'] = config.target
+    metrics['use_prototype_relation_alignment'] = bool(
+        getattr(config, 'use_prototype_relation_alignment', False)
+    )
+    metrics['pra_trade_off'] = float(getattr(config, 'pra_trade_off', 0.0))
+    metrics['pra_warmup_epochs'] = int(getattr(config, 'pra_warmup_epochs', 0))
+    metrics['pra_min_samples_per_class'] = int(getattr(config, 'pra_min_samples_per_class', 0))
 
     with open(os.path.join(out_dir, f'test_metrics_{target_name}.json'), 'w') as outfile:
         json.dump(metrics, outfile, indent=4)
     with open(os.path.join(out_dir, f'class_report_{target_name}.txt'), 'w') as outfile:
+        outfile.write(
+            f"use_prototype_relation_alignment={getattr(config, 'use_prototype_relation_alignment', False)}\n"
+        )
+        outfile.write(f"pra_trade_off={getattr(config, 'pra_trade_off', 0.0)}\n")
+        outfile.write(f"pra_warmup_epochs={getattr(config, 'pra_warmup_epochs', 0)}\n")
+        outfile.write(f"pra_min_samples_per_class={getattr(config, 'pra_min_samples_per_class', 0)}\n")
+        outfile.write(f"experiment_name={config.experiment_name}\n\n")
         outfile.write(str(class_report))
     pkl.dump(conf_mat, open(os.path.join(out_dir, f'conf_mat_{target_name}.pkl'), 'wb'))
 
@@ -315,7 +333,20 @@ def overall_performance(config):
             print(f"{metric}: {np.mean(values):.1f}±{np.std(values):.1f}")
 
     with open(os.path.join(config.output_dir, f'overall_{target_name}.json'), 'w') as file:
-        file.write(json.dumps(overall_metrics, indent=4))
+        output = {
+            'metrics': overall_metrics,
+            'experiment_name': config.experiment_name,
+            'method': config.method,
+            'source': config.source,
+            'target': config.target,
+            'use_prototype_relation_alignment': bool(
+                getattr(config, 'use_prototype_relation_alignment', False)
+            ),
+            'pra_trade_off': float(getattr(config, 'pra_trade_off', 0.0)),
+            'pra_warmup_epochs': int(getattr(config, 'pra_warmup_epochs', 0)),
+            'pra_min_samples_per_class': int(getattr(config, 'pra_min_samples_per_class', 0)),
+        }
+        file.write(json.dumps(output, indent=4))
 
 
 if __name__ == '__main__':
@@ -445,10 +476,26 @@ if __name__ == '__main__':
     timematch.add_argument('--run_validation', default=True, action='store_true',
                            help='whether to run validation each epoch')
     timematch.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
-    timematch.add_argument("--use_prototype_relation_alignment", type=bool_flag, default=False,
-                           help='align class prototype relation matrices between source and target')
+    timematch.add_argument(
+        "--use_prototype_relation_alignment",
+        "--use_pra",
+        dest="use_prototype_relation_alignment",
+        action="store_true",
+        help='align class prototype relation matrices between source and target',
+    )
+    timematch.add_argument(
+        "--disable_pra",
+        dest="use_prototype_relation_alignment",
+        action="store_false",
+        help='disable prototype relation alignment explicitly',
+    )
+    timematch.set_defaults(use_prototype_relation_alignment=False)
     timematch.add_argument("--pra_trade_off", type=float, default=0.1,
                            help='weight for prototype relation alignment loss')
+    timematch.add_argument("--pra_warmup_epochs", type=int, default=5,
+                           help='number of warmup epochs before enabling prototype relation alignment')
+    timematch.add_argument("--pra_min_samples_per_class", type=int, default=4,
+                           help='minimum number of source and target samples per class within a batch to build PRA prototypes')
 
     cfg = parser.parse_args()
 
