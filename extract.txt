@@ -1,0 +1,1386 @@
+                                                 ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+                                                                 Contents lists available at ScienceDirect
+
+
+                                 ISPRS Journal of Photogrammetry and Remote Sensing
+                                                      journal homepage: www.elsevier.com/locate/isprsjprs
+
+
+
+
+Self-attention and frequency-augmentation for unsupervised domain
+adaptation in satellite image-based time series classification
+David Gackstetter a,b,c              ,∗, Kang Yu a,b          , Marco Körner c
+a
+  Hans Eisenmann-Forum for Agricultural Sciences, Technical University of Munich, Liesel-Beckmann-Str. 2, Freising, 85354, Germany
+b
+  Precision Agriculture Lab, TUM School of Life Sciences, Technical University of Munich, Dürnast 9, Freising, 85354, Germany
+c
+  Chair of Remote Sensing Technology, TUM School of Engineering and Design, Technical University of Munich, Arcisstr. 21, Munich, 80333, Germany
+
+
+
+ARTICLE               INFO                              ABSTRACT
+
+Dataset link: https://doi.org/10.5281/zenodo.6          With the increasing availability of Earth observation data in recent years, the development of deep learning
+866846                                                  algorithms for the classification of satellite image time series (SITS) has substantially progressed. Yet, when
+Keywords:                                               encountering settings of lacking target labels and distinct feature variations, even the latest classification
+Satellite image time series                             algorithms may perform poorly in transferring knowledge from a trained dataset to an unknown target
+Unsupervised domain adaptation                          dataset, despite similar or even identical label sets. The research field of unsupervised domain adaptation
+Transfer learning                                       (UDA) focuses on methods to overcome these challenges by providing algorithms that explicitly learn domain
+Crop type mapping                                       shifts between different data domains in the absence of target-labeled data. Building upon recent advances on
+Deep learning                                           generic UDA research in time series settings, we propose RAINCOAT-SRS, an enhancement of the frequency-
+                                                        augmented UDA-algorithm RAINCOAT specifically for the SITS domain. To evaluate the default and adjusted
+                                                        model variants, we designed several closed-label set, cross-regional and multi-temporal crop type mapping
+                                                        experiments, which represent common sub-problems of UDA in SITS. We first benchmark RAINCOAT against
+                                                        TimeMatch as a leading algorithm in this application context. Subsequently, we explored different encoder-
+                                                        to-decoder constellations as architectural enhancements. These analyses revealed that a combination of an
+                                                        self-attention-based encoder with the default decoder yields a performance increase to the standard algorithm
+                                                        of up to 6 % in average f1-score, and to TimeMatch by up to 24 %. Beyond, we assessed the impact of the
+                                                        frequency feature and SITS-specific feature extensions by integrating weather data, which both showed to
+                                                        improve classification accuracy only in individual sub-experiments however not consistently across the entire
+                                                        scope of scenarios. Finally, we outline key factors influencing the transferability, thereby emphasizing the
+                                                        major importance of domain-overarching stability of class-relative, structural patterns rather than of collective,
+                                                        linear shifts between domains. Through this research, we introduce RAINCOAT-SRS, a novel model for UDA
+                                                        in SITS, designed to advance generalization in remote sensing by enabling more comprehensive cross-regional
+                                                        and multi-temporal SITS experiments in face of lacking target-labeled data.
+
+
+
+1. Introduction                                                                             agricultural crop type mapping, which represents a subset of land
+                                                                                            cover and land use classification, has gained considerable attention
+    Today, medium-resolution Earth observation data has become                              in SITS research due to an abundant amount of labeled data and its
+widely and freely available thanks to the NASA’s Landsat program                            importance for instance for food security (e.g., yield prediction, food-
+(Woodcock et al., 2008) and the European Space Agency’s (ESA)                               security decision-making von Bloh et al., 2023; Woodcock et al., 2008;
+Copernicus program, which provide comprehensive fleets of satellites                        Zeng et al., 2020), or environmental monitoring (Schmeller et al.,
+with increasingly frequent and dense measurement networks for Earth                         2017; Gackstetter et al., 2023). Multi-temporal data allows tracking
+surface observations. This considerable amount of satellite images has
+                                                                                            the phenological stages of crops, which represents the basis for the
+driven the rapid growth of research on satellite image time series
+                                                                                            distinction of crop types (Reed et al., 1994; Vuolo et al., 2018). The core
+(SITS) data and various, related applications from the fields of cli-
+                                                                                            of remote sensing-based crop type mapping consists in training an algo-
+mate change monitoring, disaster management, vegetation monitoring,
+                                                                                            rithm to map relationships between spectral properties and crop types.
+etc. (Bevington and Menounos, 2022; Decuyper et al., 2022; Guha et al.,
+2022; Pongratz et al., 2018; Wardlow and Egbert, 2008). Particularly,                       Traditionally, machine learning methods like support vector machines
+
+
+    ∗ Corresponding author.
+      E-mail address: david.gackstetter@tum.de (D. Gackstetter).
+
+https://doi.org/10.1016/j.isprsjprs.2025.03.024
+Received 15 October 2024; Received in revised form 25 February 2025; Accepted 27 March 2025
+Available online 9 April 2025
+0924-2716/© 2025 The Authors. Published by Elsevier B.V. on behalf of International Society for Photogrammetry and Remote Sensing, Inc. (ISPRS). This is an
+open access article under the CC BY license (http://creativecommons.org/licenses/by/4.0/).
+D. Gackstetter et al.                                                                                   ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+(SVM) and random forests have been used for this purpose (Zheng et al.,                       1. We benchmark the frequency-augmented UDA algorithm RAIN-
+2015; Saini and Ghosh, 2018). In recent years, the growing availability                          COAT on SITS data by evaluating the model against a current
+of SITS data, combined with advances in deep learning, has led to more                           state-of-the-art algorithm on crop classification experiments, and
+advanced crop classifiers utilizing temporal neural architectures such                           explicitly analyze the influence of the frequency component.
+as convolutions (Pelletier et al., 2019; Zhong et al., 2019), recurrent                       2. We evaluate the impact of varying encoder–decoder constella-
+units (Rußwurm and Körner, 2017; Ndikumana et al., 2018), self-                                  tions for RAINCOAT, and consequently present a new, SITS-
+attention (Rußwurm and Körner, 2020; Sainte Fare Garnot et al., 2020),                           optimized model variant RAINCOAT-SRS (Satellite Remote
+or hybrids (Interdonato et al., 2019; Rußwurm and Körner, 2018).                                 Sensing).
+These models are exceptionally well in capturing temporal patterns;
+                                                                                              3. We outline the impact of varying feature settings for SITS and
+they, however, depend heavily on large amounts of labeled training
+                                                                                                 influential determinants for UDA in large-scale, cross-regional
+data. This data is typically gathered through field surveys, which
+are in many places of the world still both labor-intensive and time-                             and cross-temporal crop type mapping problems.
+consuming. Conducting large-scale, multinational surveys can therefore
+be particularly challenging due to additional obstacles resulting from                     2. Related work
+national data access policies and harmonization constraints (Wang
+et al., 2023; Schneider et al., 2023; Gackstetter et al., 2024).                           2.1. Unsupervised domain adaptation
+    Transfer learning is a machine learning approach that aims to
+transfer learned knowledge from a source domain 𝐷𝑠 to related tasks in
+                                                                                               Unsupervised domain adaptation (UDA) aims to overcome domain
+a target domain 𝐷t (Pan and Yang, 2010). Such methods help address
+                                                                                           shift in settings of labeled data from a source domain 𝐷s and unlabeled
+the issue of limited labeled data in the target domain by utilizing in-
+                                                                                           data from a target domain 𝐷t (Tuia et al., 2016; Zhao et al., 2022;
+sights gained from the source domain. A straightforward and pragmatic
+transfer method consists in directly applying models developed in one                      Ma et al., 2024b). UDA models typically feature a conjugated archi-
+domain (e.g., regions) with abundant data to another domain with no                        tecture with dual objectives: one to accomplish the primary learning
+or limited samples. Yet, this method may lead to poor performance                          task (e.g., classification) and the other to mitigate domain shift. The
+due to so-called domain shifts between data domains, which occur when                      primary objective involves training a task-specific model using the
+the distribution of test data (𝐷t ) significantly differs from that of the                 labeled samples from the source domain by minimizing an appropriate
+training data (𝐷s ) (Koh et al., 2021; Luo et al., 2019; Zhang et al.,                     loss function. The secondary objective focuses on the alignment of the
+2013a), leading to challenges in generalizing latent representations                       feature distributions between 𝐷s and 𝐷t to reduce domain shift.
+across the datasets. In crop type mapping these shifts typically originate                     In this dynamic research field, there is constantly new methods
+from variations in meteorological conditions and regionally specific                       enhancing efficiency and effectiveness of UDA. Nevertheless, there are
+farming practices, which potentially causes the spectral characteristics                   some overarching categories that can be identified: Transformation-
+of a same crop type to differ significantly across regions and years (Ma                   based methods aim to project data from both source and target domain
+et al., 2024b; Nyborg et al., 2022).                                                       into a shared subspace where features are transferable (e.g., Transfer
+    To address these issues, transfer learning techniques have been                        Component Analysis (TCA) (Pan et al., 2011)). In contrast, discrepancy-
+developed to adjust models for new target domains by utilizing small                       based approaches focus on reducing the difference in feature distribu-
+sets of labeled data or even unlabeled data from target domains (Ganin
+                                                                                           tions between source and target domains. Methods like Maximum Mean
+et al., 2017; Long et al., 2015; Ma et al., 2024b): Depending on the
+                                                                                           Discrepancy (Othman et al., 2017) or Moment Discrepancy (Zellinger
+classification scheme, domain adaptation (DA) may be denoted a sub-
+                                                                                           et al., 2017) are designed to align source and target features by mini-
+category of transfer learning or a separate category, whereby learned
+                                                                                           mizing their distributional discrepancies. Adversarial-based techniques
+knowledge from a source domain-based model is adapted to a target
+domain, rather than the learned knowledge transferred as in common                         are based on adversarial learning to align source and target domains.
+transfer learning techniques (e.g., fine-tuning, multitask learning, few-                  One prominent example is the Domain-Adversarial Neural Network
+shot learning) (Ma et al., 2024b; Farahani et al., 2021; Wang et al.,                      (DANN) (Ganin et al., 2017), which employs a domain classifier to
+2023). Types of DA range from supervised, via semi- and weakly                             assess domain shifts, while a feature extractor is trained adversari-
+supervised DA, to unsupervised DA (UDA). Specifying the relation of                        ally to produce domain-invariant features. Beyond, generative-based
+label sets 𝐶 in 𝐷s to 𝐷t , it is further distinguished between DA on closed                methods utilize Generative Adversarial Networks (GANs) to achieve the
+(𝐶 s = 𝐶 t ), partial (𝐶 s ⊃ 𝐶 t ), open (𝐶 s ⊂ 𝐶 t ), and universal label (𝐶 s to         transfer between domains (Bellocchio et al., 2020). These approaches
+𝐶 t relation unknown) set problems (Farahani et al., 2021).                                typically involve a generator that transforms source domain data to
+    Domain adaptation represents a challenging problem as an effective                     align with the style of the target domain to reduce domain shift.
+adaptation requires models to learn features that are highly generaliz-                    Lately, self-supervised learning has gained attention as this approach
+able, which is further exacerbated when dealing with time series data.                     showed to further reduce the reliance on source labels, which achieves
+Existing methods for time series DA typically focused on generalizing                      higher label efficiency (Jaiswal et al., 2021; Liu et al., 2021b). Re-
+across domain shifts based on a time series’ time domain, thereby,                         lated DA methods integrate auxiliary self-supervised training tasks to
+however, neglecting the potential of considering also the frequency di-                    learn domain-invariant features through pretext learning tasks like
+mension (Brown et al., 2023; He and Xiao, 2023). Using standard time                       data augmentation and reconstruction, where target objectives can be
+series datasets, He and Xiao (2023) demonstrated with their RAINCOAT
+                                                                                           computed without supervision (Kang et al., 2019; Singh, 2021; Tang
+(fRequency-augmented AlIgN-then-Correct for dOmain Adaptation for
+                                                                                           et al., 2021). The RAINCOAT algorithm, and consequently RAINCOAT-
+Time series) algorithm that UDA in time series classification can be sub-
+                                                                                           SRS, is characterized by components related to self-supervised learning
+stantially improved by explicitly extracting and integrating frequency
+                                                                                           and discrepancy-based methods (He and Xiao, 2023). Beyond, UDA
+features. Beyond, when relating to DA, it is especially UDA problems,
+which entail additional challenges of adapting from a labeled 𝐷s to an                     algorithms may also be sub-divided into single-source and multi-source
+unlabeled 𝐷t . At the same time, effective UDA algorithms offer the                        UDA, which characterizes the number of source domains being inte-
+potential to apply trained models to a wider range of domains and                          grated for the adaptation process (Ren et al., 2022; Zhang et al., 2022).
+problem settings.                                                                          The majority of above-mentioned methods and also the focus of this
+    In this research, we investigate the applicability and improvements                    research is based on single-source approaches; there are, however, also
+of latest advances in generic time series UDA to the domain of SITS                        meaningful multi-source algorithms for time series and specifically crop
+using the example of crop type mapping. Specifically, this study’s                         type mapping to consider (Wang et al., 2023; Wilson et al., 2023; Xu
+contributions are as follows:                                                              et al., 2018; Cheng et al., 2024).
+
+                                                                                     114
+D. Gackstetter et al.                                                                            ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+2.2. Time-series unsupervised domain adaptation                                    3. Methods
+
+
+    Domain adaptation for time series data has received less attention             3.1. Problem formulation
+with only a few methods being explicitly designed for this task. Based
+on the introduced UDA categories 2.1, the following approaches can
+be identified specifically in the context of time series data: Adversar-                We consider a dataset 𝐷 = {(𝒙𝑖 , 𝒚 𝑖 )}𝑛𝑖=1 , composed of 𝑛 multivariate
+ial training methods such as VRADA (Purushotham et al., 2017) use                  time series samples, where each sample 𝒙𝑖 ∈ R𝑇 ×𝑑 represents readings
+variational recurrent neural networks (VRNNs) and employ adversarial               from 𝑑 sensors over 𝑇 time steps. For simplicity, we focus on regular
+techniques to learn features that are invariant across domains. Building           time series. The corresponding labels 𝒚 𝑖 belong to a label set 𝐶, i.e., 𝒚 𝑖 ∈
+                                                                                                                                                       𝑛𝑠
+on this, CoDATS (Wilson et al., 2020) enhances VRADA by integrat-                  𝐶. The source domain dataset is denoted by 𝐷s = {(𝒙s𝑖 , 𝒚 s𝑖 )}𝑖=1     , which
+                                                                                                                         s
+                                                                                   includes 𝑛𝑠 labeled samples, with 𝒙𝑖 as the source domain sample and
+ing a convolutional neural network for feature extraction. Statistical
+                                                                                                                                                 𝑛𝑡
+divergence methods, e.g., SASA (Cai et al., 2021), align the conditional           𝒚 s𝑖 as its label. The target domain dataset, 𝐷t = {(𝒙t𝑖 )}𝑖=1   , contains 𝑛𝑡
+distribution of time series data by minimizing discrepancies in the                unlabeled samples. The label sets for the source and target domains
+associative structure of variables between domains. Other metric-based             are represented by 𝐶 s and 𝐶 t , respectively.
+approaches, like AdvSKM (Liu et al., 2021a) and the work by Ott                         Depending on the type of UDA setting, the overlap in labels between
+et al. (2022), address domain alignment through statistical divergence             the source and target domains varies (see 1). When dealing with a
+considerations. Self-supervised methods such as DAF (Jin et al., 2022)             closed-set domain adaptation problem, as in our case, the label sets
+extract domain-invariant and domain-specific features for forecasting              of 𝐷s and 𝐷t are identical (𝐶 s = 𝐶 t ). Unlike open-set DA, which in-
+by using a shared attention mechanism and reconstruction tasks. Addi-              corporates also shifts in label distributions in the problem formulation,
+tionally, CLUDA (Ozyurt et al., 2022) and CLADA (Wilson et al., 2020)              closed-set DA can neglect the label shift, and uniquely focus on feature
+are contrastive domain adaptation methods that utilize data augmen-                shifts. Feature shift occurs when the marginal distribution of 𝑥 differs
+tations to obtain domain-invariant features for improved prediction.               between domains, i.e., 𝑝s (𝑥) ≠ 𝑝t (𝑥), while the conditional distributions
+Going beyond the sole time feature, He and Xiao (2023) proposed                    remain the same, 𝑝s (𝒚|𝒙) = 𝑝t (𝒚|𝒙) (Zhang et al., 2013b). In SITS,
+the RAINCOAT (fRequency-augmented AlIgN-then-Correct for dOmain                    these shifts can result for instance from variations in sensor setups or,
+Adaptation for Time series) algorithm, a domain adaptation method                  specifically in the context of crop type mapping, from variations in
+for time series data that explicitly models the frequency dimension as             plant growth being influenced by weather or farming practices (He and
+additional domain-invariant feature category (see also 3.3).                       Xiao, 2023; Nyborg et al., 2022; Wang et al., 2023, 2021). A distinctive
+                                                                                   characteristic of time series data is that feature shifts can occur both
+2.3. Unsupervised domain adaptation in crop type mapping                           in the time and frequency domains (see 3.3). Other then that, the
+                                                                                   problem situation is identical to the generic form with the target labels
+    Representing a sub-problem of general time series analysis, research           𝒚 𝑡 not being available during training, and the aim to train a classifier
+on SITS and crop type mapping can inspire by general UDA literature,               𝑓 on 𝐷s that generalizes well to 𝐷t , The goal is to minimize the
+but may also be required to develop own solutions due to domain                    classification risk on 𝐷t , expressed as E(𝒙𝑖 ,𝒚 𝑖 )∼𝐷t [𝐿𝐶 (𝑓 (𝒙𝑖 ), 𝒚 𝑖 )], where
+specific characteristics and challenges. The deep adaptation network               𝐿𝐶 is a classification loss function. Within this study, the classification
+(DAN) by Long et al. (2015) represented a milestone in general UDA re-             task consists in classifying sequences of multispectral satellite images
+                                                                                     𝑠∕𝑡
+search. Using a deep neural network, they showed an effective method               𝒙𝑖 into one of 𝐾 ∈ N crop types.
+to overcome the negative impact of domain shift by aligning feature
+distributions between source and target domains, thereby setting the
+basis for several successor models: Bejiga et al. (2019) developed a               3.2. Discrete Fourier Transform
+Domain-Adversarial Neural Network (DANN) for mapping vegetation
+across Europe using Landsat−8 imagery. Martini et al. (2021) further                  For a sampled series 𝑥 with 𝑑 sensor channels and 𝑇 time steps,
+advanced DANN by replacing its feature extractor with a transformer                the transformation to the frequency space is performed by applying
+encoder, which was implemented on Sentinel-2 time-series data for                  the one-dimensional Discrete Fourier Transform (DFT) of length 𝑇
+crop classification. Building upon this, Wang et al. (2023) introduced             to each channel, followed by its inverse transformation using the
+the Deep Adaptation Crop Classification Network (DACCN). They de-                  one-dimensional inverse DFT. These are defined as follows:
+veloped more effective feature extractors and employed a method
+                                                                                                              𝑇∑
+                                                                                                               −1
+to minimize the domain shift between source and target in time-                                                                 𝑚𝑡
+                                                                                   Forward DFT: 𝑣(𝑚) =              𝑥(𝑡) ⋅ 𝑒−𝑖2𝜋 𝑇
+series of Sentinel-2 images. Lucas et al. (2020) identified that current                                      𝑡=0
+UDA techniques, including those aimed at ensuring domain-invariant                                                                                                (1)
+                                                                                                                 𝑇∑
+                                                                                                                  −1
+                                                                                                              1                 𝑚𝑡
+features (Gong et al., 2012; Fernando et al., 2013), struggle with cross-           Inverse DFT: 𝑥(𝑛) =             𝑣(𝑚) ⋅ 𝑒𝑖2𝜋 𝑇
+                                                                                                              𝑇 𝑡=0
+region UDA for SITS, which, among others, originates from temporal
+shifts and differences in class distributions between regions. In response         with 𝑇 representing the number of time steps, 𝑛 the current time index,
+to these issues, Wang et al. (2021) developed the Phenology Alignment              and the frequency index 𝑚 ∈ [0, 𝑇 − 1] (Bhattacharyya et al., 2019;
+Network (PAN) — the first method specifically designed for cross-                  Vetterli et al., 2018). The amplitude and phase extracted from 𝑣(𝑚) are
+regional UDA of SITS. PAN incorporates Maximum Mean Discrepancy                    expressed as follows:
+(MMD) (Tzeng et al., 2014) and employs a feature extractor that                                       √
+combines gated recurrent units with self-attention mechanisms. Nyborg                       |𝑣(𝑚)|     Re(𝑣(𝑚))2 + Im(𝑣(𝑚))2
+                                                                                   𝑎(𝑚) =          =
+et al. (2022) stated that the majority of methods were adapted for                            𝑇                 𝑇                                      (2)
+extracting domain-invariant features, but did not specifically address             𝑝(𝑚) = atan2 (Im(𝑣(𝑚)), Re(𝑣(𝑚)))
+the temporal shifts encountered in SITS-based crop type mapping.                       Im(𝑣(𝑚)) and Re(𝑣(𝑚)) denote the imaginary and real components
+They tackled this shortcoming by explicitly combining temporal shift               of the complex number 𝑣(𝑚), respectively. atan2 refers to the two-
+estimation with self-training, using pseudo-labels generated based on              argument arctangent function (Bhattacharyya et al., 2019; Vetterli
+the estimated shift.                                                               et al., 2018).
+
+                                                                             115
+D. Gackstetter et al.                                                                                         ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+                                                                                                The latent representation 𝒛𝑖 is finally formed by concatenating the
+                                                                                                frequency and time features [𝒆𝐹 ,𝑖 ; 𝒆𝑇 ,𝑖 ].
+                                                                                                    Domain Alignment of Time-Frequency Features via Sinkhorn Divergence:
+                                                                                                Aligning features between source and target domains is challenging
+                                                                                                when their distributions have disjoint supports. Traditional metrics
+                                                                                                like Kullback–Leibler divergence are assessed as inadequate in these
+                                                                                                scenarios (Feydy et al., 2019), as they become unstable when the
+                                                                                                supports do not overlap. The commonly applied maximum mean dis-
+                                                                                                crepancy (MMD) (Arbel et al., 2019), attempts to address the issue
+                                                                                                of non-overlapping supports by taking into account the geometry of
+                                                                                                the distributions. It shows, however, sensitive towards vanishing gra-
+                                                                                                dients and other similar effects, leading to lower adaptation perfor-
+                                                                                                mances. RAINCOAT attempts to overcome these issues by employing
+                                                                                                Sinkhorn divergence, an entropy-regularized optimal transport distance
+                                                                                                that is well-suited for comparing distributions with disjoint supports.
+                                                                                                By minimizing the domain alignment loss based on the Sinkhorn diver-
+Fig. 1. Exemplary illustration of a dynamic signal of period length 𝑇 in the time
+                                                                                                gence RAINCOAT shows to improve alignment quality between source
+dimension (with absolute value 𝑦 and time step 𝑡), and it is related frequency
+dimension (with absolute value 𝑏𝑛 and frequency 𝑓𝑛 ) derived through a Discrete Fourier         features (𝒛s𝑖 ) and target features (𝒛t𝑖 ).
+Transformation (Neutelings, 2021).
+                                                                                                3.4. RAINCOAT for SITS
+
+3.3. RAINCOAT algorithm                                                                         3.4.1. Architectural enhancements
+                                                                                                      Recent studies in SITS related classification problems have focused
+    The RAINCOAT algorithm represents an unsupervised method for                                on incorporating generic time series algorithms into this specific do-
+closed-set and universal domain adaptation (UniDA) in time series                               main. That included for instance the classification models’ evolution
+data (He and Xiao, 2023). Consequently, RAINCOAT addresses shifts                               starting with the implementation of CNNs via LSTMs to Visual Trans-
+in both feature and label distributions across domains. To reveal addi-                         formers as today’s state-of-the-art (Siesto et al., 2021; Rußwurm and
+tional, invariant features across domains for improved transferability,                         Körner, 2017; Sainte Fare Garnot et al., 2020). The RAINCOAT im-
+the RAINCOAT algorithm encodes both time and frequency features in                              plements an encoder–decoder constellation in its architecture, which
+its latent representations. The method is composed of three integral                            serves the embedding and reproduction of the most relevant seman-
+modules: a time-frequency encoder (𝐺TF ), a classifier (𝐻), and an auxil-                       tic time series features (sequence-to-sequence). Both the encoder and
+iary decoder (𝑈TF ). Unfortunately, using the provided implementation                           decoder are hereby based on convolutional layers. Given that CNN-
+of the RAINCOAT’s UniDA version, the article’s results could not be                             based layers are shown to be inferior in SITS problems for some time,
+reproduced, which is among others, why we focus on the closed-set                               we aim to benefit from the given methodological advances and conse-
+scenario and neglect the UniDA related parts in the following.                                  quently study LSTMs and self-attention-based algorithms as alternatives
+    Addressing Frequency Shift : The frequency shift is formalized as a                         to the default encoder–decoder constellation. The following introduces
+type of feature shift where the frequency components differ between                             the methodological background to the architectural components being
+the source and target domains. RAINCOAT applies the Discrete Fourier                            integrated in the different model variants (implementations see 4.1):
+Transform (DFT) method 3.2 to extract the relevant frequency fea-                                     Fully Connected Layers: A fully connected layer describes a type of
+tures based on the original time features (Fig. 1). If the conditional                          neural network layer where every neuron in the layer is connected
+distributions of labels with respect to the frequency features are equal                        to every neuron in the previous and subsequent layers (Galushkin,
+across domains (𝑝s (𝐲 ∣ DFT(𝐱s )) = 𝑝t (𝐲 ∣ DFT(𝐱t ))), but the marginal                        2007). Each input vector 𝒙𝑡 ∈ R𝐷 of a time series at time instant 𝑡
+distributions of the frequency features differ (𝑝(DFT(𝐱s )) ≠ 𝑝(DFT(𝐱t ))),                     is transformed into: 𝒉𝑡 = 𝑓𝜣fc ,𝜽 (𝐱𝑡 ) = 𝜙(𝜣⊤𝑙𝐱𝑡 + 𝜽𝑏 ) where 𝜣 𝑙 ∈ R𝐷×𝐷ℎ
+                                                                                                                                  𝑙 𝑏
+then a frequency shift is identified (He and Xiao, 2023).                                       represents a linear transformation with an optional bias term 𝜽𝑏 ∈ R𝐷ℎ ,
+    Time-Frequency Feature Encoder (𝐺TF ): Building on the concept of                           and a nonlinear activation function 𝜙 ∶ R ↦ R (e.g.,tanh, ReLU,
+the Fourier Neural Operator (FNO) (Li et al., 2020), RAINCOAT per-                              etc.) (Galushkin, 2007; Aggarwal, 2023).
+forms convolution on the low-frequency components obtained from                                       Recurrent Long Short-Term Memory Neural Network: Recurrent Neural
+the Fourier transformation of the time series 𝒙𝑖 . The frequency and                            Networks (RNN) are known for their suitability in sequential learning
+time features for the source domain are indicated by 𝒆s𝐹 ,𝑖 and 𝒆s𝑇 ,𝑖 ,                        problems, as they enhance fully connected layers by incorporating
+respectively, and for the target domain by 𝒆t𝐹 ,𝑖 and 𝒆t𝑇 ,𝑖 . To enhance                       contextual information from preceding time steps 𝑡−1 (Rumelhart et al.,
+the effectiveness of Fourier convolution for domain adaptation, two                             1986; Józefowicz et al., 2015). This results in a transformation of the
+                                                                                                networks output at time 𝑡 𝒉𝑡 = 𝑓Θ     rnn (𝒙 , 𝒉           ⊤         ⊤
+key modifications have been introduced: (1) The DFT assumes that                                                                            𝑡 𝑡−1 ) = 𝜙(𝜣 𝑥 𝒙𝑡 + 𝜣 ℎ 𝒉𝑡−1 + 𝜽𝑏 ).
+the input 𝒙𝑖 is periodic. If this assumption is violated, it can lead to                        The Long Short-Term Memory recurrent networks (LSTM) (Hochreiter
+frequency leakage (Harris, 1978), where the DFT outputs perturbed                               and Schmidhuber, 1997) represent an enhancement of traditional RNN
+and noisy frequency components 𝒗s and 𝒗t from the windowed time                                 by introducing additional gates, which reduced the impact of the
+series segments 𝒙s𝑖 and 𝒙t𝑖 . This noise can bias domain alignment.                             vanishing and exploding gradients, and consequently facilitated the ex-
+To mitigate this, RAINCOAT applies a cosine function to smooth the                              traction of long-term temporal features (Hochreiter and Schmidhuber,
+time series before performing the DFT, thereby preventing frequency                             1997; Bengio et al., 1994). These newly combined gates included a
+leakage. (2) Instead of applying the inverse DFT to transform the                               forget gate (𝒇 𝑡 = 𝑓𝜣rnn (𝒙𝑡 , 𝒉𝑡−1 )), an input gate (𝒊𝑡 = 𝑓𝜣rnn (𝒙𝑡 , 𝒉𝑡−1 )),
+                                                                                                                            𝑓                                       𝑖
+frequency components 𝐯𝑖 back to the time–space, RAINCOAT directly                               a modulation gate (𝒈𝑡 = 𝑓𝜣rnn (𝒙𝑡 , 𝒉𝑡−1 )), and an output gate (𝒐𝑡 =
+                                                                                                                                    𝑔
+extracts the polar coordinates of the frequency coefficients, preserving                        𝑓𝜣rnn (𝒙𝑡 , 𝒉𝑡−1 )). The forget gate suppresses features from the prior cell
+                                                                                                    𝑜
+both low-level amplitude 𝑎𝑖 and high-level phase 𝑝𝑖 semantics. The                              state (𝒄 𝑡−1 ) if its values are close to zero. The modulation and input
+frequency-space features 𝒆𝐹 ,𝑖 are then represented as a concatenation                          gates control the writing of new features from the input to the cell state.
+of [𝑎𝑖 ; 𝑝𝑖 ]. The temporal features 𝒆𝑇 ,𝑖 are extracted using a standard                       Additionally, LSTM introduces a cell state matrix (𝒄 𝑡 ) to store long-term
+time feature encoder based on Convolutional Neural Networks (CNN).                              temporal context. At each iteration, the cell state is updated by cell-wise
+
+                                                                                          116
+D. Gackstetter et al.                                                                                ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+multiplication ⊙ as 𝒄 𝑡 = 𝑓𝑡 ⊙ 𝒄 𝑡−1 + 𝒊𝑡 ⊙ 𝒈𝑡 . The final cell output is then              • Scenario 1 (SC1) involves the largest number of domains (9 coun-
+calculated as 𝒉𝑡 = 𝒐𝑡 tanh(𝒄 𝑡 ) (Hochreiter and Schmidhuber, 1997).                          tries), i.e., the largest geographic range, 4 classes, and samples
+    Convolutional Neuronal Networks: Convolutional layers extract fea-                        from one year.
+tures by correlating the input signal 𝑿 ∈ R𝑇 ×𝐷 with a set of 𝐷ℎ                            • Scenario 2 (SC2) includes five domains with a higher number of
+convolutional kernels 𝜣 = (𝜣 0 , 𝜣 1 , … , 𝜣 𝐷ℎ ), where each kernel 𝜣 𝑑 ∈                    classes (9 crop types) for one year.
+R𝐾×𝐷 (Aggarwal, 2023; Rußwurm and Körner, 2020). This correlation                           • Scenario 3 (SC3) extends SC2 by adding the multi-year charac-
+is performed using the convolutional operation 𝐻 = 𝜙(𝑿 ∗ 𝜣) followed                          teristic to the setting involving adaptation problems across two
+by an element-wise nonlinear activation function 𝜙. The kernel size                           years.
+K determines thereby the receptive field, which is the region of input
+data that influences the output. Larger K values are used in temporal
+contexts to capture patterns over time. Convolutional neural networks                    4.1. Model implementations
+(CNN) excel in computer vision tasks, particularly in extracting features
+from local image neighborhoods using small kernels (Zhao et al., 2024).                  4.1.1. Model comparisons
+In a temporal context, larger kernel sizes are employed. The learned                         To study the suitability of RAINCOAT for SITS, we identified the
+kernel exhibits a correlation between patterns in the time domain (Is-                   TimeMatch algorithm by Nyborg et al. (2022) as appropriate bench-
+mail Fawaz et al., 2020; Debayle et al., 2018) and consequently found                    mark, which represents one of the leading algorithm in the domain of
+also application in the SITS domain (Pelletier et al., 2019).                            UDA in SITS with a special focus on crop type mapping. TimeMatch
+    Self-Attention Transformer Network: Attention mechanisms have be-                    represents a cross-region adaptation method for SITS that explicitly
+come essential in sequence modeling and transduction models across                       estimates temporal shifts in plant growing patterns between domains
+various tasks. They enable the modeling of dependencies between                          2.3. Throughout all conducted closed-set evaluation scenarios, both
+elements in input or output sequences, regardless of their positional                    the RAINCOAT and TimeMatch showed superiority to a large share of
+distance (Bahdanau et al., 2014; Kim et al., 2017). Through the at-                      existing time-series UDA methods, which we consequently exclude from
+tention mechanism, the Transformer network captures features from                        the scope of competing models: For TimeMatch this refers to the mod-
+observations at particular time steps within an input time series of                     els DANN (Ganin and Lempitsky, 2015) (and indirectly VRADA (Pu-
+values 𝑽 = (𝒗0 , 𝒗1 , … , 𝒗𝑇𝑖𝑛 ) ∈ R𝑇in ×𝐷𝑖𝑛 . This is established by a weighted         rushotham et al., 2017), MMD (Tzeng et al., 2014) (similar to PAN
+            ∑𝑇𝑖𝑛                                                       ∑                 (Wang et al., 2021)), CDAN (Long et al., 2018), FixMatch (Sohn et al.,
+sum 𝒉𝑖 = 𝑡=0     𝛼𝑡 𝒗𝑡 = 𝛼⊤𝑽 of attention scores 𝛼 ∈ [0, 1]𝑇𝑖𝑛 , 𝑖 𝛼𝑖 = 1.
+Extending this to a matrix multiplication                                                2020), CoDATS (Wilson et al., 2020)), ALDA (Chen et al., 2020),
+                                                                                         and JUMBOT (Fatras et al., 2021). RAINCOAT outperformed com-
+𝑯 = 𝑨⊤𝑽                                                                     (3)          peting models CORAL (Sun and Saenko, 2016), DIRT-T (Shu et al.,
+with attention matrix 𝑨 = (𝒂0 , … , 𝒂𝑇𝑜𝑢𝑡 ) and 𝑯 = (𝒉𝟎 , … , 𝒉𝑇𝑜𝑢𝑡 ) ∈                  2018), AdvSKM (Liu et al., 2021b), AdaMatch (Berthelot et al., 2022),
+R𝑇𝑜𝑢𝑡 ×𝐷𝑜𝑢𝑡 yields 𝑇𝑜𝑢𝑡 output vectors. Attention scores result from another             CLUDA (Ozyurt et al., 2022), and likewise CDAN (Long et al., 2018)
+matrix multiplication 𝑨 = 𝑸𝑲⊤ of key and query matrices 𝑲 ∈ R𝑇𝑖𝑛 ×𝐷ℎ                     and CoDATS (Wilson et al., 2020). We also exclude both the Match-
+and 𝑸 ∈ R𝑇𝑖𝑛 ×𝐷ℎ , respectively (Vaswani et al., 2017; Rußwurm and                       and-Deform (Painblanc et al., 2023) and the Deep Adaptation Crop
+Körner, 2020). Attention can then be generically formulated as                           Classification Network (DACCN) (Wang et al., 2023) approaches, which
+                 (       )                                                               showed comparably lower performances against either related models
+𝑯 = sof tmax 𝑸𝑲⊤ ⊤ 𝑽                                                     (4)             mentioned above (Match-and-Deform) or in only simplified testing
+       ⏟⏞⏞⏞⏞⏞⏞⏞⏞⏟⏞⏞⏞⏞⏞⏞⏞⏞⏟                                                               scenarios (DACCN). Beyond the transfer scenarios, we include, inspired
+               𝑨⊤
+                                                                                         by Nyborg et al. (2022), two comparison scenarios:
+For our self-attention enhanced models, we inspired by the encoder
+design from the Transformer network’s self-attention architecture. In                       1. The Source-Trained set-up, where the TimeMatch’s classification
+line with the Transformer network’s authors (Vaswani et al., 2017),                            model is trained on the source domain and then applied directly
+we introduced positional encoding to the time series to compensate                             to the target domain without any domain adaptation. This out-
+for the self-attention mechanism’s limitation to naturally capture the                         come serves as the baseline, representing the model’s minimum
+sequential dependencies in time series data (details see 4.1).                                 performance.
+                                                                                            2. The Target-Trained setting refers to the TimeMatch’s classifi-
+3.4.2. Feature extensions                                                                      cation model being trained and tested on the target domain
+    The primary input data in SITS consists of sequences of n-                                 (i.e., without any transfer). This result represents the upper
+dimensional satellite images (𝑛 ∈ N). Given cross-regional experiments,                        bound of cross-region performance.
+including geographic context by means of weather data may provide
+valuable input to the differentiation of classes from distinct geographic                4.1.2. Frequency studies
+regions (Addimando et al., 2022; Foerster et al., 2012; Ravirathinam                         To investigate the influence of the frequency feature component, we
+et al., 2024). To measure the relative importance of the different                       prepare an ablation study with two complementary sets of experiments:
+input features, we apply an input attribution method (Theissler et al.,                  First, the default RAINCOAT model is evaluated in two configurations
+2022; Saeed and Omlin, 2023). Specifically, we chose the Integrated                      on the standard scenarios SC1-3; one setting with the frequency com-
+Gradients-approach, which assigns significance scores to each input                      ponent included and another without. Training and testing conditions
+feature by calculating the integral of the gradients to the model’s output               were kept consistent. Secondly, the study explored these two model
+with respect to the inputs (Sundararajan et al., 2017). High magnitudes                  variants’ robustness on datasets with reduced temporal resolution. The
+indicate thereby higher influence on a predicted score.                                  original datasets were hereby downsampled to two settings with 1∕3
+                                                                                         respectively 1∕2 of the original time series (see 4.5).
+4. Experimental setup
+                                                                                         4.1.3. RAINCOAT extensions
+    To address the intended set of research objectives, we designed a                       To further enhance RAINCOAT’s performance in SITS applications,
+series of experiments that vary in terms of scope of classes, number                     we investigate the impact of proven, alternative encoder and decoder
+of domains, temporal range, involved models, and input features, as                      algorithms by implementing the following combinations involving
+outlined in Table 1. All analyses are conducted on three main scenarios                  LSTM, CNN, and self-attention network architectures (Fig. 2):
+with each different main challenges resulting from the number of
+domains and classes, and causes of domain shifts:                                           • Variant 1: LSTM-encoder paired with the default CNN-decoder
+
+                                                                                   117
+D. Gackstetter et al.                                                                                        ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+Table 1
+Scope of analyses conducted in varying settings of input features, considered classes (i.e., crop types), number of domains (i.e., countries), and temporal scope.
+ ID             Transfer                No. of             No. of             No. of              Year(s)            Input               Analyses
+                type(s)                 domains            classes            transfers                              variations
+ SC1            Cross-Regional          9                  4                  56                  2021               Multi-              (1) Benchmarking RAINCOAT for SITS
+ SC2            Cross-Regional          5                  9                  20                  2021               spectrum            (2) Assessing feature constellations
+ SC3            Cross-Regional          5                  9                  25                  2021               weather             (3) Evaluating architectural enhancements
+                Multi-Year                                                                        2022                                   (4) Influence aspects for UDA in SITS
+
+
+
+
+Fig. 2. Studied variations of input features (𝒙s𝑖 for source domain respectively 𝒙t𝑗 for target domain) and encoder–decoder settings based on the original RAINCOAT algorithm
+by He and Xiao (2023) (sub-images (i)–(iii) by Norris (2020), Batur Sahin and Diri (2021), and Ma et al. (2024b)).
+
+
+      • Variant 2: LSTM-encoder paired with an LSTM-decoder                                     4.2. Data
+      • Variant 3: Self-attention-based encoder paired with the default
+        CNN-decoder                                                                             4.2.1. Study area and harmonized reference data
+      • Variant 4: Self-attention-based encoder paired with a self-                                 To assess the effectiveness of the proposed mechanisms in realistic,
+        attention-based decoder                                                                 cross-regional crop classification scenarios, we sought a study area
+For the LSTM model variants, we implemented a multilayer LSTM cell                              being characterized by significant climatic variations. Europe emerged
+architecture as described by Rußwurm and Körner (2017), incorpo-                                as a suitable choice due to its diverse climate zones, ranging from hot
+rating an additional multi-layer perceptron that encodes the satellite                          semi-arid to subarctic/boreal and polar climates (Beck et al., 2018).
+time series. The input is represented by a feature vector 𝒙𝑡 ∈ R𝑆×𝑇 ,                           Additionally, Europe features extensive farming activities and abun-
+with 𝑆 spectral bands and time steps 𝑇 , and which gets subsequently                            dant crop data provided by the EU’s Integrated Administrative and
+transformed into increasingly higher-dimensional representations. The                           Control System (IACS) (Tóth and Kučas, 2016; European Commission,
+decoder mirrors this process in reverse. During the parameter tuning                            2022). The IACS stores spatial data on agricultural practices that is
+phase, we adjusted several key aspects: the dimensionality of the                               retrieved annually through self-reporting of farmers, and which results
+hidden states 𝐷ℎ ∈ {24 , 25 , … , 28 }, the number of recurrent layers                          in millions of geo-referenced data samples across the EU with detailed
+𝐿 ∈ {1, 2, … , 7}, and applied dropout 𝑝𝑑𝑟𝑜𝑝 ∈ [0, 1] between recurrent                         information on field locations and crop types. However, while data
+layers to optimize training performance. For the self-attention-based                           collection is centralized at the EU level, data access policies are deter-
+model variants, we implemented an encoder inspired by the model                                 mined individually by each member country, leading to inconsistencies
+from Rußwurm and Körner (2020), which builds on the self-attention                              in data availability across countries and years. To create an EU-wide
+Transformer architecture proposed by Vaswani et al. (2017). Unlike                              dataset of IACS data, the EuroCrops project continuously monitors
+the original Transformer, this adaptation excludes the word embedding                           publicly available datasets from each EU member state (Schneider
+step, as the satellite time series data resides in a continuous spectral
+                                                                                                et al., 2023). Analyzing their records revealed that the years 2021 and
+reflectance space. The input is represented by the same feature vector
+                                                                                                2022 were particularly suitable, as they offer a significant number of
+𝒙𝑡 as for the LSTM. To improve the input encoding, we added fully
+                                                                                                comprehensive country-wide datasets. Consequently, we selected nine
+connected layers between the input and positional encoding layers.
+                                                                                                countries from diverse climatic regions in Europe, as depicted in Fig. 3.
+The reconstruction of the original time series is handled by the de-
+coder component of the Transformer network, with minor adjustments                              Note, country-wise climates are by no means discrete but continuous,
+to reconstruct the input time series according to its original format.                          with some countries having mixed climates. Except for Germany, which
+Similar to the original authors, we performed hyperparameter tuning,                            only provides public datasets for three federal states (Brandenburg,
+adjusting the hidden state dimensions 𝐷ℎ ∈ {24 , 25 , … , 28 }, the number                      North Rhine-Westphalia, Lower Saxony), the other datasets encompass
+of self-attention layers 𝐿 ∈ {1, 2, … , 8}, the number of self-attention                        the entire mainland area of each country (excluding overseas regions).
+heads 𝐻 ∈ {1, 2, … , 8}, the number of fully connected layers in the                            Beyond, large-scale analysis is complicated not only by data access poli-
+encoding stage 𝐹𝑛 ∈ {1, 2, … , 8}, and the number of neurons in each                            cies but also by each country’s unique national crop schema, making
+fully connected layer 𝑛𝐹 ∈ {16, 32, 64, 128}.                                                   transnational comparisons difficult. The EuroCrops project addressed
+
+                                                                                          118
+D. Gackstetter et al.                                                                                        ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+                                                                                               use of data from national Earth observation (EO) missions and the
+                                                                                               Copernicus Program. By using the service’s cloud detection algorithm,
+                                                                                               we further refined the available image set, selecting those with the
+                                                                                               lowest cloud coverage while still maintaining the required number of
+                                                                                               images per period.
+
+                                                                                               4.2.3. Weather data
+                                                                                                   To investigate the impact of geographic context knowledge, we
+                                                                                               prepared weather data throughout the study area at a resolution of
+                                                                                               NUTS 2-regional level. Level 2 corresponds hereby to the 3rd finest
+                                                                                               level of administrative regions in the EU (European Union, 2023). For
+                                                                                               each region a mean value has been calculated based on five geographic
+                                                                                               locations: the area’s center point and four times the midpoint between
+                                                                                               the center and the four corners of the area’s total bounds. For the
+                                                                                               five locations, we derived for each day of the two considered years
+                                                                                               2021 and 2022, data on three weather metrics including mean air
+                                                                                               temperature, precipitation sum, and solar radiation sum per day. These
+                                                                                               parameters show to be among the most influential weather variables
+                                                                                               related to plant growth (Shook et al., 2021; van Bussel et al., 2016).
+                                                                                               We retrieved the data using the free version of the Open-Meteo weather
+                                                                                               API (Zippenfenig, 2023). Finally, the daily records of each sub-region
+                                                                                               have been averaged on a 10-daily basis to reach the target sequence
+                                                                                               length of 36 time steps. Mapping each parcel to its corresponding NUTS
+                                                                                               2-region then establishes the simplified joining of the three weather
+                                                                                               variables to a parcel’s 10-dimensional, multispectral sequences yielding
+                                                                                               input vectors 𝑥 ∈ R36×13 (Fig. 2).
+
+                                                                                               4.3. Input data preparation
+
+                                                                                               4.3.1. Data selection
+                                                                                                   The selection of data for this study was inspired by the ranking
+Fig. 3. Study area composed of regions from Western (France and Netherlands), Central          of most economically significant crops produced across Europe. The
+(Austria, Germany, Slovakia, and Slovenia), Eastern (Estonia and Latvia), and Northern         geographic, spatial scope of data was guided by the availability of
+Europe (Sweden) (background map provided by Esri et al. (2024)).
+                                                                                               crop declaration data, as analyzed through the EuroCrops’ Github and
+                                                                                               Zenodo data repositories (Schneider et al., 2024; Schneider, 2024),
+                                                                                               which provide an overview to the current set of publicly available IACS
+this issue by developing the Hierarchical Crop and Agriculture Tax-                            data per country and year. An overview of the resulting data selection,
+onomy (HCAT), designed to harmonize crop taxonomies across the                                 including the scope of countries and crop classes is given in Fig. A.1
+EU (Schneider et al., 2023, 2025). By mapping each country’s native                            and Table A.1.
+taxonomy to HCAT, cross-border data usage becomes possible without
+the need for manual translations. For this study, we used HCAT version                         4.3.2. Data preprocessing
+2. For standardized spatial analysis, we applied the Nomenclature of                                Based on the defined data selection 4.3.1, we ended up collecting
+Territorial Units for Statistics (NUTS), which provides standardized                           around several million field parcel samples through the EuroCrops’
+administrative units across Europe (European Union, 2023).                                     Zenodo data repository and public geo-data portals (Schneider, 2024;
+                                                                                               Schneider et al., 2024). Due to the extensive processing requirements
+4.2.2. Multispectral satellite data                                                            of such a number of parcels, we decided – inspired by positive results
+    In this study, we utilize multispectral satellite images from the Eu-                      from previous work and related studies (Sainte Fare Garnot et al., 2020;
+ropean Space Agency’s Copernicus program. The relevant instrument,                             Rußwurm and Körner, 2020; Blickensdörfer et al., 2022; Gackstetter
+Sentinel-2 (S2), provides systematic coverage of Europe with a revisit                         et al., 2024) – to also reduce the original dataset to a magnitude of
+frequency of approximately every five days since 2015. The instrument                          in average around 30,000 samples per country and year. The original
+captures 13 spectral bands, with four bands at a spatial resolution of                         IACS data first needed to be harmonized using HCAT crop type denom-
+10 m, six bands at 20 m, and three bands at 60 m (Drusch et al., 2012),                        inations, for those data sets that have not been processed and provided
+from which we selected the most meaningful 10 bands (2, 3, 4, 5, 6, 7,                         yet by the EuroCrops project 4.2.1.
+8, 8 A, 11, 12) for vegetation monitoring in accordance with previous                               Having harmonized all considered data sets, we then filtered ac-
+works (Sainte Fare Garnot et al., 2020; Rußwurm and Körner, 2017).                             cording to our predefined set of classes. This step still yielded numbers
+For each parcel, we defined the sequence length of satellite images to                         of samples exceeding the target. Consequently, each data set was
+include three images per month, yielding 36 data points per year. The                          allocated, weighted by a country’s area, a higher respectively lower
+timestamps are not necessarily identical between parcels but roughly                           contingent of total samples 𝑁 within a range of 𝑁 ∈ [20, 000, 40, 000]
+evenly spaced, with variations of only a few days. We selected top-of-                         samples. The resulting samples per class 𝑛(𝑐𝑖 ) were calculated based
+atmosphere reflectance (level L1C) satellite images to stay as close as                        on a country 𝑟’s assigned 𝑁𝑟 and its number of classes 𝐶𝑡 in year 𝑡,
+possible to the raw, unbiased data. To identify suitable satellite images                      i.e., 𝑛𝑟,𝑡 (𝑐𝑖 ) = 𝑁𝑟,𝑡 ∕𝐶𝑟,𝑡 . In case of a lower actual availability of samples
+for the relevant time frame and area of interest, we employed the                              for some classes, the difference to the target number was assigned to the
+EO-Finder service. This service is part of the EO-Lab cloud (German                            remaining classes. The subsequent filtering to the target samples was
+Aerospace Center, 2024), an environment created by the German Fed-                             established by first randomly shuffling an entire dataset’s unique parcel
+eral Government and the German Aerospace Center to support scientific                          identification numbers, and then keeping only the 𝑛𝑟,𝑡 (𝑐𝑖 ) samples per
+
+                                                                                         119
+D. Gackstetter et al.                                                                              ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+crop type, yielding in a random and even reduction. Fig. A.1 show the                 applying a Gauss filtering using the ‘‘gaussian_filter1d’’ module of the
+resulting absolute frequencies of crop classes per scenario and country.              SciPy library (Virtanen et al., 2020) with sigma = 1 and mode =
+    To derive the time series of multispectral values, we extracted the               ‘‘nearest’’, and then evenly filtering every 3rd respectively 2nd data
+raw pixel sets for each parcel by clipping the identified set of S2-                  point. For the feature attribution analyses, we applied Captum library
+images to the outlines of each geo-parcel. We consequently calculated                 to implement the Integrated Gradients algorithm (Facebook Inc., 2023)
+the median across all pixels within the confines of a field parcel. This              based on the module’s default version.
+aggregation resulted in a unified feature vector 𝑥 ∈ 𝑅36×10 for each
+parcel consisting of 10 spectral bands for each of the 36 time steps,                 5. Results
+which was subsequently normalized by a constant empiric factor of
+4000. In addition, we calculated the Normalized Difference Vegetation                 5.1. Input feature characteristics
+Index (NDVI) for each sequence, yielding a vector 𝒙𝑁𝐷𝑉 𝐼 ∈ 𝑅36×1 . The
+NDVI is a common indicator for vegetation growth and vitality (Huete                      Plants exhibit varying spectral reflectivity throughout their life
+et al., 2002; Huang et al., 2021), and is calculated from S2’s spectral               cycle. In this study, we apply the NDVI to retrace these phases. Ini-
+bands 4 and 8:                                                                        tially, during germination, sparse vegetation typically results in lower
+           𝑁𝐼𝑅 − 𝑅𝑒𝑑      𝐵08 − 𝐵04                                                   NDVI values. As crops enter the vegetative stage, rapid leaf expansion
+𝑁𝐷𝑉 𝐼 =                =                                             (5)
+           𝑁𝐼𝑅 + 𝑅𝑒𝑑      𝐵08 + 𝐵04                                                   increases NDVI due to denser, greener foliage. During flowering, NDVI
+Beyond, we provide the three additional weather parameters for each                   may stabilize before eventually declining during the ripening phase,
+parcel using two distinct approaches: The dynamic approach (a) in-                    when chlorophyll breakdown causes yellowing (Huang et al., 2021;
+volves integrating a dynamic representation of weather data, where                    Gao and Zhang, 2021). Fig. 4 gives an abstract of growth patterns
+the year is subdivided into 36 periods corresponding to the multi-                    based on median NDVI sequences for the two considered years 2021
+spectral sequences’ length. The resulting, augmented input vector 𝑥 ∈                 and 2022, for each one country from the western (France), central
+𝑅36×13 captures short-term and seasonal fluctuations in environmental                 (Austria), and northern (Estonia) part of the study area, and for SC1’s
+factors. The static approach (b) involves weather data as a constant                  scope of classes. We can both see typical growth patterns but also
+average mean and standard deviation over each year, which results                     clear, distinct differences per crop type within one country and year
+from the sequences of (a) in 𝑥 ∈ 𝑅36×16 . Compared to (a), approach                   (e.g. (a)), between countries of the same year (e.g., (b) and (d)),
+(b) consequently provides rather general climatological context. In both              and between different years of the same country (e.g., (c) and (d)).
+cases, the weather data was normalized by the maximum value of each                   In mathematical terms, the observed curves differ from each other
+parameter per year across all countries.                                              resulting from various transformations including among others linear
+                                                                                      translations in time and absolute value of sensor values (here expressed
+4.4. Evaluation metrics                                                               through NDVI), stretching, compressing, etc. See Figs. A.2 and A.3 for
+                                                                                      the full scope of countries and classes involved in this study’s experi-
+   The prediction quality of each classification model is assessed using              ments. Variations between countries and years are primarily influenced
+the 𝑓1 -score                                                                         by their geography related climate and weather conditions as the main
+             2 ⋅ 𝑇𝑃                                                                   drivers of plant growth. For instance, countries with longer and harsher
+𝑓1 =                                                                    (6)           winter periods as Austria and Estonia exhibit lower plant growth in the
+      2 ⋅ 𝑇𝑃 + 𝐹𝑃 + 𝐹𝑁
+                                                                                      first and last weeks (i.e., the winter period) of the year resulting in
+with true positive class assignments 𝑇 𝑃 , false positive class assignments
+                                                                                      narrower, compressed curves, as compared to more temperate regions
+𝐹 𝑃 , and false negative class assignments 𝐹 𝑁 (Powers, 2020). Be-
+                                                                                      (e.g., France) (Fig. 4). Comparing the two years still shows similar
+yond, we applied the mean-squared-error (MSE) metric for evaluating
+                                                                                      crop-specific, temporal patterns but significantly lower absolute values.
+similarity between time series
+           ∑𝑛                                                                         This can be explained among others by the warm and dry weather
+              (𝑥𝑘 − 𝑦𝑘 )2                                                             conditions in 2022 compared to 2021 (in average 17% less precipitation
+𝑀𝑆𝐸 = 𝑖                   ,                                             (7)
+                 𝑛                                                                    for Austria, France, and Estonia), as can be found in literature (Table
+with the 𝑘th observed value 𝑥𝑘 , the 𝑘th corresponding reference value                A.2) and also in the weather data being retrieved for this study’s
+𝑦𝑘 , and the number of observations pairs 𝑛 (Wallach and Goffinet,                    experiments (Fig. A.4). Despite overall continuous curves, we can also
+1989).                                                                                observe abrupt changes in NDVI sequences, which are, for instance,
+                                                                                      most pronounced for the Netherlands in 2021. These are often related
+4.5. Implementation details                                                           to farming activities (e.g., harvest) (Shang et al., 2020; Gao et al.,
+                                                                                      2020), yet may also result from other factors such as cloud coverage, or
+    Both the RAINCOAT and TimeMatch models have been imple-                           sensor malfunctions (Li et al., 2022; Foga et al., 2017). Beyond ambient
+mented and trained based on the original author’s implementations                     and technical conditions, there is also secondary factors such as nation-
+(see GitHub repositories by He et al. (2023) and Nyborg et al. (2022))                ally specific agricultural politics (e.g., subsidiary schemes for specific
+using the Python-based deep learning framework PyTorch (Paszke                        management practices), culture, and market conditions (e.g., fertilizer
+et al., 2019). For subsequent experiments building upon the RAINCOAT                  prizes) affecting farming practices. All these factors potentially cause
+model, we adopted the hyperparameters for training as for the default                 shifts in data between spatially or temporally varying domains, and
+version. We applied a 3-fold cross-validation approach, where each                    consequently influence UDA in this application context.
+fold’s dataset is split into training, validation, and test sets with a ratio
+of 3:1:1. By default, each fold is run for up to 50 epochs. If the 𝑓1 -score          5.2. Evaluation of RAINCOAT for SITS
+did not improve over a span of 10 consecutive epochs, training was
+stopped ahead of schedule. During the validation phase, we selected the                   This section’s primary question relates to whether the frequency-
+epoch with the highest performance and then evaluated on the test set.                augmented UDA algorithm RAINCOAT, without significant modifica-
+Due to the strongly thinned out dataset, distances between individual                 tions to its architecture, can effectively handle multidimensional SITS
+parcels are sufficiently large such that we decided for sample-wise                   data. We evaluate RAINCOAT’s performance relative to TimeMatch,
+sampling instead of spatial sampling methods, which are typically used                a leading algorithm designed specifically for UDA in SITS and crop
+to mitigate overfitting caused by strong correlations between nearby                  classification. Thereby, we also inherently assess the hypothesis pro-
+samples (e.g., by Rußwurm and Körner (2017)). The downsampling                        posed by Nyborg et al. (2022) stating that domain shifts in crop type
+variants for the frequency ablation study were implemented by first                   mapping result primarily through linear translation along the time
+
+                                                                                120
+D. Gackstetter et al.                                                                                      ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+
+
+Fig. 4. Abstract of median values of NDVI sequences for each one country from Central (Austria: (a) and (c)), Western (France: (b) and (d)), and North-Eastern Europe (Estonia:
+(e)) at the example of Scenario 1’s set of crop types. The first row represents thereby values from 2021 ((a), (c), and (e)) and the second row from 2022 ((b) and (d)).
+
+
+
+
+                   Table 2
+                   Quantitative evaluation of RAINCOAT for SITS using arithmetic mean and standard deviation (std) of mean 𝑓1 -values across each scenario’s set
+                   of experiments (see Table A.3 for complete listing). The frequency-augmented algorithm is compared with TimeMatch, source- and target-trained
+                   settings on the three main scenarios.
+                        Scenario      Source-Trained                    TimeMatch                     RAINCOAT                       Target-Trained
+                                      𝑓1                                𝑓1                            𝑓1                             𝑓1
+                                      mean               std            mean           std            mean            std            mean               std
+                        1             0.817              0.094          0.854          0.119          0.878           0.066          0.934              0.039
+                        2             0.634              0.071          0.682          0.073          0.688           0.087          0.820              0.063
+                        3             0.217              0.059          0.408          0.076          0.584           0.075          0.832              0.032
+                        𝑓1            0.556              0.075          0.648          0.089          0.717           0.076          0.862              0.045
+
+
+
+
+axis. The results of our experiments reveal that RAINCOAT performs                           5.2.1. Frequency ablation study
+well with multidimensional SITS data, achieving between 70% and                                 Analyzing the frequency component’s impact showed that its inclu-
+94% of the upper baseline’s mean 𝑓1 values across the three differ-                          sion did not demonstrate a significant overall advantage, with average
+ent scenarios (Table 2). When compared to TimeMatch, RAINCOAT                                deviations in performance between the two model variants falling only
+consistently outperformed in all scenarios. Specifically, RAINCOAT                           within a range of ±1% for the collective scenarios. When looking at
+surpasses TimeMatch by up to 2% in mean 𝑓1 values for SC1 and                                individual sub-experiments, however, the frequency augmented vari-
+SC2, and by round 18% in the most challenging SC3 (given the lowest                          ant achieved improvements of up to +4% in 𝑓1 -metric (𝑓1 (SC1) ∈
+baseline’s scores). Additionally, the standard deviation of 𝑓1 values for                    [+4%, −1%], 𝑓1 (SC2) ∈ [+3%, −3%], 𝑓1 (SC3) ∈ [+3%, −4%]). Regarding
+RAINCOAT was notably lower in SC1, and comparable in SC2 and SC3.                            the downsampling experiments, across both settings, the frequency-
+These findings suggest that RAINCOAT, despite its comparably simple                          augmented variant showed a slightly superior accuracy compared to
+CNN-based feature encoder, effectively captures relevant feature shifts                      the non-augmented model of in average +1% and in individual exper-
+in SITS experiments. RAINCOAT demonstrates increased robustness,                             iments of up to +5% in 𝑓1 -metric (𝑓1 (SC1) ∈ [+1%, −2%], 𝑓1 (SC2) ∈
+particularly in scenarios with more pronounced domain shifts, as ob-                         [+4%, −1%], 𝑓1 (SC3) ∈ [+5%, −3%]). In average all scenarios’ accuracy
+served in SC3 in terms of mean 𝑓1 -values, and in the geographically                         were lower than in the default full sequence configurations. These
+most diverse SC1 expressed by the 𝑓1 -standard deviation. The results                        results offer a differentiated view to the frequency component’s impact
+also indicate that while linear temporal shifts are a significant factor                     on unsupervised domain adaptation for satellite time series data. While
+in crop type mapping, they are not the one dominating determinant.                           the frequency component can offer improvements in individual settings
+Hence overall, we can evaluate RAINCOAT as a viable and effective                            and slightly higher robustness in low-data settings, its impact does not
+method for SITS-based classification problems.                                               appear as dominant as in the standard data sets used by the RAINCOAT
+
+                                                                                       121
+D. Gackstetter et al.                                                                                             ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+                   Table 3
+                   Evaluation of architectural variations of RAINCOAT for SITS using arithmetic mean and standard deviation (std) of mean 𝑓1 -values across each
+                   scenario’s set of transfer experiments. Four settings of varying encoder–decoder constellations are compared with each other on the three main
+                   scenarios with ATT and LSTM representing components based on encoders and decoders inspired by self-attention-based Transformer and LSTM
+                   networks respectively.
+                        Scenario       LSTM-CNN                        LSTM-LSTM                             ATT-CNN                          ATT-ATT
+                                       𝑓1                              𝑓1                                    𝑓1                               𝑓1
+                                       mean            std             mean             std                  mean             std             mean            std
+                        1              0.748           0.147           0.701            0.134                0.908            0.058           0.787           0.120
+                        2              0.529           0.101           0.506            0.117                0.750            0.081           0.519           0.114
+                        3              0.405           0.131           0.434            0.109                0.644            0.107           0.476           0.112
+                        𝑓1             0.561           0.126           0.547            0.120                0.767            0.082           0.594           0.116
+
+
+
+authors. Potential explanations for the limited overall effectiveness                         Table 4
+                                                                                              RAINCOAT-SRS      encoder    hyperparameters    resulting   from      the  best
+may be the following: With sequences limited to a length of 36, this
+                                                                                              performing   ATT-CNN    configuration. Concrete    parameters   originate from
+study’s temporal scope is significantly shorter than for the datasets                         implementation based on PyTorch library (Painblanc et al., 2023) and
+used in studies like RAINCOAT, where time series ranged from 128                              the given experimental design with 36 time steps and 10 spectral
+to 3000 in length. Additionally, the aperiodic character of the applied                       bands.
+SITS, which typically span only a single growth period in crop type                             Module                                                          Hyperparameters
+mapping, potentially reduces the utility of frequency domain features.                          Positional encoding
+Despite its dynamic elements, SITS, with in our case 10-dimensions,                             SITS-Input                                                      36 × 10
+contain a mixture of dynamic and stationary signals, and hence might                            MLP1                                                            36 × 10 ⇒ 36 × 82
+differ more significantly from the standard time series data sets used                          MLP2                                                            36 × 82 ⇒ 36 × 164
+in the generic machine learning research. We consequently assume                                d_model                                                         164
+                                                                                                dropout                                                         0.1
+that the distinct performance increase evaluated in 5.2 originate less
+                                                                                                Transformer encoder
+from the included frequency feature but rather from the RAINCOAT’s
+more generic encoder–decoder approach. This architecture inherently                             nhead                                                           4
+                                                                                                num_layers                                                      2
+considers a wider range of dynamic and stationary input signals, and
+                                                                                                dim_feedforward                                                 1024
+hence potentially more, domain-invariant features, than the TimeMatch                           dropout                                                         0.1
+with its focus on linear temporal shifts.
+                                                                                                Mean operator                                                   36 × 164 ⇒ 164
+
+5.3. Architectural adjustments
+
+    While RAINCOAT showed already effective in its original form 5.2,                         the self-attention-based encoder is also known to be more suitable for
+we further studied architectural enhancements to better address the                           capturing non-sequential, global relationships, as for instance in Vision
+domain-related challenges posed by SITS data. The results of our exper-                       Transformers (Scheibenreif et al., 2022; Mao et al., 2022; Han et al.,
+iments demonstrated that the Attention-CNN (ATT-CNN) configuration                            2023). This characteristic likely contributes to a greater alignment be-
+outperformed all other tested encoder–decoder variations, achieving a                         tween the encoder and decoder in the ATT-CNN configuration, thereby
+mean 𝑓1 -score of 17%–23% higher than the alternatives and displaying                         facilitating the non-sequential-based decoder’s ability to reconstruct
+the lowest standard deviation across all three scenarios (Table 3). The                       the original sequence from the encoded input features. In contrast,
+LSTM-based versions consistently underperformed compared to their                             the ATT-ATT and LSTM-LSTM settings resulted in significantly lower
+self-attention-based counterparts when using the analogous encoder–                           learning success, possibly due to the added complexity involved in
+decoder setting. Notably, the ATT-CNN was the only variation that                             training these models while already, simultaneously optimizing the
+consistently surpassed the default RAINCOAT model, with an aver-                              RAINCOAT’s other three loss functions. Given the current progress
+age improvement of 3-6% per scenario. These gains were particularly                           in fully attention-based encoder–decoder models (Li et al., 2023; Liu
+pronounced in the more challenging SC2 and SC3. The ATT-CNN                                   et al., 2024; Pan et al., 2024; Sun et al., 2024; Kariyappa et al., 2024),
+achieved performance levels ranging from 77% to 99% when compared                             we recommend to further investigate advanced encoder–decoder con-
+to the maximum baseline, which reveals significantly higher than the                          figurations, assuming still more potential for SITS-based classification
+default version’s 70% to 94%. The most substantial improvements                               problems.
+were observed in the most challenging SC3, with individual tasks
+being improved to the default version by up to 17%. The resulting
+                                                                                              5.4. Feature enhancements
+best performing ATT-CNN configuration represents the new element of
+our proposed, SITS-enhanced model variant RAINCOAT-SRS (Satellite
+Remote Sensing); the encoder’s hyperparameters are listed in Table 4.                             The results showed that incorporating weather data – irrespec-
+    Adding to this, Fig. 5 provides a visualization of the target fea-                        tive from the investigated variation (Constant-Weather and Dynamic-
+ture separability using t-SNE (van der Maaten and Hinton, 2008),                              Weather) – did not enhance overall classification performance
+demonstrating the enhanced clustering and hence separability of target                        (Table A.4). In fact, in SC2 and SC3 adding weather features re-
+features based on embeddings from the RAINCOAT-SRS’s encoder com-                             sulted in lower accuracy with the mean 𝑓1 -score dropping by around
+pared to source- and target trained models, and the default RAINCOAT.                         2%–6%. When comparing the static and dynamic weather variants, the
+These findings align with existing research in SITS, which suggests                           dynamic version produced slightly better results – by approximately
+that incorporating state-of-the-art encoder designs for classifier mod-                       1-2% – in more complex scenarios such as SC2 and SC3. In same-
+els can lead to improved results (Pelletier et al., 2019; Ndikumana                           country experiments, the inclusion of weather data had no noticeable
+et al., 2018; Interdonato et al., 2019; Rußwurm and Körner, 2020).                            impact. Performance variability within scenarios showed remarkable,
+However, contrary to what might have been expected, the LSTM-based                            with the static-weather variant deviating from +4% to −16% and the
+configurations performed worse than the default CNN setup. Unlike                             dynamic-weather variant from +5% to -11% compared to the default
+RNN-based LSTM models, which are sequential learning algorithms,                              Constant-Norm variant.
+
+                                                                                        122
+D. Gackstetter et al.                                                                                       ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+
+
+Fig. 5. Visualizing target feature separability using t-SNE (van der Maaten and Hinton, 2008) at the example of scenario 3’s sub-task Austria-2021 to France-2022. RAINCOAT-SRS’s
+embeddings yield enhanced clustering of target features, leading to facilitated differentiation of classes compared to the default RAINCOAT version.
+
+
+
+
+Fig. 6. Input feature attributions of the dynamic variant: (a) summed up absolute values (and max-normalized) across the three scenarios per feature dimension (TEMP = mean air
+temperature, PREC = precipitation, RAD = solar radiation) and (b) share of weather-features’ attributions related to the total sum of attributions for each of the three scenarios.
+In (a) box plots showing mean (green triangle), median (orange line), 25%-75% interquartile range (IQR) (black lined box), and whiskers value range (dashed lines), defined as
+IQR ± 1.5 times IQR. (For interpretation of the references to color in this figure legend, the reader is referred to the web version of this article.)
+
+
+
+
+    When analyzing the feature attribution scores, we observe that                           to better performance, especially in cases with spatially fine-granular
+the model generally attributes lower importance to the three weather                         variations. Moreover, we assume that in settings, where the entire
+related feature bands of the dynamic variant with in average only round                      crop growth profile, and hence comprehensive indirect climate infor-
+3%–4% of the 13 bands’ total sum of attribution scores (Fig. 6). We                          mation, for a year might not be available (e.g., in early classification
+indeed find experiments with a statistical relation between a higher                         experiments), additional weather context may prove more valuable.
+feature attribution to the weather bands and a related improvement
+in transfer accuracy compared to the multispectral-only setting. This
+                                                                                             5.5. Input determinants for UDA in SITS
+relation is however not consistently observable (e.g., in terms of statis-
+tical correlation) across all settings. Hence, adding weather data in the
+                                                                                                 This section’s central question revolves around identifying charac-
+proposed way can improve accuracy in individual settings, yet it did not
+                                                                                             teristics in input features and domains, which significantly affect the
+show to consistently enhance classification accuracy. Compared to the
+dynamic approach, the static version of weather data might have been                         performance of SITS-related domain adaptation problems. One of the
+too generalized, failing to capture temporal specificity. In fact, prior                     key findings concerns the impact of data quality. The level of noisiness
+research has demonstrated that typical weather related parameters may                        between domains plays a crucial role in determining UDA success, as
+inherently be traced by spectral reflectivity. For instance, soil moisture,                  illustrated by the difference in performance between the datasets from
+which reflects water availability, can be estimated using S2 images,                         the Netherlands in 2021 and 2022 (Tables A.3 and 5). The noisier
+offering indirect insights into precipitation (Ma et al., 2020; Srivastava,                  data from 2021 (Fig. A.2) led to notably worse results. This issue
+2017; Liu et al., 2021b). Likewise, temperature trends can be inferred                       becomes particularly pronounced in smaller countries, where single
+from e.g., the narrowness of vegetation curves (see 5.1), and hence,                         noisy satellite images cannot be buffered as effectively as in larger
+in case of NDVI, red and near-infrared spectral bands. For future work,                      regions. Future research shall study experiments with a non-optimized
+we suggest exploring whether higher-resolution weather data, may lead                        selection of multispectral images to further explore the impact of data
+
+                                                                                       123
+D. Gackstetter et al.                                                                                      ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+Table 5                                                                                       algorithm to adapt from a more challenging setting to a simpler one
+Quantitative evaluation of RAINCOAT using mean 𝑓1 -value (𝑓1 ) summarized by country
+                                                                                              than the other way around. This behavior can be explained by the fact
+and differentiated by a country’s role as source and target domain for each scenario.
+                                                                                              that the source domain is trained in a supervised way, facilitating the
+ Scenario               Year       Country            Source 𝑓1           Target 𝑓1
+                                                                                              learning process, whereas the transfer learning is conducted in a more
+ SC1                    2021       AT                 0.910               0.904               challenging, unsupervised manner, adding additional complexity to the
+ SC1                    2021       DE                 0.893               0.969
+ SC1                    2021       EE                 0.914               0.878
+                                                                                              task. These findings underline the importance of focusing not only on
+ SC1                    2021       FR                 0.921               0.940               the distance between domains, e.g., through linear, temporal shifts (Ny-
+ SC1                    2021       LV                 0.918               0.906               borg et al., 2022), but also on the internal structural characteristics of
+ SC1                    2021       NL                 0.868               0.954               class patterns within each domain.
+ SC1                    2021       SE                 0.916               0.921
+ SC1                    2021       SI                 0.926               0.794
+ SC2                    2022       AT                 0.763               0.744               6. Conclusions
+ SC2                    2022       DE                 0.763               0.745
+ SC2                    2022       FR                 0.793               0.737                   With this research, we present RAINCOAT-SRS, a new benchmark
+ SC2                    2022       NL                 0.587               0.688               model for UDA in SITS, which outperforms the state-of-the-art algo-
+ SC2                    2022       SK                 0.687               0.681
+ SC2                    2021       AT                 0.781               0.708
+                                                                                              rithm on closed-set, crop type mapping by up to 24% in average 𝑓1 -
+ SC2                    2021       DE                 0.747               0.769               score. Our results suppose that the explicit integration of frequency fea-
+ SC2                    2021       FR                 0.756               0.772               tures represents a less dominant element to UDA in the SITS domain as
+ SC2                    2021       NL                 0.611               0.659               for the standard time series problems with measurable positive impacts
+ SC2                    2021       SK                 0.680               0.667
+                                                                                              only in individual experiments. Having assessed different encoder–
+ SC3                    2021       AT                 0.701               0.638
+ SC3                    2021       DE                 0.662               0.700               decoder constellations, the combination of an self-attention-based en-
+ SC3                    2021       FR                 0.718               0.712               coder with the default decoder revealed a performance increase to the
+ SC3                    2021       NL                 0.522               0.604               standard algorithm of up to 6% in average 𝑓1 -score. To enhance the rep-
+ SC3                    2021       SK                 0.617               0.634               resentativeness of these results, we encourage the science community
+ SC3                    2022       AT                 0.737               0.657
+ SC3                    2022       DE                 0.681               0.678
+                                                                                              to study our new modeling approach also on other SITS problems and
+ SC3                    2022       FR                 0.723               0.662               recommend further research on encoder–decoder settings. Evaluating
+ SC3                    2022       NL                 0.558               0.648               feature constellations with context information by means of weather
+ SC3                    2022       SK                 0.590               0.574               data did not improve average adaptation scores, which indicates that
+                                                                                              substantial parts of weather-related information may implicitly be in-
+                                                                                              cluded in the multispectral signals. Beyond, our study outlined several
+quality and noise. Beyond, regarding feature characteristics and related                      factors for the successful transferability of classes. Other than previous
+impacts on transferability, our results reveal several key factors:                           works suggested, it is less the collective, linear shift between domains,
+     Domain Similarity: There is a clear relationship between the geo-                        but the shift of the relative structure of sets of classes to each other
+graphic similarity of domains and adaptation performance. In theory,                          between source and target domains, which exerts the strongest im-
+the closer or more similar the domains (here: countries), the better the                      pact on transferability. We hope our method and findings will benefit
+transfer results (Ma et al., 2024a; Zhang et al., 2019). Our case studies                     the remote sensing community towards more comprehensive cross-
+confirm this statement by showing a moderate negative correlation                             regional and multi-temporal SITS-based experiments in the absence of
+(𝑟 ≈ −0.4) between climate differences measured using the MSE along                           target-labeled data.
+the time series and the 𝑓1 -score, which indicates that greater climatic
+differences tend to lead to lower adaptation scores and vice versa.                           CRediT authorship contribution statement
+     Class Variance in Source Domains: Another important factor repre-
+sents the variance of classes within the source domains. The higher the                          David Gackstetter: Writing – original draft, Visualization, Soft-
+overall variance in a source domain’s class-specific, spectral patterns,                      ware, Methodology, Investigation, Formal analysis, Data curation, Con-
+the better its average transferability to other target domains. This                          ceptualization. Kang Yu: Writing – review & editing, Supervision, Con-
+was tested using the 90%-quantile range of NDVI values summed per                             ceptualization. Marco Körner: Writing – review & editing, Supervision,
+country and compared to the average adaptation 𝑓1 -scores across all                          Methodology, Conceptualization.
+countries. The once with the highest variability demonstrated the best
+transfer performance, with the 𝑓1 -score and standard deviation showing                       Declaration of competing interest
+a moderate positive correlation of 𝑟 ≈ 0.6. In crop type mapping, class-
+wise variance is a natural result of variability in climates. Consequently,                       The authors declare that they have no known competing finan-
+we could also observe that the 𝑓1 -score of a source domain positively                        cial interests or personal relationships that could have appeared to
+correlates with the standard deviation of the weather parameters.                             influence the work reported in this paper.
+     Class Feature Structure: The similarity of characteristic features
+across domains represents one decisive factor for transfer performance.                       Acknowledgments
+It is, however, not the feature shift between pairs of classes (measured
+in MSE), which shows a strong correlation with mean 𝑓1 per class.                                The authors would like to thank the German Aerospace Center
+Instead, the similarity of the relative structure of class patterns per                       (DLR), which supported this research with data and processing re-
+domain, has a greater effect on transfer success. For target domains, the                     sources within the framework of the EO-Lab Cloud. We also express
+correlation coefficient between 𝑓1 -score and summed MSE (calculated                          our sincere gratitude to the World Agricultural Systems Center - Hans
+based on all pairs of classes per domain) accounts to 𝑟 ≈ 0.7, while for                      Eisenmann-Forum for Agricultural Sciences (HEF) of Technical Uni-
+source domains it is inversely correlated at 𝑟 ≈ −0.5. This suggests that                     versity of Munich (TUM) for providing resources and the working
+narrower patterns between classes within a source domain improve its                          environment to completing this project.
+effectiveness as a source domain, while making it more challenging as
+a target domain. For example, Slovenia (SI) had the lowest MSE value                          Appendix. Figures and tables
+in its class-structure and achieved an average 𝑓1 -score of 92.6%, when
+it acted as the source domain, but only 79.4% as target domain (Table                            See Figs. A.1–A.4 and Tables A.1–A.4.
+5). We can therefore conclude that it appears a simpler problem for an
+
+                                                                                        124
+D. Gackstetter et al.                                                                                     ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+
+
+     Fig. A.1. Absolute class frequencies of samples for (a) SC1 including four classes and nine countries and (b) the SC2 and SC3 based on nine classes and five countries.
+
+
+
+
+                               Table A.1
+                               Set of crop types per experimental scenario including denomination and codes from the Hierarchical Crop and
+                               Agricultural Taxonomy (HCAT) with class identification number (ID).
+                                Scenario-ID                 Class-ID                HCAT-Name                                       HCAT-Code
+                                                            1                       winter_common_soft_wheat                        3301010101
+                                                            2                       grain_maize_corn_popcorn                        3301010600
+                                SC1
+                                                            3                       potatoes                                        3301030000
+                                                            4                       pasture_meadow_grassland_grass                  3302000000
+                                                            1                       winter_common_soft_wheat                        3301010101
+                                                            2                       winter_barley                                   3301010401
+                                                            3                       grain_maize_corn_popcorn                        3301010600
+                                                            4                       peas                                            3301020600
+                                SC2/3                       5                       potatoes                                        3301030000
+                                                            6                       winter_rapeseed_rape                            3301060401
+                                                            7                       sunflower                                       3301060500
+                                                            8                       green_silo_maize                                3301090400
+                                                            9                       pasture_meadow_grassland_grass                  3302000000
+
+
+
+
+                                                                                      125
+D. Gackstetter et al.                                                                                       ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+                   Table A.2
+                   Arithmetic mean values of temperature and precipitation records calculated from the set of derived weather data per country in the study area
+                   for the years 2021 and 2022.
+                        Country             Year              Temperature 𝑇               𝛥𝑇 (2021, 2022)            Precipitation 𝑃            𝛥𝑃 (2021, 2022)
+                        Austria             2021              7.41                        –                          1091.11                    –
+                                            2022              8.65                        1.24                       948.84                     −142.27
+                        Estonia             2021              6.3                         –                          690.93                     –
+                                            2022              6.9                         0.6                        591.31                     −99.62
+                        France              2021              11.58                       –                          835.42                     –
+                                            2022              13.16                       1.58                       645.1                      −190.32
+                        Germany             2021              9.49                        –                          772.97                     –
+                                            2022              10.83                       1.34                       612.51                     −160.46
+                        Latvia              2021              6.82                        –                          693.56                     –
+                                            2022              7.4                         0.58                       638.67                     −54.89
+                        Netherlands         2021              10.41                       –                          866.27                     –
+                                            2022              11.72                       1.31                       692.51                     −173.76
+                        Slovakia            2021              8.79                        –                          735.55                     –
+                                            2022              9.81                        1.02                       648.74                     −86.81
+                        Slovenia            2021              10                          –                          1301.66                    –
+                                            2022              11.04                       1.04                       1138.3                     −163.36
+                        Sweden              2021              3.08                        –                          607.7                      –
+                                            2022              3.84                        0.76                       604.3                      −3.4
+
+
+
+
+Fig. A.2. Median NDVI-values for the nine considered countries Austria, Estonia, France, Germany, Latvia, Slovenia, Slovakia, and Sweden (in this order corresponding to (a)–(i))
+in 2021 with their respective maximum set of classes in SC1-3.
+
+
+                                                                                       126
+D. Gackstetter et al.                                                                                    ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+
+
+Fig. A.3. Median NDVI-values for the five considered countries Austria, France, Germany, Netherlands, and Slovakia (in this order corresponding to (a)–(e)) in 2022 with their
+respective maximum set of classes in SC1-3.
+
+
+
+
+Fig. A.4. Precipitation expressed by value range of medians, average median, and cumulative sums for the years 2021 and 2022 across the nine considered countries Austria,
+Estonia, France, Germany, Latvia, Netherlands, Slovakia, Slovenia, and Sweden.
+
+
+
+
+                                                                                     127
+D. Gackstetter et al.                                                                                      ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+
+Table A.3
+Transfer results for each scenario and transfer direction with mean 𝑓1 -values for
+RAINCOAT, TimeMatch, and Source-trained models.
+ Scenario          Transfer    TimeMatch        RAINCOAT          Source-Trained
+ SC1               AT-DE       0.967            0.964             0.916
+ SC1               AT-EE       0.838            0.805             0.772
+ SC1               AT-FR       0.944            0.935             0.904
+                                                                                            Table A.3 (continued).
+ SC1               AT-LV       0.865            0.875             0.831
+ SC1               AT-NL       0.949            0.938             0.883                      SC2                SK-AT                 0.708                0.684            0.625
+ SC1               AT-SE       0.897            0.897             0.879                      SC2                SK-DE                 0.700                0.610            0.607
+ SC1               AT-SI       0.857            0.845             0.830                      SC2                SK-FR                 0.637                0.642            0.584
+ SC1               DE-AT       0.851            0.868             0.817                      SC2                SK-NL                 0.576                0.530            0.502
+ SC1               DE-EE       0.882            0.795             0.785                      SC3                AT21-AT22             0.522                0.695            0.232
+ SC1               DE-FR       0.932            0.922             0.896                      SC3                AT21-DE22             0.398                0.629            0.247
+ SC1               DE-LV       0.903            0.867             0.857                      SC3                AT21-FR22             0.471                0.619            0.241
+ SC1               DE-NL       0.963            0.957             0.959                      SC3                AT21-NL22             0.388                0.547            0.166
+ SC1               DE-SE       0.910            0.900             0.870                      SC3                AT21-SK22             0.294                0.567            0.228
+ SC1               DE-SI       0.746            0.751             0.689                      SC3                DE21-AT22             0.489                0.595            0.208
+ SC1               EE-AT       0.785            0.843             0.634                      SC3                DE21-DE22             0.526                0.645            0.319
+ SC1               EE-DE       0.700            0.917             0.707                      SC3                DE21-FR22             0.384                0.632            0.305
+ SC1               EE-FR       0.620            0.818             0.602                      SC3                DE21-NL22             0.496                0.626            0.272
+ SC1               EE-LV       0.885            0.909             0.864                      SC3                DE21-SK22             0.346                0.479            0.195
+ SC1               EE-NL       0.775            0.862             0.698                      SC3                FR21-AT22             0.452                0.683            0.169
+ SC1               EE-SE       0.887            0.887             0.844                      SC3                FR21-DE22             0.379                0.629            0.194
+ SC1               EE-SI       0.512            0.725             0.564                      SC3                FR21-FR22             0.488                0.683            0.215
+ SC1               FR-AT       0.914            0.908             0.784                      SC3                FR21-NL22             0.462                0.543            0.153
+ SC1               FR-DE       0.970            0.969             0.952                      SC3                FR21-SK22             0.299                0.452            0.139
+ SC1               FR-EE       0.891            0.858             0.775                      SC3                NL21-AT22             0.322                0.566            0.152
+ SC1               FR-LV       0.880            0.892             0.823                      SC3                NL21-DE22             0.412                0.564            0.150
+ SC1               FR-NL       0.965            0.953             0.945                      SC3                NL21-FR22             0.313                0.540            0.154
+ SC1               FR-SE       0.923            0.917             0.873                      SC3                NL21-NL22             0.462                0.694            0.237
+ SC1               FR-SI       0.846            0.827             0.829                      SC3                NL21-SK22             0.295                0.474            0.130
+ SC1               LV-AT       0.844            0.833             0.788                      SC3                SK21-AT22             0.419                0.583            0.271
+ SC1               LV-DE       0.932            0.946             0.881                      SC3                SK21-DE22             0.476                0.495            0.261
+ SC1               LV-EE       0.930            0.897             0.902                      SC3                SK21-FR22             0.362                0.535            0.305
+ SC1               LV-FR       0.912            0.905             0.826                      SC3                SK21-NL22             0.300                0.466            0.174
+ SC1               LV-NL       0.920            0.911             0.848                      SC3                SK21-SK22             0.436                0.667            0.320
+ SC1               LV-SE       0.925            0.900             0.889
+ SC1               LV-SI       0.796            0.751             0.706
+ SC1               NL-AT       0.821            0.854             0.739
+ SC1               NL-DE       0.971            0.973             0.960
+ SC1               NL-EE       0.782            0.727             0.663
+ SC1               NL-FR       0.921            0.921             0.861
+ SC1               NL-LV       0.840            0.859             0.761
+ SC1               NL-SE       0.873            0.896             0.821
+ SC1               NL-SI       0.646            0.717             0.652
+ SC1               SE-AT       0.856            0.832             0.798
+ SC1               SE-DE       0.964            0.968             0.927
+ SC1               SE-EE       0.922            0.879             0.868
+ SC1               SE-FR       0.903            0.926             0.865
+ SC1               SE-LV       0.916            0.901             0.882
+ SC1               SE-NL       0.952            0.954             0.913
+ SC1               SE-SI       0.777            0.750             0.737
+ SC1               SI-AT       0.886            0.910             0.809
+ SC1               SI-DE       0.927            0.950             0.898                     Table A.4
+ SC1               SI-EE       0.394            0.815             0.671                     Evaluation of input feature variations for RAINCOAT-SRS using arithmetic mean and
+ SC1               SI-FR       0.945            0.919             0.852                     standard deviation (‘‘std’’) of mean 𝑓1 -values across each scenario’s set of transfer
+ SC1               SI-LV       0.526            0.854             0.768                     experiments. Five settings of feature constellations, including two variations with
+ SC1               SI-NL       0.863            0.920             0.855                     additional weather features (combined with constant-normed spectral sequences) and
+ SC1               SI-SE       0.812            0.884             0.808                     the default multispectral-only version, are compared with each other on the three main
+ SC2               AT-DE       0.738            0.786             0.709                     scenarios (for implementation details compare 4.3.2).
+ SC2               AT-FR       0.809            0.788             0.717
+                                                                                             Scenario      Clim-Dynamic              Clim-Static            Multispectral-Only
+ SC2               AT-NL       0.678            0.651             0.600
+ SC2               AT-SK       0.677            0.763             0.632                                    𝑓1                        𝑓1                     𝑓1
+ SC2               DE-AT       0.706            0.694             0.697                                    mean             std      mean          std      mean           std
+ SC2               DE-FR       0.781            0.782             0.713
+ SC2               DE-NL       0.692            0.718             0.649                      1             0.908            0.055    0.909         0.055    0.908          0.058
+ SC2               DE-SK       0.676            0.639             0.659                      2             0.697            0.123    0.688         0.125    0.750          0.081
+ SC2               FR-AT       0.724            0.762             0.703                      3             0.629            0.111    0.610         0.110    0.644          0.107
+ SC2               FR-DE       0.772            0.816             0.744                      𝑓1            0.745            0.097    0.735         0.097    0.767          0.082
+ SC2               FR-NL       0.645            0.659             0.615
+ SC2               FR-SK       0.683            0.760             0.664
+ SC2               NL-AT       0.561            0.540             0.539
+ SC2               NL-DE       0.710            0.701             0.639
+ SC2               NL-FR       0.656            0.690             0.586
+ SC2               NL-SK       0.511            0.540             0.492
+                                                           (continued on next page)
+
+
+
+
+                                                                                      128
+D. Gackstetter et al.                                                                                              ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+Data availability                                                                                   Esri, HERE, Garmin, Intermap, INCREMENT P, GEBCO, USGS, FAO, NPS, NRCan,
+                                                                                                         GeoBase, IGN, Kadaster NL, Ordnance Survey, Esri Japan, METI, Mapwithyou, NOS-
+                                                                                                         TRA, OpenStreetMap contributors, GIS user community, 2024. World topographic
+   The geo-datasets used during the current work are publically avail-                                   map. URL https://doc.arcgis.com/en/data-appliance/7.2/maps/world-topographic-
+able, e.g. in the EuroCrops Zenodo repository, https://doi.org/10.                                       map.htm.
+5281/zenodo.6866846. The Sentinel-2 satellite images are retrieved                                  European Commission, 2022. The common agricultural policy at a glance. URL https://
+from the European Space Agency’s public data repository. The weather                                     agriculture.ec.europa.eu/common-agricultural-policy/cap-overview/cap-glance_en.
+                                                                                                    European Union, 2023. NUTS - nomenclature of territorial units for statistics. URL
+data is available at Open-Meteo.com (Zippenfenig, 2023).
+                                                                                                         https://ec.europa.eu/eurostat/web/nuts/background.
+                                                                                                    Facebook Inc., 2023. Captum API reference. URL https://captum.ai/api/.
+                                                                                                    Farahani, A., Voghoei, S., Rasheed, K., Arabnia, H.R., 2021. A brief review of
+References                                                                                               domain adaptation. In: Stahlbock, R., Weiss, G.M., Abou-Nasr, M., Yang, C.-Y.,
+                                                                                                         Arabnia, H.R., Deligiannidis, L. (Eds.), Advances in Data Science and Information
+Addimando, N., Engel, M., Schwarz, F., Batič, M., 2022. A deep learning approach for                     Engineering. In: Transactions on Computational Science and Computational Intel-
+    crop type mapping based on combined time series of satellite and weather data.                       ligence, Springer International Publishing, Cham, pp. 877–894. http://dx.doi.org/
+    Int. Arch. Photogramm. Remote. Sens. Spat. Inf. Sci. XLIII-B3-2022, 1301–1308.                       10.1007/978-3-030-71704-9_65.
+    http://dx.doi.org/10.5194/isprs-archives-XLIII-B3-2022-1301-2022.                               Fatras, K., Sejourne, T., Flamary, R., Courty, N., 2021. Unbalanced minibatch optimal
+Aggarwal, C.C., 2023. Neural Networks and Deep Learning: A textbook, second ed.                          transport; applications to domain adaptation. In: Meila, M., Zhang, T. (Eds.),
+    Springer International Publishing AG, Cham.                                                          Proceedings of the 38th International Conference on Machine Learning. In: Pro-
+Arbel, M., Korba, A., SALIM, A., Gretton, A., 2019. Maximum mean discrepancy                             ceedings of Machine Learning Research, vol. 139, PMLR, pp. 3186–3197, URL
+    gradient flow. In: Wallach, H., Larochelle, H., Beygelzimer, A., d’Alché Buc, F.,                    https://proceedings.mlr.press/v139/fatras21a.html.
+    Fox, E., Garnett, R. (Eds.), Advances in Neural Information Processing Systems.                 Fernando, B., Habrard, A., Sebban, M., Tuytelaars, T., 2013. Unsupervised visual do-
+    vol. 32, Curran Associates, Inc.                                                                     main adaptation using subspace alignment. In: 2013 IEEE International Conference
+                                                                                                         on Computer Vision. pp. 2960–2967. http://dx.doi.org/10.1109/ICCV.2013.368.
+Bahdanau, D., Cho, K., Bengio, Y., 2014. Neural machine translation by jointly learning
+                                                                                                    Feydy, J., Séjourné, T., Vialard, F.-X., Amari, S.-i., Trouve, A., Peyré, G., 2019.
+    to align and translate. http://dx.doi.org/10.48550/arXiv.1409.0473.
+                                                                                                         Interpolating between optimal transport and MMD using sinkhorn divergences.
+Batur Sahin, C., Diri, B., 2021. Sequential feature maps with LSTM recurrent neural
+                                                                                                         In: Chaudhuri, K., Sugiyama, M. (Eds.), Proceedings of the Twenty-Second In-
+    networks for robust tumor classification. Balk. J. Electr. Comput. Eng. 9 (1), 23–32.
+                                                                                                         ternational Conference on Artificial Intelligence and Statistics. In: Proceedings
+    http://dx.doi.org/10.17694/bajece.604885.
+                                                                                                         of Machine Learning Research, vol. 89, PMLR, pp. 2681–2690, URL https://
+Beck, H.E., Zimmermann, N.E., McVicar, T.R., Vergopolan, N., Berg, A., Wood, E.F.,
+                                                                                                         proceedings.mlr.press/v89/feydy19a.html.
+    2018. Present and future Köppen-Geiger climate classification maps at 1-km
+                                                                                                    Foerster, S., Kaden, K., Foerster, M., Itzerott, S., 2012. Crop type mapping using
+    resolution. Sci. Data 5, 180214. http://dx.doi.org/10.1038/sdata.2018.214.
+                                                                                                         spectral–temporal profiles and phenological information. Comput. Electron. Agric.
+Bejiga, M.B., Melgani, F., Beraldini, P., 2019. Domain adversarial neural networks for
+                                                                                                         89, 30–40. http://dx.doi.org/10.1016/j.compag.2012.07.015.
+    large-scale land cover classification. Remote. Sens. 11 (10), 1153. http://dx.doi.
+                                                                                                    Foga, S., Scaramuzza, P.L., Guo, S., Zhu, Z., Dilley, R.D., Beckmann, T., Schmidt, G.L.,
+    org/10.3390/rs11101153.
+                                                                                                         Dwyer, J.L., Joseph Hughes, M., Laue, B., 2017. Cloud detection algorithm
+Bellocchio, E., Costante, G., Cascianelli, S., Fravolini, M.L., Valigi, P., 2020. Combining
+                                                                                                         comparison and validation for operational landsat data products. Remote Sens.
+    domain adaptation and spatial consistency for unseen fruits counting: A quasi-
+                                                                                                         Environ. 194, 379–390. http://dx.doi.org/10.1016/j.rse.2017.03.026.
+    unsupervised approach. IEEE Robot. Autom. Lett. 5 (2), 1079–1086. http://dx.doi.
+                                                                                                    Gackstetter, D., von Bloh, M., Hannus, V., Meyer, S.T., Weisser, W., Luksch, C.,
+    org/10.1109/LRA.2020.2966398.
+                                                                                                         Asseng, S., 2023. Autonomous field management – an enabler of sustainable future
+Bengio, Y., Simard, P., Frasconi, P., 1994. Learning long-term dependencies with
+                                                                                                         in agriculture. Agricult. Sys. 206, 103607. http://dx.doi.org/10.1016/j.agsy.2023.
+    gradient descent is difficult. IEEE Trans. Neural Netw. 5 (2), 157–166. http:
+                                                                                                         103607.
+    //dx.doi.org/10.1109/72.279181.
+                                                                                                    Gackstetter, D., Körner, M., Yu, K., 2024. Approaching holistic crop type mapping
+Berthelot, D., Roelofs, R., Sohn, K., Carlin, N., Kurakin, A., 2022. AdaMatch: A unified
+                                                                                                         in europe through winter vegetation classification and the hierarchical crop and
+    approach to semi-supervised learning and domain adaptation. In: International
+                                                                                                         agriculture taxonomy. Int. J. Appl. Earth Obs. Geoinf. 134, 104159. http://dx.doi.
+    Conference on Learning Representations. URL https://openreview.net/forum?id=
+                                                                                                         org/10.1016/j.jag.2024.104159.
+    Q5uh1Nvv5dm.
+                                                                                                    Galushkin, A., 2007. Neural Networks Theory. Springer Berlin Heidelberg, Berlin,
+Bevington, A.R., Menounos, B., 2022. Accelerated change in the glaciated environments                    Heidelberg, http://dx.doi.org/10.1007/978-3-540-48125-6.
+    of western Canada revealed through trend analysis of optical satellite imagery.                 Ganin, Y., Lempitsky, V., 2015. Unsupervised domain adaptation by backpropagation.
+    Remote Sens. Environ. 270, 112862. http://dx.doi.org/10.1016/j.rse.2021.112862.                      In: Proceedings of the 32nd International Conference on International Conference
+Bhattacharyya, S.S., Deprettere, E.F., Leupers, R., Takala, J., 2019. Handbook of Signal                 on Machine Learning - Volume 37. ICML ’15, JMLR.org, pp. 1180–1189.
+    Processing Systems. Springer International Publishing, Cham, http://dx.doi.org/10.              Ganin, Y., Ustinova, E., Ajakan, H., Germain, P., Larochelle, H., Laviolette, F., Marc-
+    1007/978-3-319-91734-4.                                                                              hand, M., Lempitsky, V., 2017. Domain-adversarial training of neural networks. In:
+Blickensdörfer, L., Schwieder, M., Pflugmacher, D., Nendel, C., Erasmi, S., Hostert, P.,                 Csurka, G. (Ed.), Domain Adaptation in Computer Vision Applications. In: Advances
+    2022. Mapping of crop types and crop sequences with combined time series of                          in Computer Vision and Pattern Recognition, Springer International Publishing,
+    sentinel-1, sentinel-2 and landsat 8 data for Germany. Remote Sens. Environ. 269,                    Cham, pp. 189–209. http://dx.doi.org/10.1007/978-3-319-58347-1_10.
+    112831. http://dx.doi.org/10.1016/j.rse.2021.112831.                                            Gao, F., Anderson, M.C., Hively, W.D., 2020. Detecting cover crop end-of-season
+Brown, A., Tomasev, N., Freyberg, J., Liu, Y., Karthikesalingam, A., Schrouff, J., 2023.                 using VEN𝜇S and sentinel-2 satellite imagery. Remote. Sens. 12 (21), 3524. http:
+    Detecting shortcut learning for fair medical AI using shortcut testing. Nat. Commun.                 //dx.doi.org/10.3390/rs12213524.
+    14 (1), 4314. http://dx.doi.org/10.1038/s41467-023-39902-7.                                     Gao, F., Zhang, X., 2021. Mapping crop phenology in near real-time using satellite
+Cai, R., Chen, J., Li, Z., Chen, W., Zhang, K., Ye, J., Li, Z., Yang, X., Zhang, Z., 2021.               remote sensing: Challenges and opportunities. J. Remote. Sens. 2021, 1–14. http:
+    Time series domain adaptation via sparse associative structure alignment. Proc.                      //dx.doi.org/10.34133/2021/8379391.
+    AAAI Conf. Artif. Intell. 35 (8), 6859–6867. http://dx.doi.org/10.1609/aaai.v35i8.              German Aerospace Center, 2024. EO-lab cloud. URL https://eo-lab.org/en/about/.
+    16846.                                                                                          Gong, B., Shi, Y., Sha, F., Grauman, K., 2012. Geodesic flow kernel for unsupervised
+Chen, M., Zhao, S., Liu, H., Cai, D., 2020. Adversarial-learned loss for domain                          domain adaptation. In: 2012 IEEE Conference on Computer Vision and Pattern
+    adaptation. Proc. AAAI Conf. Artif. Intell. 34 (04), 3521–3528. http://dx.doi.org/                   Recognition. pp. 2066–2073. http://dx.doi.org/10.1109/CVPR.2012.6247911.
+    10.1609/aaai.v34i04.5757.                                                                       Guha, S., Jana, R.K., Sanyal, M.K., 2022. Artificial neural network approaches for
+Cheng, Z., Wang, S., Yang, D., Qi, J., Xiao, M., Yan, C., 2024. Deep joint semantic                      disaster management: A literature review. Int. J. Disaster Risk Reduct. 81, 103276.
+    adaptation network for multi-source unsupervised domain adaptation. Pattern                          http://dx.doi.org/10.1016/j.ijdrr.2022.103276.
+    Recognit. 151, 110409. http://dx.doi.org/10.1016/j.patcog.2024.110409.                          Han, K., Wang, Y., Chen, H., Chen, X., Guo, J., Liu, Z., Tang, Y., Xiao, Xu, C., Xu, Y.,
+Debayle, J., Hatami, N., Gavet, Y., 2018. Classification of time-series images using deep                Yang, Z., Zhang, Y., Tao, D., 2023. A survey on vision transformer. IEEE Trans.
+    convolutional neural networks. p. 23. http://dx.doi.org/10.1117/12.2309486.                          Pattern Anal. Mach. Intell. 45 (1), 87–110. http://dx.doi.org/10.1109/TPAMI.2022.
+Decuyper, M., Chávez, R.O., Lohbeck, M., Lastra, J.A., Tsendbazar, N., Hackländer, J.,                   3152247.
+    Herold, M., Vågen, T.-G., 2022. Continuous monitoring of forest change dynamics                 Harris, F.J., 1978. On the use of windows for harmonic analysis with the discrete
+    with satellite time series. Remote Sens. Environ. 269, 112829. http://dx.doi.org/                    Fourier transform. Proc. IEEE 66 (1), 51–83. http://dx.doi.org/10.1109/PROC.
+    10.1016/j.rse.2021.112829.                                                                           1978.10837.
+Drusch, M., Del Bello, U., Carlier, S., Colin, O., Fernandez, V., Gascon, F., Hoersch, B.,          He, H., Queen, O., Koker, T., Cuevas, C., Tsiligkaridis, T., Zitnik, M., 2023. RAINCOAT:
+    Isola, C., Laberinti, P., Martimort, P., Meygret, A., Spoto, F., Sy, O., Marchese, F.,               GitHub repository. URL https://github.com/mims-harvard/Raincoat.
+    Bargellini, P., 2012. Sentinel-2: Esa’s optical high-resolution mission for GMES                He, Y., Xiao, L., 2023. Structured pruning for deep convolutional neural networks: A
+    operational services. Remote Sens. Environ. 120, 25–36. http://dx.doi.org/10.1016/                   survey. IEEE Trans. Pattern Anal. Mach. Intell. 1–20. http://dx.doi.org/10.1109/
+    j.rse.2011.11.026.                                                                                   TPAMI.2023.3334614.
+
+
+                                                                                              129
+D. Gackstetter et al.                                                                                                ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+Hochreiter, S., Schmidhuber, J., 1997. Long short-term memory. Neural Comput. 9 (8),                 Luo, Y., Zheng, L., Guan, T., Yu, J., Yang, Y., 2019. Taking a closer look at domain
+     1735–1780. http://dx.doi.org/10.1162/neco.1997.9.8.1735.                                            shift: Category-level adversaries for semantics consistent domain adaptation. In:
+Huang, S., Tang, L., Hupy, J.P., Wang, Y., Shao, G., 2021. A commentary review on the                    2019 IEEE/CVF Conference on Computer Vision and Pattern Recognition. CVPR,
+     use of normalized difference vegetation index (NDVI) in the era of popular remote                   pp. 2502–2511. http://dx.doi.org/10.1109/CVPR.2019.00261.
+     sensing. J. For. Res. 32 (1), 1–6. http://dx.doi.org/10.1007/s11676-020-01155-1.                Ma, Y., Chen, S., Ermon, S., Lobell, D.B., 2024a. Transfer learning in environmental
+Huete, A., Didan, K., Miura, T., Rodriguez, E., Gao, X., Ferreira, L., 2002. Overview                    remote sensing. Remote Sens. Environ. 301, 113924. http://dx.doi.org/10.1016/j.
+     of the radiometric and biophysical performance of the MODIS vegetation in-                          rse.2023.113924.
+     dices. Remote Sens. Environ. 83 (1–2), 195–213. http://dx.doi.org/10.1016/S0034-                Ma, Z., Gong, H., Wang, X., 2024b. Multiagent trajectory decision–making for complex
+     4257(02)00096-2.                                                                                    systems based on transformer large model structure. Internat. J. Robust Nonlinear
+Interdonato, R., Ienco, D., Gaetano, R., Ose, K., 2019. DuPLO: A dual view point deep                    Control http://dx.doi.org/10.1002/rnc.7648.
+     learning architecture for time series classification. ISPRS J. Photogramm. Remote               Ma, C., Li, X., McCabe, M.F., 2020. Retrieval of high-resolution soil moisture through
+     Sens. 149, 91–104. http://dx.doi.org/10.1016/j.isprsjprs.2019.01.011.                               combination of sentinel-1 and sentinel-2 data. Remote. Sens. 12 (14), 2303. http:
+Ismail Fawaz, H., Lucas, B., Forestier, G., Pelletier, C., Schmidt, D.F., Weber, J.,                     //dx.doi.org/10.3390/rs12142303.
+     Webb, G.I., Idoumghar, L., Muller, P.-A., Petitjean, F., 2020. InceptionTime: Finding           Mao, X., Qi, G., Chen, Y., Li, X., Duan, R., Ye, S., He, Y., Xue, H., 2022. Towards robust
+     AlexNet for time series classification. Data Min. Knowl. Discov. 34 (6), 1936–1962.                 vision transformer. In: Proceedings of the IEEE/CVF Conference on Computer Vision
+     http://dx.doi.org/10.1007/s10618-020-00710-y.                                                       and Pattern Recognition. CVPR, pp. 12042–12051.
+Jaiswal, A., Babu, A.R., Zadeh, M.Z., Banerjee, D., Makedon, F., 2021. A survey on                   Martini, M., Mazzia, V., Khaliq, A., Chiaberge, M., 2021. Domain-adversarial training
+     contrastive self-supervised learning. Technologies 9 (1), 2. http://dx.doi.org/10.                  of self-attention-based networks for land cover classification using multi-temporal
+     3390/technologies9010002.                                                                           sentinel-2 satellite imagery. Remote. Sens. 13 (13), 2564. http://dx.doi.org/10.
+                                                                                                         3390/rs13132564.
+Jin, X., Park, Y., Maddix, D., Wang, H., Wang, Y., 2022. Domain adaptation for time
+     series forecasting via attention sharing. In: Chaudhuri, K., Jegelka, S., Le Song,              Ndikumana, E., Ho Tong Minh, D., Baghdadi, N., Courault, D., Hossard, L., 2018. Deep
+     Szepesvari, C., Niu, G., Sabato, S. (Eds.), Proceedings of the 39th International                   recurrent neural network for agricultural classification using multitemporal SAR
+     Conference on Machine Learning. In: Proceedings of Machine Learning Research,                       sentinel-1 for camargue, France. Remote. Sens. 10 (8), 1217. http://dx.doi.org/10.
+     vol. 162, PMLR, pp. 10280–10297, URL https://proceedings.mlr.press/v162/jin22d.                     3390/rs10081217.
+     html.                                                                                           Neutelings, I., 2021. Fourier series & synthesis. URL https://tikz.net/fourier_series/.
+Józefowicz, R., Zaremba, W., Sutskever, I., 2015. An empirical exploration of recur-                 Norris, D.J., 2020. CNN demonstrations. In: Norris, D.J. (Ed.), Machine Learning with
+     rent network architectures. pp. 2342–2350, URL https://dl.acm.org/doi/10.5555/                      the Raspberry Pi. A Press, Berkeley, CA, pp. 335–385. http://dx.doi.org/10.1007/
+     3045118.3045367.                                                                                    978-1-4842-5174-4_6.
+Kang, G., Jiang, L., Yang, Y., Hauptmann, A.G., 2019. Contrastive adaptation network                 Nyborg, J., Pelletier, C., Lefèvre, S., Assent, I., 2022. TimeMatch: Unsupervised cross-
+     for unsupervised domain adaptation. In: 2019 IEEE/CVF Conference on Computer                        region adaptation by temporal shift estimation. ISPRS J. Photogramm. Remote Sens.
+     Vision and Pattern Recognition. CVPR, IEEE, pp. 4888–4897. http://dx.doi.org/10.                    188 (6), 301–313. http://dx.doi.org/10.1016/j.isprsjprs.2022.04.018.
+     1109/CVPR.2019.00503.                                                                           Othman, E., Bazi, Y., Melgani, F., Alhichri, H., Alajlan, N., Zuair, M., 2017. Domain
+                                                                                                         adaptation network for cross-scene classification. IEEE Trans. Geosci. Remote Sens.
+Kariyappa, S., Lecue, F., Mishra, S., Pond, C., Magazzeni, D., Veloso, M., 2024.
+                                                                                                         55 (8), 4441–4456. http://dx.doi.org/10.1109/TGRS.2017.2692281.
+     Progressive inference: Explaining decoder-only sequence classification models using
+     intermediate predictions. In: Salakhutdinov, R., Kolter, Z., Heller, K., Weller, A.,            Ott, F., Rügamer, D., Heublein, L., Bischl, B., Mutschler, C., 2022. Domain adaptation
+     Oliver, N., Scarlett, J., Berkenkamp, F. (Eds.), Proceedings of the 41st Inter-                     for time-series classification to mitigate covariate shift. In: Magalhães, J.a., Del
+     national Conference on Machine Learning. In: Proceedings of Machine Learning                        Bimbo, A., Satoh, S., Sebe, N., Alameda-Pineda, X., Jin, Q., Oria, V., Toni, L. (Eds.),
+     Research, vol. 235, PMLR, pp. 23238–23255, URL https://proceedings.mlr.press/                       Proceedings of the 30th ACM International Conference on Multimedia. ACM, New
+     v235/kariyappa24a.html.                                                                             York, NY, USA, pp. 5934–5943. http://dx.doi.org/10.1145/3503161.3548167.
+                                                                                                     Ozyurt, Y., Feuerriegel, S., Zhang, C., 2022. Contrastive learning for unsupervised
+Kim, Y., Denton, C., Hoang, L., Rush, A., 2017. Structured attention networks.
+                                                                                                         domain adaptation of time series. http://dx.doi.org/10.48550/ARXIV.2206.06243.
+Koh, P.W., Sagawa, S., Marklund, H., Xie, S.M., Zhang, M., Balsubramani, A., Hu, W.,
+                                                                                                     Painblanc, F., Chapel, L., Courty, N., Friguet, C., Pelletier, C., Tavenard, R., 2023.
+     Yasunaga, M., Phillips, R.L., Gao, I., Lee, T., David, E., Stavness, I., Guo, W., Earn-
+                                                                                                         Match-and-deform: Time series domain adaptation through optimal transport and
+     shaw, B., Haque, I., Beery, S.M., Leskovec, J., Kundaje, A., Pierson, E., Levine, S.,
+                                                                                                         temporal alignment. In: Koutra, D., Plant, C., Gomez Rodriguez, M., Baralis, E.,
+     Finn, C., Liang, P., 2021. WILDS: A benchmark of in-the-wild distribution shifts. In:
+                                                                                                         Bonchi, F. (Eds.), Machine Learning and Knowledge Discovery in Databases:
+     Meila, M., Zhang, T. (Eds.), Proceedings of the 38th International Conference on
+                                                                                                         Research Track. In: Lecture Notes in Computer Science, vol. 14173, Springer Nature
+     Machine Learning. In: Proceedings of Machine Learning Research, vol. 139, PMLR,
+                                                                                                         Switzerland, Cham, pp. 341–356. http://dx.doi.org/10.1007/978-3-031-43424-2_
+     pp. 5637–5664, URL https://proceedings.mlr.press/v139/koh21a.html.
+                                                                                                         21.
+Li, Z., Kovachki, N., Azizzadenesheli, K., Liu, B., Bhattacharya, K., Stuart, A., Anandku-
+                                                                                                     Pan, K., Tang, S., Li, J., Fan, Z., Chow, W., Yan, S., Chua, T.-S., Zhuang, Y., Zhang, H.,
+     mar, A., 2020. Fourier neural operator for parametric partial differential equations.
+                                                                                                         2024. Auto-encoding morph-tokens for multimodal LLM. In: Salakhutdinov, R.,
+     http://dx.doi.org/10.48550/arXiv.2010.08895.
+                                                                                                         Kolter, Z., Heller, K., Weller, A., Oliver, N., Scarlett, J., Berkenkamp, F. (Eds.),
+Li, P., Pei, Y., Li, J., 2023. A comprehensive survey on design and application of                       Proceedings of the 41st International Conference on Machine Learning. In: Pro-
+     autoencoder in deep learning. Appl. Soft Comput. 138, 110176. http://dx.doi.org/                    ceedings of Machine Learning Research, vol. 235, PMLR, pp. 39308–39323, URL
+     10.1016/j.asoc.2023.110176.                                                                         https://proceedings.mlr.press/v235/pan24h.html.
+Li, Z., Shen, H., Weng, Q., Zhang, Y., Dou, P., Zhang, L., 2022. Cloud and cloud                     Pan, S.J., Tsang, I.W., Kwok, J.T., Yang, Q., 2011. Domain adaptation via transfer
+     shadow detection for optical satellite imagery: Features, algorithms, validation, and               component analysis. IEEE Trans. Neural Netw. 22 (2), 199–210. http://dx.doi.org/
+     prospects. ISPRS J. Photogramm. Remote Sens. 188, 89–108. http://dx.doi.org/10.                     10.1109/TNN.2010.2091281.
+     1016/j.isprsjprs.2022.03.020.
+                                                                                                     Pan, S.J., Yang, Q., 2010. A survey on transfer learning. IEEE Trans. Knowl. Data Eng.
+Liu, Y., Qian, J., Yue, H., 2021b. Combined sentinel-1A with sentinel-2A to estimate                     22 (10), 1345–1359. http://dx.doi.org/10.1109/TKDE.2009.191.
+     soil moisture in farmland. IEEE J. Sel. Top. Appl. Earth Obs. Remote. Sens. 14,                 Paszke, A., Gross, S., Massa, F., Lerer, A., Bradbury, J., Chanan, G., Killeen, T.,
+     1292–1310. http://dx.doi.org/10.1109/JSTARS.2020.3043628.                                           Lin, Z., Gimelshein, N., Antiga, L., Desmaison, A., Kopf, A., Yang, E., DeVito, Z.,
+Liu, J., Xu, R., Yang, S., Zhang, R., Zhang, Q., Chen, Z., Guo, Y., Zhang, S., 2024.                     Raison, M., Tejani, A., Chilamkurthy, S., Steiner, B., Fang, L., Bai, J., Chintala, S.,
+     Continual-MAE: Adaptive distribution masked autoencoders for continual test-time                    2019. Pytorch: An imperative style, high-performance deep learning library. In:
+     adaptation. pp. 28653–28663. http://dx.doi.org/10.1109/CVPR52733.2024.02707.                        Advances in Neural Information Processing Systems. 32, Curran Associates, Inc,
+Liu, X., Zhang, F., Hou, Z., Mian, L., Wang, Z., Zhang, J., Tang, J., 2021a. Self-                       pp. 8024–8035.
+     supervised learning: Generative or contrastive. IEEE Trans. Knowl. Data Eng. 1.                 Pelletier, C., Webb, G., Petitjean, F., 2019. Temporal convolutional neural network
+     http://dx.doi.org/10.1109/TKDE.2021.3090866.                                                        for the classification of satellite image time series. Remote. Sens. 11 (5), 523.
+Long, M., Cao, Y., Wang, J., Jordan, M., 2015. Learning transferable features with                       http://dx.doi.org/10.3390/rs11050523.
+     deep adaptation networks. In: Bach, F., Blei, D. (Eds.), Proceedings of the 32nd                Pongratz, J., Dolman, H., Don, A., Erb, K.-H., Fuchs, R., Herold, M., Jones, C.,
+     International Conference on Machine Learning. In: Proceedings of Machine Learning                   Kuemmerle, T., Luyssaert, S., Meyfroidt, P., Naudts, K., 2018. Models meet data:
+     Research, vol. 37, PMLR, Lille, France, pp. 97–105, URL https://proceedings.mlr.                    Challenges and opportunities in implementing land management in earth system
+     press/v37/long15.html.                                                                              models. Global Change Biol. 24 (4), 1470–1487. http://dx.doi.org/10.1111/gcb.
+Long, M., CAO, Z., Wang, J., Jordan, M., 2018. Conditional adversarial domain                            13988.
+     adaptation. Adv. Neural Inf. Process. Syst. (31).                                               Powers, D.M.W., 2020. Evaluation: From precision, recall and F-measure to ROC,
+Lucas, B., Pelletier, C., Schmidt, D., Webb, G.I., Petitjean, F., 2020. Unsupervised                     informedness, markedness and correlation. http://dx.doi.org/10.48550/arXiv.2010.
+     domain adaptation techniques for classification of satellite image time series.                     16061.
+     In: IGARSS 2020 - 2020 IEEE International Geoscience and Remote Sensing                         Purushotham, S., Carvalho, W., Nilanon, T., Liu, Y., 2017. Variational recurrent
+     Symposium. IEEE, pp. 1074–1077. http://dx.doi.org/10.1109/IGARSS39084.2020.                         adversarial deep domain adaptation. In: International Conference on Learning
+     9324339.                                                                                            Representations. URL https://openreview.net/forum?id=rk9eAFcxg.
+
+
+                                                                                               130
+D. Gackstetter et al.                                                                                               ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+Ravirathinam, P., Ghosh, R., Khandelwal, A., Jia, X., Mulla, D., Kumar, V., 2024.                   Sohn, K., Berthelot, D., Carlini, N., Zhang, Z., Zhang, H., Raffel, C.A., Cubuk, E.D.,
+    Combining satellite and weather data for crop type mapping: An inverse modelling                    Kurakin, A., Li, C.-L., 2020. FixMatch: Simplifying semi-supervised learning with
+    approach. In: Shekhar, S., Papalexakis, V., Gao, J., Jiang, Z., Riondato, M. (Eds.),                consistency and confidence. In: Larochelle, H., Ranzato, M., Hadsell, R., Balcan, M.,
+    Proceedings of the 2024 SIAM International Conference on Data Mining. SDM,                          Lin, H. (Eds.), Advances in Neural Information Processing Systems. vol. 33, Curran
+    Society for Industrial and Applied Mathematics, Philadelphia, PA, pp. 445–453.                      Associates, Inc, pp. 596–608.
+    http://dx.doi.org/10.1137/1.9781611978032.52.                                                   Srivastava, P.K., 2017. Satellite soil moisture: Review of theory and applications in
+Reed, B.C., Brown, J.F., VanderZee, D., Loveland, T.R., Merchant, J.W., Ohlen, D.O.,                    water resources. Water Resour. Manag. 31 (10), 3161–3176. http://dx.doi.org/10.
+   1994. Measuring phenological variability from satellite imagery. J. Veg. Sci. 5 (5),                 1007/s11269-017-1722-6.
+   703–714. http://dx.doi.org/10.2307/3235884.                                                      Sun, B., Saenko, K., 2016. Deep CORAL: Correlation alignment for deep domain
+Ren, C.-X., Liu, Y.-H., Zhang, X.-W., Huang, K.-K., 2022. Multi-source unsupervised                     adaptation. In: Hua, G., Jégou, H. (Eds.), Computer Vision – ECCV 2016 Workshops.
+    domain adaptation via pseudo target domain. IEEE Trans. Image Process. : A                          In: Lecture Notes in Computer Science, vol. 9915, Springer International Publishing,
+    Publ. IEEE Signal Process. Soc. 31, 2122–2135. http://dx.doi.org/10.1109/TIP.                       Cham, pp. 443–450. http://dx.doi.org/10.1007/978-3-319-49409-8_35.
+    2022.3152052.                                                                                   Sun, C., Yuan, Z., Xu, K., Mai, L., N, S., Chen, S., Marina, M.K., 2024. Learn-
+                                                                                                        ing high-frequency functions made easy with sinusoidal positional encoding. In:
+Rumelhart, D.E., Hinton, G.E., Williams, R.J., 1986. Learning representations by
+                                                                                                        Salakhutdinov, R., Kolter, Z., Heller, K., Weller, A., Oliver, N., Scarlett, J.,
+   back-propagating errors. Nature 323 (6088), 533–536. http://dx.doi.org/10.1038/
+                                                                                                        Berkenkamp, F. (Eds.), Proceedings of the 41st International Conference on Machine
+   323533a0.
+                                                                                                        Learning. In: Proceedings of Machine Learning Research, vol. 235, PMLR, pp.
+Rußwurm, M., Körner, M., 2017. Temporal vegetation modelling using long short-term
+                                                                                                        47218–47233, URL https://proceedings.mlr.press/v235/sun24m.html.
+   memory networks for crop identification from medium-resolution multi-spectral
+                                                                                                    Sundararajan, M., Taly, A., Yan, Q., 2017. Axiomatic attribution for deep networks.
+   satellite images. In: 2017 IEEE Conference on Computer Vision and Pattern
+                                                                                                        http://dx.doi.org/10.48550/arXiv.1703.01365.
+   Recognition Workshops. CVPRW, IEEE, pp. 1496–1504. http://dx.doi.org/10.1109/
+                                                                                                    Tang, S., Su, P., Chen, D., Ouyang, W., 2021. Gradient regularized contrastive learning
+   CVPRW.2017.193.
+                                                                                                        for continual domain adaptation. Proc. AAAI Conf. Artif. Intell. 35 (3), 2665–2673.
+Rußwurm, M., Körner, M., 2018. Multi-temporal land cover classification with sequen-                    http://dx.doi.org/10.1609/aaai.v35i3.16370.
+   tial recurrent encoders. ISPRS Int. J. Geo- Inf. 7 (4), 129. http://dx.doi.org/10.               Theissler, A., Spinnato, F., Schlegel, U., Guidotti, R., 2022. Explainable AI for time
+   3390/ijgi7040129.                                                                                    series classification: A review, taxonomy and research directions. IEEE Access 10,
+Rußwurm, M., Körner, M., 2020. Self-attention for raw optical satellite time series                     100700–100724. http://dx.doi.org/10.1109/ACCESS.2022.3207765.
+   classification. ISPRS J. Photogramm. Remote Sens. 169, 421–435. http://dx.doi.                   Tóth, K., Kučas, A., 2016. Spatial information in European agricultural data manage-
+   org/10.1016/j.isprsjprs.2020.06.006.                                                                 ment. requirements and interoperability supported by a domain model. Land Use
+Saeed, W., Omlin, C., 2023. Explainable AI (XAI): A systematic meta-survey of current                   Policy 57, 64–79. http://dx.doi.org/10.1016/j.landusepol.2016.05.023.
+    challenges and future opportunities. Knowl.-Based Syst. 263, 110273. http://dx.doi.             Tuia, D., Persello, C., Bruzzone, L., 2016. Domain adaptation for the classification of
+    org/10.1016/j.knosys.2023.110273.                                                                   remote sensing data: An overview of recent advances. IEEE Geosci. Remote. Sens.
+Saini, R., Ghosh, S.K., 2018. Crop classification on single date sentinel-2 imagery using               Mag. 4 (2), 41–57. http://dx.doi.org/10.1109/MGRS.2016.2548504.
+    random forest and suppor vector machine. Int. Arch. Photogramm. Remote. Sens.                   Tzeng, E., Hoffman, J., Zhang, N., Saenko, K., Darrell, T., 2014. Deep domain confusion:
+    Spat. Inf. Sci. XLII-5, 683–688. http://dx.doi.org/10.5194/isprs-archives-XLII-5-683-               Maximizing for domain invariance. http://dx.doi.org/10.48550/arXiv.1412.3474.
+    2018.                                                                                           van Bussel, L.G., Ewert, F., Zhao, G., Hoffmann, H., Enders, A., Wallach, D., Asseng, S.,
+Sainte Fare Garnot, V., Landrieu, L., Giordano, S., Chehata, N., 2020. Satellite image                  Baigorria, G.A., Basso, B., Biernath, C., Cammarano, D., Chryssanthacopoulos, J.,
+    time series classification with pixel-set encoders and temporal self-attention. In:                 Constantin, J., Elliott, J., Glotter, M., Heinlein, F., Kersebaum, K.-C., Klein, C.,
+    2020 IEEE/CVF Conference on Computer Vision and Pattern Recognition. CVPR,                          Nendel, C., Priesack, E., Raynal, H., Romero, C.C., Rötter, R.P., Specka, X., Tao, F.,
+    IEEE, pp. 12322–12331. http://dx.doi.org/10.1109/CVPR42600.2020.01234.                              2016. Spatial sampling of weather data for regional crop yield simulations. Agricult.
+                                                                                                        Forest. Meterol. 220, 101–115. http://dx.doi.org/10.1016/j.agrformet.2016.01.014.
+Scheibenreif, L., Hanna, J., Mommert, M., Borth, D., 2022. Self-supervised vision
+                                                                                                    van der Maaten, L., Hinton, G., 2008. Visualizing high-dimensional data using t-SNE.
+    transformers for land-cover segmentation and classification. In: 2022 IEEE/CVF
+                                                                                                        J. Mach. Learn. Res. 9 (nov), 2579–2605.
+    Conference on Computer Vision and Pattern Recognition Workshops. CVPRW, IEEE,
+                                                                                                    Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A.N., Kaiser, L.,
+    pp. 1421–1430. http://dx.doi.org/10.1109/CVPRW56347.2022.00148.
+                                                                                                        Polosukhin, I., 2017. Attention is all you need. http://dx.doi.org/10.48550/arXiv.
+Schmeller, D.S., Böhm, M., Arvanitidis, C., Barber-Meyer, S., Brummitt, N., Chan-                       1706.03762.
+   dler, M., Chatzinikolaou, E., Costello, M.J., Ding, H., García-Moreno, J., Gill, M.,             Vetterli, M., Kovačević, J., Goyal, V.K., 2018. Foundations of Signal Processing.
+   Haase, P., Jones, M., Juillard, R., Magnusson, W.E., Martin, C.S., McGeoch, M.,                      Cambridge University Press, http://dx.doi.org/10.1017/CBO9781139839099.
+   Mihoub, J.-B., Pettorelli, N., Proença, V., Peng, C., Regan, E., Schmiedel, U.,
+                                                                                                    Virtanen, P., Gommers, R., Oliphant, T.E., Haberland, M., Reddy, T., Cournapeau, D.,
+   Simaika, J.P., Weatherdon, L., Waterman, C., Xu, H., Belnap, J., 2017. Building
+                                                                                                        Burovski, E., Peterson, P., Weckesser, W., Bright, J., van der Walt, S.J., Brett, M.,
+   capacity in biodiversity monitoring at the global scale. Biodivers. Conserv. 26 (12),
+                                                                                                        Wilson, J., Millman, K.J., Mayorov, N., Nelson, A.R.J., Jones, E., Kern, R.,
+   2765–2790. http://dx.doi.org/10.1007/s10531-017-1388-7.
+                                                                                                        Larson, E., Carey, C.J., Polat, İ., Feng, Y., Moore, E.W., Vanderplas, J., Lax-
+Schneider, M., 2024. EuroCrops: GitHub repository. URL https://github.com/maja601/                      alde, D., Perktold, J., Cimrman, R., Henriksen, I., Quintero, E.A., Harris, C.R.,
+    EuroCrops.                                                                                          Archibald, A.M., Ribeiro, A.H., Pedregosa, F., van Mulbregt, P., 2020. Scipy 1.0:
+Schneider, M., Chan, A., Körner, M., 2024. EuroCrops: Zenodo data repository. URL                       Fundamental algorithms for scientific computing in python. Nature Methods 17 (3),
+    https://zenodo.org/records/10118572.                                                                261–272. http://dx.doi.org/10.1038/s41592-019-0686-2.
+Schneider, M., Gackstetter, D., Prexl, J., Meyer, S.T., Körner, M., 2025. Advancing                 von Bloh, M., Nóia Júnior, R.d.S., Wangerpohl, X., Saltık, A.O., Haller, V., Kaiser, L.,
+    transnational assessments of biodiversity drivers in European agriculture with an                   Asseng, S., 2023. Machine learning for soybean yield forecasting in Brazil. Agricult.
+    updated hierarchical crop and agriculture taxonomy (HCAT). Npj Sustain. Agric. 3                    Forest. Meterol. 341, 109670. http://dx.doi.org/10.1016/j.agrformet.2023.109670.
+    (1), http://dx.doi.org/10.1038/s44264-024-00037-x.                                              Vuolo, F., Neuwirth, M., Immitzer, M., Atzberger, C., Ng, W.-T., 2018. How much does
+Schneider, M., Schelte, T., Schmitz, F., Körner, M., 2023. EuroCrops: The largest                       multi-temporal sentinel-2 data improve crop type classification? Int. J. Appl. Earth
+    harmonized open crop dataset across the European union. Sci. Data 10 (1), 612.                      Obs. Geoinf. 72, 122–130. http://dx.doi.org/10.1016/j.jag.2018.06.007.
+    http://dx.doi.org/10.1038/s41597-023-02517-0.                                                   Wallach, D., Goffinet, B., 1989. Mean squared error of prediction as a criterion
+                                                                                                        for evaluating and comparing system models. Ecol. Model. 44 (3–4), 299–306.
+Shang, J., Liu, J., Poncos, V., Geng, X., Qian, B., Chen, Q., Dong, T., Macdonald, D.,
+                                                                                                        http://dx.doi.org/10.1016/0304-3800(89)90035-5.
+   Martin, T., Kovacs, J., Walters, D., 2020. Detection of crop seeding and harvest
+                                                                                                    Wang, Y., Feng, L., Zhang, Z., Tian, F., 2023. An unsupervised domain adaptation
+   through analysis of time-series sentinel-1 interferometric SAR data. Remote. Sens.
+                                                                                                        deep learning method for spatial and temporal transferable crop type mapping
+   12 (10), 1551. http://dx.doi.org/10.3390/rs12101551.
+                                                                                                        using sentinel-2 imagery. ISPRS J. Photogramm. Remote Sens. 199, 102–117.
+Shook, J., Gangopadhyay, T., Wu, L., Ganapathysubramanian, B., Sarkar, S., Singh, A.K.,
+                                                                                                        http://dx.doi.org/10.1016/j.isprsjprs.2023.04.002.
+   2021. Crop yield prediction integrating genotype and weather variables using
+                                                                                                    Wang, Z., Zhang, H., He, W., Zhang, L., 2021. Phenology alignment network: A novel
+   deep learning. PLoS One 16 (6), e0252402. http://dx.doi.org/10.1371/journal.
+                                                                                                        framework for cross-regional time series crop classification. In: 2021 IEEE/CVF
+   pone.0252402.
+                                                                                                        Conference on Computer Vision and Pattern Recognition Workshops. CVPRW, pp.
+Shu, R., Bui, H.H., Narui, H., Ermon, S., 2018. A DIRT-T approach to unsupervised                       2934–2943. http://dx.doi.org/10.1109/CVPRW53098.2021.00329.
+    domain adaptation. http://dx.doi.org/10.48550/arXiv.1802.08735.                                 Wardlow, B.D., Egbert, S.L., 2008. Large-area crop mapping using time-series MODIS
+Siesto, G., Fernández-Sellers, M., Lozano-Tello, A., 2021. Crop classification of satellite             250 m NDVI data: An assessment for the U.S. central great plains. Remote Sens.
+    imagery using synthetic multitemporal and multispectral images in convolu-                          Environ. 112 (3), 1096–1116. http://dx.doi.org/10.1016/j.rse.2007.07.019.
+    tional neural networks. Remote. Sens. 13 (17), 3378. http://dx.doi.org/10.3390/                 Wilson, G., Doppa, J.R., Cook, D.J., 2020. Multi-source deep domain adaptation with
+    rs13173378.                                                                                         weak supervision for time-series sensor data. In: Gupta, R., Liu, Y., Shah, M.,
+Singh, A., 2021. CLDA: Contrastive learning for semi-supervised domain adaptation.                      Rajan, S., Tang, J., Prakash, B.A. (Eds.), Proceedings of the 26th ACM SIGKDD
+    Adv. Neural Inf. Process. Syst. (34), 5089–5101. http://dx.doi.org/10.48550/arXiv.                  International Conference on Knowledge Discovery & Data Mining. ACM, New York,
+    2107.00085.                                                                                         NY, USA, pp. 1768–1778. http://dx.doi.org/10.1145/3394486.3403228.
+
+
+                                                                                              131
+D. Gackstetter et al.                                                                                              ISPRS Journal of Photogrammetry and Remote Sensing 224 (2025) 113–132
+
+
+Wilson, G., Doppa, J.R., Cook, D.J., 2023. CALDA: Improving multi-source time                       Zhang, D., Ye, M., Liu, Y., Xiong, L., Zhou, L., 2022. Multi-source unsupervised domain
+     series domain adaptation with contrastive adversarial learning. IEEE Trans. Pattern                adaptation for object detection. Inf. Fusion 78, 138–148. http://dx.doi.org/10.
+     Anal. Mach. Intell. 45 (12), 14208–14221. http://dx.doi.org/10.1109/TPAMI.2023.                    1016/j.inffus.2021.09.011.
+     3298346.                                                                                       Zhang, L., Zhang, L., Tao, D., Huang, X., 2013b. A modified stochastic neighbor
+Woodcock, C.E., Allen, R., Anderson, M., Belward, A., Bindschadler, R., Cohen, W.,                      embedding for multi-feature dimension reduction of remote sensing images. ISPRS
+     Gao, F., Goward, S.N., Helder, D., Helmer, E., Nemani, R., Oreopoulos, L., Schott, J.,             J. Photogramm. Remote Sens. 83, 30–39. http://dx.doi.org/10.1016/j.isprsjprs.
+     Thenkabail, P.S., Vermote, E.F., Vogelmann, J., Wulder, M.A., Wynne, R., 2008.                     2013.05.009.
+     Free access to landsat imagery. Sci. ( N. Y. N. Y.) 320 (5879), 1011. http:                    Zhao, X., Wang, L., Zhang, Y., Han, X., Deveci, M., Parmar, M., 2024. A review
+     //dx.doi.org/10.1126/science.320.5879.1011a.                                                       of convolutional neural networks in computer vision. Artif. Intell. Rev. 57 (4),
+Xu, R., Chen, Z., Zuo, W., Yan, J., Lin, L., 2018. Deep cocktail network: Multi-source                  http://dx.doi.org/10.1007/s10462-024-10721-6.
+     unsupervised domain adaptation with category shift. In: Proceedings of the IEEE                Zhao, S., Yue, X., Zhang, S., Li, B., Zhao, H., Wu, B., Krishna, R., Gonzalez, J.E.,
+     Conference on Computer Vision and Pattern Recognition. CVPR.                                       Sangiovanni-Vincentelli, A.L., Seshia, S.A., Keutzer, K., 2022. A review of single-
+Zellinger, W., Grubinger, T., Lughofer, E., Natschläger, T., Saminger-Platz, S., 2017.                  source deep unsupervised visual domain adaptation. IEEE Trans. Neural Netw.
+     Central moment discrepancy (CMD) for domain-invariant representation learning.                     Learn. Syst. 33 (2), 473–493. http://dx.doi.org/10.1109/TNNLS.2020.3028503.
+     http://dx.doi.org/10.48550/arXiv.1702.08811.                                                   Zheng, B., Myint, S.W., Thenkabail, P.S., Aggarwal, R.M., 2015. A support vector
+Zeng, L., Wardlow, B.D., Xiang, D., Hu, S., Li, D., 2020. A review of vegetation phe-                   machine to identify irrigated crop types using time-series landsat NDVI data. Int.
+     nological metrics extraction using time-series, multispectral satellite data. Remote               J. Appl. Earth Obs. Geoinf. 34, 103–112. http://dx.doi.org/10.1016/j.jag.2014.07.
+     Sens. Environ. 237, 111511. http://dx.doi.org/10.1016/j.rse.2019.111511.                           002.
+Zhang, Y., Liu, T., Long, M., Jordan, M., 2019. Bridging theory and algorithm for                   Zhong, L., Hu, L., Zhou, H., 2019. Deep learning based multi-temporal crop classifi-
+     domain adaptation. In: Chaudhuri, K., Salakhutdinov, R. (Eds.), Proceedings of the                 cation. Remote Sens. Environ. 221, 430–443. http://dx.doi.org/10.1016/j.rse.2018.
+     36th International Conference on Machine Learning. In: Proceedings of Machine                      11.032.
+     Learning Research, vol. 97, PMLR, pp. 7404–7413, URL https://proceedings.mlr.                  Zippenfenig, P., 2023. Open-meteo.com weather API. http://dx.doi.org/10.5281/
+     press/v97/zhang19i.html.                                                                           zenodo.7970649, URL https://open-meteo.com/.
+Zhang, K., Schölkopf, B., Muandet, K., Wang, Z., 2013a. Domain adaptation under
+     target and conditional shift. In: Dasgupta, S., McAllester, D. (Eds.), Proceedings
+     of the 30th International Conference on Machine Learning. In: Proceedings of
+     Machine Learning Research, vol. 28, PMLR, Atlanta, Georgia, USA, pp. 819–827,
+     URL https://proceedings.mlr.press/v28/zhang13d.html.
+
+
+
+
+                                                                                              132
+

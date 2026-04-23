@@ -445,6 +445,10 @@ if __name__ == '__main__':
     timematch.add_argument('--run_validation', default=True, action='store_true',
                            help='whether to run validation each epoch')
     timematch.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
+    timematch.add_argument("--use_prototype_relation_alignment", type=bool_flag, default=False,
+                           help='align class prototype relation matrices between source and target')
+    timematch.add_argument("--pra_trade_off", type=float, default=0.1,
+                           help='weight for prototype relation alignment loss')
 
     cfg = parser.parse_args()
 

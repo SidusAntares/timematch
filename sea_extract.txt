@@ -1,0 +1,962 @@
+IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE, VOL. 46, NO. 12, DECEMBER 2024                                                       10781
+
+
+
+
+     SEA++: Multi-Graph-Based Higher-Order Sensor
+        Alignment for Multivariate Time-Series
+           Unsupervised Domain Adaptation
+ Yucheng Wang, Yuecong Xu , Jianfei Yang , Min Wu , Xiaoli Li , Fellow, IEEE, Lihua Xie , Fellow, IEEE,
+                                         and Zhenghua Chen
+
+
+   Abstract—Unsupervised Domain Adaptation (UDA) methods                           endo-feature alignment. Particularly, we incorporate multi-graph-
+have been successful in reducing label dependency by minimiz-                      based higher-order alignment for both sensor features and their
+ing the domain discrepancy between labeled source domains and                      correlations. Extensive empirical results have demonstrated the
+unlabeled target domains. However, these methods face challenges                   state-of-the-art performance of our SEA and SEA++ on six public
+when dealing with Multivariate Time-Series (MTS) data. MTS data                    MTS datasets for MTS-UDA.
+typically originates from multiple sensors, each with its unique
+distribution. This property poses difficulties in adapting existing                  Index Terms—Multivariate time-series data, unsupervised
+UDA techniques, which mainly focus on aligning global features                     domain adaptation, graph neural network.
+while overlooking the distribution discrepancies at the sensor level,
+thus limiting their effectiveness for MTS data. To address this issue,
+a practical domain adaptation scenario is formulated as Multivari-                                          I. INTRODUCTION
+ate Time-Series Unsupervised Domain Adaptation (MTS-UDA).
+                                                                                         IME-SERIES (TS) data has gained significant attention
+In this paper, we propose SEnsor Alignment (SEA) for MTS-UDA,
+aiming to address domain discrepancy at both local and global
+sensor levels. At the local sensor level, we design endo-feature align-
+                                                                                   T     in various fields due to their wide range of applications.
+                                                                                   To address TS-related problems, Deep Learning (DL) methods
+ment, which aligns sensor features and their correlations across
+domains. To reduce domain discrepancy at the global sensor level,
+                                                                                   have played a pivotal role in capturing latent dependencies
+we design exo-feature alignment that enforces restrictions on global               within TS data [1], [2], [3], [4], [5], [6], [7]. However, the
+sensor features. We further extend SEA to SEA++ by enhancing the                   effectiveness of DL models heavily relies on the availability of
+                                                                                   large-scale labeled data, which is often a challenge in real-world
+                                                                                   applications due to the high cost associated with data labeling.
+   Manuscript received 28 September 2023; revised 16 May 2024; accepted 10            To reduce the cost of labeling, Unsupervised Domain Adapta-
+August 2024. Date of publication 16 August 2024; date of current version 5         tion (UDA) methods have been proposed to transfer the knowl-
+November 2024. This research was supported in part by the National Research
+Foundation, Singapore under its AI Singapore Programme under Grant AISG2-          edge from a labeled source domain to an unlabeled target do-
+RP-2021-027, and in part by the Agency for Science, Technology and Research        main, enabling effective learning when target domain labels are
+(A*STAR) under its AME Programmatic Funds under Grant A20H6b0151.                  unavailable [8]. Due to domain shifts, existing UDA methods
+Recommended for acceptance by T.M. Hospedales. (Corresponding author:
+Zhenghua Chen.)                                                                    focused on reducing discrepancy across domains by learning
+   Yucheng Wang is with the Institute for Infocomm Research, A*STAR,               domain-invariant features [9], [10], [11], [12], [13], [14]. These
+Singapore 138632, and also with the School of Electrical and Electronic            methods have achieved decent performance, showing the effec-
+Engineering, Nanyang Technological University, Singapore 639798 (e-mail:
+yucheng003@e.ntu.edu.sg).                                                          tiveness of UDA in reducing label dependency. Subsequently,
+   Yuecong Xu is with the Department of Electrical and Computer En-                researchers applied UDA to TS data, aiming to reduce domain
+gineering, National University of Singapore, Singapore 119077 (e-mail:             discrepancy by learning domain-invariant temporal features ex-
+yc.xu@nus.edu.sg).
+   Jianfei Yang is with the School of Mechanical and Aerospace Engineering,        tracted by Recurrent Neural Network (RNN) [15], Long Short-
+School of Electrical and Electronics Engineering, Nanyang Technological Uni-       Term Memory (LSTM) [16], and Convolutional Neural Network
+versity, Singapore 639798 (e-mail: jianfei.yang@ntu.edu.sg).                       (CNN) [17].
+   Min Wu is with the Institute for Infocomm Research, A*STAR, Singapore
+138632 (e-mail: wumin@i2r.a-star.edu.sg).                                             While substantial progress has been made, existing UDA
+   Xiaoli Li is with the Institute for Infocomm Research and Centre for Frontier   methods may be inapplicable for scenarios where multiple sen-
+AI Research, A*STAR, Singapore 138632, and also with the School of Computer        sors are deployed simultaneously. For instance, in Remaining
+Science and Engineering, Nanyang Technological University, Singapore 639798
+(e-mail: xlli@i2r.a-star.edu.sg).                                                  Useful Life (RUL) prediction, various types of sensors measure
+   Lihua Xie is with the School of Electrical and Electronic Engineer-             different physical parameters, while in Human Activity Recog-
+ing, Nanyang Technological University, Singapore 639798 (e-mail: el-               nition (HAR), sensors positioned at various locations on the
+hxie@ntu.edu.sg).
+   Zhenghua Chen is with the Institute for Infocomm Research and                   human body capture activity data. We formulate these scenarios
+Centre for Frontier AI Research, A*STAR, Singapore 138632 (e-mail:                 as Multivariate Time-Series Unsupervised Domain Adaptation
+chen0832@e.ntu.edu.sg).                                                            (MTS-UDA), a challenging yet practical problem. Applying
+   This article has supplementary downloadable material available at
+https://doi.org/10.1109/TPAMI.2024.3444904, provided by the authors.               current TS UDA methods directly to MTS-UDA poses two key
+   Digital Object Identifier 10.1109/TPAMI.2024.3444904                            limitations. First, MTS data inherently exhibits a multi-source
+                         0162-8828 © 2024 IEEE. Personal use is permitted, but republication/redistribution requires IEEE permission.
+                                       See https://www.ieee.org/publications/rights/index.html for more information.
+
+
+           Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+10782                                           IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE, VOL. 46, NO. 12, DECEMBER 2024
+
+
+
+                                                                                  spatial-temporal dependencies inherent in MTS data and enable
+                                                                                  their effective transfer across domains, we introduce a graph-
+                                                                                  based framework that can capture the dependency information.
+                                                                                  Given that MTS data may not come with pre-defined graphs
+                                                                                  representing the relationships between sensors, we propose a
+                                                                                  multi-branch self-attention mechanism to model these depen-
+                                                                                  dencies.
+                                                                                     Although SEA presents a feasible solution for sensor align-
+                                                                                  ment in MTS-UDA, it can be further improved from two per-
+                                                                                  spectives. First, SEA employs a lower-order statistics-based
+                                                                                  scheme for endo-feature alignment, which may be insufficient
+Fig. 1. Comparisons between existing UDA methods and ours, where before           to achieve comprehensive alignment in scenarios with complex
+and after represent before and after alignment respectively. Left: Only global    data distributions. Second, SEA can benefit from leveraging
+sensor features are aligned, resulting in the poor alignment of the red sensor.
+Right: SEA aligns the sensor information between domains, so the feature
+                                                                                  the dynamically evolving distributions within MTS data to
+discrepancy of each sensor can be reduced.                                        enhance its performance. For instance, as a machine’s health
+                                                                                  deteriorates, the distribution of a fan speed sensor undergoes
+                                                                                  dynamic changes due to increased friction. Taking these issues
+                                                                                  into consideration, we develop SEA++ as an extension of SEA
+nature, with each data typically originating from multiple sen-                   by introducing multi-graph-based higher-order alignment to
+sors. Each sensor captures data with its unique distribution due                  enhance our endo-feature alignment, incorporating improved
+to differences in sensor types or deployment locations [18].                      sensor correlation and contrastive sensor alignment. To achieve
+When adapting existing TS UDA methods to MTS-UDA, they                            comprehensive sensor alignment, we incorporate higher-order
+primarily focus on aligning global features across domains by                     statistics by capturing complex data distributions across do-
+treating signals from various sensors as a whole [19]. However,                   mains. Additionally, SEA++ introduces a multi-graph align-
+these approaches ignore the diverse distributions across sensors,                 ment technique tailored for aligning the evolving distributions
+leading to misalignment at the sensor level and consequently                      within MTS data. This involves constructing sequential graphs
+suboptimal solutions for MTS-UDA. As presented in Fig. 1                          that represent the distributions within local temporal intervals,
+(Left), existing UDA methods focus on aligning global features                    followed by the alignment of corresponding sequential graphs
+between domains, leading to inadequate alignment of features                      between domains. To optimize the alignment process, weights
+from the red sensor and thereby limiting the model’s transfer-                    for balancing sequential graphs are learned based on distribution
+ability. Second, MTS data contains essential spatial-temporal                     discrepancies, enabling prioritized alignment for challenging
+dependency information due to its multi-source nature. Specifi-                   graphs. This module effectively aligns the evolving distributions,
+cally, the spatial dependency refers to the correlations between                  enabling adaptation to the evolving nature of MTS data. With the
+sensors, capturing the critical interactive sensor relationships.                 two types of enhancements in the improved version, we represent
+For instance, the spatial dependency in machine RUL prediction                    the name with two plus signs as SEA++.
+corresponds to the correlation between a temperature sensor and                      Our contributions can be summarized as following.
+a fan speed sensor, as they exhibit strong correlations. Besides,                    r We analyze the challenging Multivariate Time-Series Un-
+the temporal dependency refers to the temporal relationships                            supervised Domain Adaptation (MTS-UDA) in accordance
+between consecutive timestamps. Existing UDA methods are                                with the inherent nature of MTS data and propose SEnsor
+limited in effectively modelling and transferring both depen-                           Alignment (SEA) that reduces domain discrepancy at both
+dencies across domains, thus leading to suboptimal solutions                            the local and global sensor levels. Meanwhile, SEA cap-
+for MTS-UDA. These properties of MTS-UDA render it a more                               tures the spatial-temporal dependencies within MTS data,
+complex and challenging task than standard TS UDA.                                      enabling effective transfer of the dependency information
+   To address the above challenges, we propose SEnsor Align-                            across domains.
+ment (SEA) for MTS-UDA. First, we aim to reduce domain                               r To cope with scenarios with complex data distributions,
+discrepancy at both the local and global sensor levels. At the                          we introduce SEA++ by enhancing our endo-feature align-
+local sensor level, we propose endo-feature alignment to align                          ment. Higher-order statistics alignment methods are em-
+sensor-level information between domains. This alignment pro-                           ployed to achieve comprehensive sensor correlation and
+cess includes aligning both sensor features and sensor correla-                         sensor feature alignment.
+tions, which capture the information of individual sensors and                       r Considering the dynamically evolving distributions within
+their interactions, respectively. To achieve this alignment, we                         MTS data, SEA++ further incorporates a multi-graph
+introduce contrastive sensor alignment and sensor correlation                           alignment technique. It aligns sequential graphs repre-
+alignment. Further, at the global sensor level, we design exo-                          senting local distributions, effectively aligning evolving
+feature alignment to reduce global feature discrepancy. This                            distributions between domains.
+is achieved by enforcing restrictions on the global features                         r We evaluate the effectiveness of SEA and SEA++ with
+derived from stacked sensor features. Moreover, to capture the                          six various real-world MTS datasets through extensive
+
+
+         Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+WANG et al.: SEA++: MULTI-GRAPH-BASED HIGHER-ORDER SENSOR ALIGNMENT FOR MULTIVARIATE TIME-SERIES                                                   10783
+
+
+
+      experiments, demonstrating that both methods achieve                   moments of probability distributions by means of order-wise
+      state-of-the-art performance for MTS-UDA.                              moment differences. Overall, these methods have contributed
+   This journal paper presents an extended version of our pre-               to the advancement of UDA by effectively reducing domain
+vious work [20] by introducing multi-graph-based higher-order                discrepancy and enabling knowledge transfer across domains.
+alignment techniques. First, we introduce higher-order statistic
+alignment to improve endo-feature alignment, aiming to achieve               B. Unsupervised Domain Adaptation for Time-Series Data
+more comprehensive sensor-level alignment. Second, we ana-
+lyze the properties of MTS data and emphasize the significance                  In recent years, there has been a growing trend of exploring
+of dynamically evolving distributions inherent within MTS data.              UDA methods in various domains, showing their effectiveness
+Thus, we introduce a multi-graph alignment technique to align                in different applications [35], [36]. In TS data, researchers
+the evolving distributions across domains. Third, we have con-               primarily focused on reducing domain discrepancy by aligning
+ducted additional experiments, including more datasets, more                 temporal features across domains [15], [16], [17], [19], [37].
+compared methods, more comprehensive ablation studies, and                   Several notable works have made significant contributions to this
+extensive sensitivity analysis, to fully assess SEA and SEA++.               area. For instance, VRADA [15] leveraged variational RNN to
+                                                                             learn temporal features and employed adversarial-based meth-
+                        II. RELATED WORK                                     ods to reduce domain discrepancy. Zhao et al. [38] combined
+                                                                             DANN and CNN for TS classification, incorporating a center
+A. Unsupervised Domain Adaptation                                            loss to minimize intra-class variation and maximize inter-class
+   UDA aims to mitigate the need for labeled data by transferring            distance. CoDATS [39] and CLADA [40], as multi-source TS
+knowledge from a labeled source domain to an unlabeled target                UDA methods, applied DANN and 1D-CNN to handle the
+domain. To achieve good performance on the target domain,                    scenarios with multiple source domains. Moreover, researchers
+existing UDA methods mainly focus on minimizing domain                       have designed UDA methods specifically tailored to TS data.
+discrepancies by utilizing two categories of approaches. The first           ADATIME [19] considered TS temporal properties and eval-
+category comprises adversarial-based methods, which utilize                  uated various temporal encoders for TS UDA. AdvSKM [41]
+domain discriminator networks to encourage a feature extractor               mapped temporal features into a high-dimensional space with
+to learn domain-invariant representations. Prominent models                  adversarial Spectral Kernels and then aligned them using MMD.
+include Domain Adversarial Neural Network (DANN) [10] and                    SASA [16] aligned the associative structure between variables
+Adversarial Discriminative Domain Adaptation (ADDA) [11].                    to achieve invariant structural information for TS UDA. CoT-
+These models have served as foundations for various improved                 Mix [42] adopted a contrastive loss to reduce domain distribution
+variants to address specific challenges [12], [21], [22], [23],              shifts without relying on adversarial or metric-based methods.
+[24], [25]. For instance, CDAN [12] and MADA [21] were                       Felix et al. [43] searched for an optimal transformation to
+both extensions of DANN to incorporate multi-mode structure                  convert input data from a source domain to a target domain for
+information. DAAN [22] introduced class-aware adversarial loss               domain-invariant representations.
+to align the conditional distribution using DANN. DIRT-T [26]                   These works are great pioneers for TS UDA, but they may
+improved upon existing adversarial-based methods by integrat-                not perform well for the scenarios requiring multiple sensors,
+ing adversarial training with a penalty term to punish violations            i.e., MTS data. In MTS data, signals from different sensors often
+of the cluster assumption.                                                   follow various distributions due to their varied physical locations
+   The second category encompasses metric-based methods                      and measurements. Existing TS UDA methods can be adapted
+which enforce metric restrictions to learn invariant features [9],           to MTS data by treating all sensors as a whole [15], [19], [38],
+[13], [27], [28]. One pioneering method is Maximum Mean                      [44], facilitate the learning of global features for alignment, but
+Discrepancy (MMD) [9]. JAN [14] was developed based on                       they are limited in accounting for the distinct distributions of
+MMD to align the joint distributions of feature and label dis-               sensors within MTS data. Meanwhile, they ignore the multi-
+tributions. MK-MMD [29] employed MMD to align features                       source nature of MTS data, restricting their ability to model
+in the final layers, enhancing their transferability. To achieve             and transfer spatial-temporal dependency information across
+comprehensive alignment across domains, higher-order statisti-               domains. To address these limitations, we propose our SEA and
+cal alignment methods have been proposed. Deep CORrelation                   SEA++ that accounts for aligning sensor-level information and
+ALignment (CORAL) [13] emerged as a standard approach in-                    modelling dependency information within MTS data to achieve
+troducing second-order alignment. Its effectiveness has inspired             better MTS-UDA.
+subsequent works aiming to align higher-order statistics across
+domains [30], [31], [32], [33]. Specifically, MMCD [31], [32]                                            III. SEA MODEL
+combined MMD with a maximum covariance discrepancy to
+                                                                             A. Problem Definition
+explore second-order statistics in reproducing kernel Hilbert
+space. Rahman et al. [30] simultaneously aligned the first and                  For MTS-UDA, we are given a source domain with Ns labeled
+second-order statistics by utilizing MMD and Deep CORAL.                     samples DS = {(xsi , yis )}N s
+                                                                                                        i=1 and a target domain with Nt unla-
+Furthermore, HoMM [34] was developed as a third-order met-                   beled samples DT = {xi }i=1 . Each MTS sample xi (either xsi
+                                                                                                       t Nt
+
+ric technique to align feature distributions in hidden layers.               or xti ) originates from N sensors with different distributions,
+                                                                                                         N ×L
+CMD [33] was proposed to match the higher-order central                      i.e., xi = {xim }N m=1 ∈ R       , where L represents the time
+
+         Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+10784                                       IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE, VOL. 46, NO. 12, DECEMBER 2024
+
+
+
+length. The goal of SEA is to train an encoder by transferring                CORAL discrepancy LCORAL , the second-order statistics of the
+the knowledge from the source domain to the target domain,                    features are aligned between source and target domains, leading
+enabling effective feature extractions hi ∈ RF from MTS data                  to comprehensive alignment across domains.
+xti in the target domain. The features can then be used for
+downstream tasks. Notably, the SEA framework consists of two                                       (Hs )T Hs − n1s (1T Hs )(1T Hs )
+                                                                                           Cs =                                     ,
+stages. In the first stage, we focus on feature extraction from                                               ns − 1
+MTS data. To simplify the notation and enhance clarity, we omit                                    (Ht )T Ht − n1t (1T Ht )(1T Ht )
+the index i in this stage. Thus, each sample is represented as xs                          Ct =                                     ,
+                                                                                                                nt − 1
+and xt , and the data from the mth sensor is denoted as xsm and
+xtm . While in the second stage that involves domain alignment,                                                      1
+                                                                                                   Mc (Hs , Ht ) = 2 ||C s − C t ||2F .           (2)
+we retain the use of the index to facilitate a clear description of                                                 4f
+the alignment process.
+   Furthermore, to model the evolving distributions within                    C. Overall Structure
+MTS data, we construct sequential graphs {GT }L̂        T =1 , GT =              The overall structure of SEA is shown in Fig. 2. The su-
+(ZT , ET ) from the sample x, where ZT = {zm,T }N         m=1 and             perscripts s and t are omitted in Section III-C and III-D,
+ET = {emn,T }N   m,n=1   represent  sensor  features  and  correla-           as the forward processes in source and target domains share
+tions, respectively, in the T th graph. {GTs }L̂
+                                              T =1 and {GT }T =1
+                                                          t L̂                the same graph-based encoder, including Multi-branch Self-
+represent the sequential graphs in the source and target domains              attention based Graph Construction (MSGC), GNN, and LSTM.
+respectively.                                                                 First, we model the spatial-temporal dependencies within MTS
+                                                                              data for effective transfer across domains. To capture the evolv-
+B. Preliminary                                                                ing distributions within MTS data, we segment each sample
+                                                                              into multiple patches, constructing sequential graphs by MSGC.
+   1) Graph Neural Network: Several previous studies have                     Then, leveraging these sequential graphs, we utilize GNN and
+demonstrated the effectiveness of Graph Neural Network (GNN)                  LSTM to capture the spatial-temporal information for learning
+in capturing spatial dependencies [45], [46], [47]. Motivated                 sensor-level information, i.e., sensor features and correlations.
+by this capability, we employ GNN to capture the spatial                      Second, in addition to supervised learning on the source do-
+dependencies, i.e., sensor correlations, within our constructed               main, we incorporate endo-feature alignment and exo-feature
+sequential graphs. Specifically, we utilize a variant of GNN                  alignment techniques to reduce domain discrepancy at both
+known as Message Passing Neural Network (MPNN) [48] to                        local and global sensor levels. At the local sensor level, we
+process each graph. The MPNN framework consists of two                        design endo-feature alignment, aligning sensor features and
+stages: propagation and updating. During the propagation stage,               sensor correlations by proposing Sensor Feature Alignment
+the features of neighboring nodes are propagated to the central               (SFA) and Sensor Correlation Alignment (SCA) respectively.
+node. Subsequently, the aggregated features are updated using                 The two components are further improved by both higher-order
+a non-linear function, such as a Multi-Layer Perceptron (MLP)                 statistic alignment and multi-graph alignment to form iSFA
+network. With MPNN, we can capture the spatial dependencies                   and iSCA. The higher-order statistic alignment aims to achieve
+between sensors, enabling the effective transfer of the depen-                comprehensive alignment by capturing complex data distribu-
+dency information across domains in the subsequent alignment                  tions, while the multi-graph alignment aims to align the evolving
+processes. The details of MPNN are shown in (1), where sensor                 distributions across domains at the sensor level. We introduce
+m is the central node, and N (m) is the set of its neighboring                the details of each module in subsequent sections.
+nodes.
+                             
+                  hm,T =           emj,T zj,T ,                               D. Graph-Based Encoder
+                              j∈N (m)                                            1) Segmentation: To capture the evolving distributions
+                    zm,T = ReLU (hm,T WG ).                            (1)    within MTS data, we propose segmenting each sample as mul-
+                                                                              tiple patches with a predefined patch size, where each patch
+   2) Deep CORAL: Deep CORAL [13] is a typical metric-                        represents the distribution in local temporal intervals. As shown
+based UDA method. Different from L2 or cosine distances                       in Fig. 3, a sample x ∈ RN ×L is segmented into multiple
+mainly employing first-order statistics, Deep CORAL focuses                   patches with a predefined size d, yielding sequential features
+                                                                                              N ×L̂×d
+on minimizing the discrepancy in second-order statistics be-                  {ZT }L̂T =1 ∈ R         . Here, L̂ =  Ld  represents the number
+tween domains [49], making it possible to capture complex data                of patches, where ∗ denotes the truncation operation. With
+distributions for alignment. Given training batches with ns and               each patch, the features ZT ∈ RN ×d capture the evolving dis-
+nt samples in source and target domains respectively, we denote               tributions in local temporal intervals. Specifically, the features
+                                                        s
+the extracted features from these domains as Hs ∈ Rn ×f and                   of the mth sensor are denoted as zm,T ∈ Rd . Furthermore, we
+         nt ×f
+H ∈R
+   t
+               , where f represents the feature dimension. With               incorporate a nonlinear function fL (·) to enhance the nonlinear
+the features, we can compute the discrepancy of second-order                  expressiveness of the model.
+statistics with Deep CORAL Mc (Hs , Ht ) as (2), where || · ||2F                 2) MSGC: We construct sequential graphs with the sequen-
+is the squared matrix Frobenius norm. By minimizing the Deep                  tial features. Traditionally, various methods were employed to
+
+        Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+WANG et al.: SEA++: MULTI-GRAPH-BASED HIGHER-ORDER SENSOR ALIGNMENT FOR MULTIVARIATE TIME-SERIES                                                           10785
+
+
+
+
+Fig. 2. The overall structure. (1) To transfer spatial-temporal dependencies across domains, source and target domains share the same graph-based encoder,
+including MSGC, GNN, and LSTM. Each sample is segmented as multiple patches, which are constructed as sequential graphs. With the combination of GNN and
+LSTM, decent sensor information is learned, including sensor features and correlations. (2) In addition to supervised learning on the source domain, endo-feature
+alignment and exo-feature alignment are designed to reduce domain discrepancy at the local and global sensor levels. The endo-feature alignment includes aligning
+sensor features and their correlations between domains by SCA and SFA, both of which are enhanced by incorporating multi-graph alignment and higher-order
+statistic alignment. Exo-feature alignment aligns global features mapped by sensor features.
+
+
+                                                                                     Then, we combine the graphs from multiple branches to cap-
+                                                                                  ture comprehensive sensor correlations. Specifically, we calcu-
+                                                                                                                                        b eimn,T
+                                                                                  late the average of corresponding edges: emn,T = ni=1         nb ,
+                                                                                  where nb represents the number of branches, resulting in ET =
+                                                                                                        N ×N
+                                                                                  {emn,T }N m,n=1 ∈ R        for the T th graph to represent sensor
+                                                                                  correlations. By conducting similar operations in all patches, we
+                                                                                                                                       L̂×N ×N
+                                                                                  can obtain sequential correlations {ET }L̂ T =1 ∈ R          . The
+                                                                                  difference between MSGC with graph attention networks can
+Fig. 3.   Diagram of segmenting each MTS sample into patches.                     be found in our appendix, available online.
+                                                                                     3) Capturing Spatial-Temporal Information: With the se-
+                                                                                  quential graphs, we then capture the spatial-temporal dependen-
+construct graphs for MTS data, such as dot-product [50], Eu-                      cies within MTS data. First, we utilize MPNN in (1) to capture
+clidean distance [46], and concatenation [51]. However, the tra-                  spatial dependencies within each sequential graph. In this stage,
+ditional methods struggle to model comprehensive relationships                    each graph is processed with shared weights to reduce trainable
+among sensors due to the complex topological structures pre-                      parameters. After MPNN updates sensor features in sequen-
+sented within MTS data. To address the limitation, we propose                     tial graphs, we then capture temporal dependencies. Notably,
+MSGC, which constructs a graph by combining multiple graphs                       features from corresponding sensors across sequential graphs
+generated from various weight initializations across multiple                     exhibit temporal dependencies. Leveraging its robust capability
+branches. Each branch employs differently weighted matrices to                    to capture such dependencies, we employ LSTM to capture
+model sensor correlations from distinct perspectives, enabling us                 the dependency information for each sensor. Specifically, the
+to capture comprehensive sensor correlations. Specifically, we                    features zm ∈ RL̂×d from each sensor across sequential graphs
+adopt query and key to learn the edge weights between sensors.                    are feeded into LSTM. After GNN and LSTM, we finally obtain
+                                                                                                                               L̂×N ×d
+Equation (3) describes the edge between sensors m and n in the                    updated sequential features {ZT }L̂T =1 ∈ R          . By combin-
+ith branch.                                                                       ing the capabilities of the two networks, we can effectively
+                                                                                  capture the spatial-temporal dependencies within MTS data,
+                  i
+                 qm,T = zm,T WQi , kn,T
+                                    i
+                                        = zn,T WK
+                                                i
+                                                  ,                               allowing to transfer the dependency information across domains
+                                      i
+                                    (qm,T )T k i                                  through the alignment at the local and global sensor levels in the
+                                exp(     √ n,T )
+                                            d                                     subsequent stages.
+               eimn,T =                  i
+                                        (qm,T      i
+                                               )T kj,T
+                                                         ,                (3)
+                               N
+                               j=1 exp(       √
+                                                 d
+                                                       )
+
+where zm,T and zn,T represent the query and key sensors,                          E. Sensor Alignment
+respectively, to learn the edge weight between them for the ith                      To reduce the discrepancy between domains for MTS-UDA,
+branch, i.e., eimn,T . The edge weights are then normalized using                 we design endo-feature alignment and exo-feature alignment at
+the softmax function to ensure the weight within [0, 1].                          the local and global sensor levels respectively.
+
+           Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+10786                                          IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE, VOL. 46, NO. 12, DECEMBER 2024
+
+
+
+
+Fig. 4. Left: Sensor correlation alignment is to make the correlations between domains identical. Middle: Sensor feature alignment is to make the features from
+the corresponding sensors in two domains similar and the data from the different sensors in two domains different. Right: Exo-feature alignment reduces the
+discrepancy between the global features in different domains.
+
+
+
+   1) Endo-Feature Alignment: Existing UDA methods reduce                        align the correlations among sensors. Specifically, we align the
+domain discrepancy by aligning global features across domains,                   distributions of correlations between any two sensors across do-
+which is applicable for the data coming from a single source.                    mains. To achieve this, we propose sensor correlation alignment
+However, MTS data originate from multiple sensors, with each                     (SCA), which involves individually aligning each edge of the
+sensor following various distributions. When adapting existing                   graphs as shown in Fig. 4 Left.
+UDA methods to MTS-UDA, they can consider the global                                Given training batches with ns and nt samples in source
+distribution by treating all sensors as a whole yet ignoring the                 and target domains, we represent sensor correlations across
+                                                                                                                  s                    t
+distinct distributions of each sensor. This potentially results in               sequential graphs as E s ∈ Rn ×L̂×N ×N and E t ∈ Rn ×L̂×N ×N
+                                                                                                                s                    t
+the misalignment at the sensor level, restricting the performance                respectively, with ETs ∈ Rn ×N ×N and ETt ∈ Rn ×N ×N sig-
+of transferring sensor-level information from the source domain                  nifying sensor correlations for the T th graph. Here, ETs =
+                                                                                                                                ns
+to the target domain. To address this limitation, we propose an                  {Emn,T
+                                                                                    s
+                                                                                         }Nm,n=1 , wherein Emn,T = {ei,mn,T }i . For SCA, the
+                                                                                                              s         s
+
+endo-feature alignment method designed to align sensor-level                     alignment across domains is achieved based on averaged sen-
+information and avoid misalignment for each sensor when trans-                   sor correlations. Specifically, for the edge connecting sen-
+ferring knowledge across domains.                                                sors m and  s n, its mean value over a training batch is
+   To make better endo-feature alignment, it’s crucial to note                   esmn,T = ni esi,mn,T /ns . Subsequently, the averaged sensor
+that sensor-level information comprises both sensor features and                 correlations over sequential graphs are calculated as esmn =
+their correlations. Sensor features describe each sensor’s infor-                L̂ s
+                                                                                    T emn,T /L̂. Next, we minimize the difference across domains
+mation, e.g., its unique distribution, while sensor correlations                 for averaged sensor correlations, as shown in (4), where | · |
+capture interactive information among sensors. For instance,                     is the absolute value. This involves minimizing the expected
+we present a scenario with temperature and fan speed sensors                     discrepancy of sensor correlations across domains. By doing so,
+deployed together to monitor a machine’s status. It’s desirable                  we can reduce distribution discrepancies for sensor correlations
+for temperature sensor data in two domains to exhibit similar                    in source and target domains.
+distributions. Additionally, the correlation between the sensors
+should consistently reflect patterns across domains, such as the
+                                                                                                              mn = emn − emn ,
+                                                                                                             est    s     t
+fan speed consistently increasing with temperature rises. Based
+on these considerations, aligning sensor features and sensor cor-                                         LSCA = E(|est
+                                                                                                                     mn |).                                (4)
+relations across domains simultaneously is important to ensure
+comprehensive sensor-level alignment.                                                 b) Sensor Feature Alignment: To align sensor features
+      a) Sensor Correlation Alignment: To explore consistent                     between domains, we assume that features originating from
+patterns across domains for sensor interactions, we propose to                   corresponding sensors in two domains should exhibit similar
+
+         Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+WANG et al.: SEA++: MULTI-GRAPH-BASED HIGHER-ORDER SENSOR ALIGNMENT FOR MULTIVARIATE TIME-SERIES                                                   10787
+
+
+
+distributions. Meanwhile, compared with features from corre-                 status for illustration. As the machine’s health deteriorates, the
+sponding sensors, features from different sensors in the two                 distribution of a fan speed sensor may change due to factors like
+domains should have distinct distributions. For example, as                  increased frictions. Similarly, the interaction between the fan
+shown in Fig. 4 Middle, the distribution of sensor 1in the source            speed sensor and temperature sensors will also be affected and
+domain should be more similar to the distribution of sensor 1in              undergo changes. Specifically, the same fan speeds might lead
+the target domain than other sensors, e.g., 2, 3, and 4. Thus,               to higher temperature increases due to a machine in poor health,
+we propose a sensor contrastive mechanism to facilitate the                  such as increased friction. Thus, we emphasize the importance
+alignment of sensor features across domains.                                 of aligning the evolving distributions between domains at the
+   Given training batches with ns and nt samples, we define sen-             sensor level. However, SEA employs averaged sensor features
+                         s                       t
+sor features as Z s ∈ Rn ×L̂×N ×d and Z t ∈ Rn ×L̂×N ×d , with               and correlations over sequential graphs, limiting its ability to
+          s                     t
+ZTs ∈ Rn ×N ×d and ZTt ∈ Rn ×N ×d denoting sensor features                   align the evolving distributions within MTS data. To improve
+for the T th graph. Here, ZTs = {Zn,Ts
+                                        }Nn=1 , wherein Zn,T =
+                                                            s                this, we introduce a multi-graph alignment technique, aiming to
+         ns                                                                  effectively align evolving distributions between domains.
+{zi,n,T }i . In SFA, domain contrasting is achieved based on
+   s
+
+averaged sensor features. In (5), psm represents the averaged                   Next, we begin by discussing SCA and SFA enhanced by
+sensor features over multiple graphs within a training batch,                higher-order statistical alignment within each sequential graph.
+                      ns s                                                 Subsequently, we focus on combining the alignment across all
+calculated as psm = L̂ T
+                                       s
+                           i zi,n,T /n L̂.
+                                                                             sequential graphs by employing our multi-graph alignment.
+                            1 
+                                 N                 s   t
+                                       eϕ(pm ,pm )
+              LSF A = −         log            ϕ(psm ,ptj )
+                                                             ,               A. Sensor Correlation Alignment
+                            N n       pt ∈P t e
+                                             j
+                                                                                Given training batches with ns and nt samples in source
+        ϕ(psm , ptm ) = psm (ptm )T .                                 (5)    and target domains, we have sensor correlations for the T th
+                                                                                                         s                     t
+                                                                             graph, denoted as ETs ∈ Rn ×N ×N and ETt ∈ Rn ×N ×N respec-
+      c) Exo-Feature Alignment: To reduce domain discrepancy
+                                                                             tively. Instead of leveraging first-order alignment, we introduce
+at the global level, we enforce restrictions on the global features
+                                                                             second-order statistics, Deep CORAL Mc in (2), to align the
+mapped by sensor features. We first learn global features for each
+                                                                             sensor correlations across domains. Building upon this idea, we
+sample by stacking all sensor features across sequential graphs
+                                                                             enhance SCA and introduce improved SCA (iSCA) as shown in
+and employing an MLP network to map the stacked features as
+                                                                             (7).
+P s and P t for two domains, as shown in Fig. 4 Right. With the
+                                                                                             mn,T = Mc (Emn,T , Emn,T ),
+global features, we then align with Deep CORAL, expressed                                   dst          s       t
+as L = Mc (P s , P t ). Finally, the overall loss function (6) is                                                 N N              st
+minimized:                                                                                                                  m     n dmn,T
+                                                                                         LiSCA,T = E(dst
+                                                                                                      mn,T ) =                               .      (7)
+             min L = LC + LEXO + LEndo ,                                                                                         mn
+                                                                             By aligning each edge between domains with the second-order
+             LEndo = λSCA LSCA + λSF A LSF A .                        (6)    statistical metric and minimizing the distribution discrepancy
+where LC is the cost function (such as mean square error loss or             of sensor correlations, we can achieve more comprehensive
+cross-entropy loss, depending on specific tasks) computed by the             alignment for sensor correlations.
+source data and labels, and λSCA and λSF A are hyperparameters
+to balance the effect of SCA and SFA respectively.                           B. Sensor Feature Alignment
+                                                                                Next, we focus on improving sensor feature alignment. The
+                        IV. SEA++ MODEL
+                                                                             sensor contrasting mechanism in SFA is achieved with the
+   While the method outlined above provides a feasible strategy              averaged sensor features over the training batches in source and
+for sensor alignment, there are still potential improvements to              target domains, so it encounters the similar challenge with SCA.
+enhance endo-feature alignment. Two key directions warrant                   Specifically, the contrasting-based alignment procedure in (5)
+consideration. First, SEA employs first-order statistics for align-          relies on first-order statistics, which might not achieve com-
+ment, such as averaged sensor features over a training batch                 prehensive alignment when dealing with complex distributions.
+used in sensor contrastive mechanism. However, the first-order               To overcome this limitation, we enhance SFA and introduce
+alignment is limited in dealing with complex data distributions,             improved SFA (iSFA) by incorporating Deep CORAL into the
+restricting its ability to achieve comprehensive alignment across            contrasting process.
+domains and yielding suboptimal performance. To address that,                   In (8), iSFA begins by calculating sensor-level distribution
+we propose introducing second-order statistical metrics for                  discrepancies using Deep CORAL to take into account second-
+alignment to achieve more comprehensive endo-feature align-                  order statistics. Subsequently, iSFA leverages the sensor-level
+ment.                                                                        discrepancies to perform contrasting between domains. In par-
+   Second, the constructed sequential graphs, comprising se-                 ticular, it minimizes the distribution discrepancies between cor-
+quential features and correlations, capture evolving distributions           responding sensors across domains while maximizes the distri-
+within local temporal intervals and should be aligned across                 bution discrepancies between different sensors across domains.
+domains. We consider the example of monitoring machine health                This approach allows for more comprehensive alignment of
+
+         Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+10788                                         IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE, VOL. 46, NO. 12, DECEMBER 2024
+
+
+
+sensor features.                                                              from four subjects, each representing one domain. The data
+                                                                              annotations include two levels: 1). locomotion representing
+                          1   
+                              N
+                                        e
+                                                s
+                                           Mc (Zn,T   t
+                                                    ,Zn,T
+                                                            )
+         LiSF A,T = −              log N              s     t )   .    (8)   the low-level tasks including four categories, sitting, standing,
+                          N                       Mc (Zn,T ,Zj,T
+                               n          j   e                               walking, and lying down; 2). gestures representing the high-level
+                                                                              tasks including 17 various actions. Following the experimental
+C. Multi-Graph Alignment                                                      settings in the previous work [59], we adopted the low-level
+                                                                              tasks. As some values in the data were missing, the linear
+   To combine the alignment for sensor correlations and sensor
+                                                                              interpolation was adopted to fill in the missing positions. To
+features across all sequential graph, a straightforward approach
+                                                                              construct the training dataset, we adopted a sliding window with
+would involve computing the average alignment losses for these
+                                                                              a size of 128 and an overlapping of 50% following the previous
+graphs. However, the distributions across domains for different
+                                                                              work [59].
+graphs might exhibit various discrepancies. To account for this
+                                                                                 UCI-HAR describes human activities. The MTS data in
+and enhance domain adaptation, we propose to learn adaptive
+                                                                              UCI-HAR originated from nine channels, which correspond
+weights for adjustments, as shown in (9).
+                                                                              to various sensors, such as accelerometers and gyroscopes,
+                
+     LiEndo =        WT (λSCA LiSCA,T + λSF A LiSF A,T ),                     attached to the human body. The dataset comprises records from
+                   T                                                          30 subjects, each performing six activities: walking, walking
+                                                                              upstairs, walking downstairs, standing, sitting, and lying down.
+        WT = Mc ([Z1,T
+                   s
+                       , . . ., ZL̂,T
+                                 s
+                                      ], [Z1,T
+                                           t
+                                               , . . ., ZL̂,T
+                                                         t
+                                                              ]),       (9)   Given the variability across subjects, we treat each subject as
+where [a, . . ., b] represents concatenating the elements from a to           a separate domain. Following the previous research [19], we
+b. In (9), the learnable weights WT are determined by evaluating              selected ten cross-domain scenarios for analysis. Furthermore,
+the distribution discrepancy of the T th graph between domains.               in line with Opportunity HAR, we utilized a window size of 128
+Specifically, WT will be large when there is a substantial discrep-           to extract samples from the data.
+ancy in the distribution of the T th graph between the source and                WISDM also describes human activities. The MTS data in
+target domains. By assigning larger weights to the graphs with                WISDM originated from three channels, with accelerometer
+larger distribution discrepancies between domains, we prioritize              sensors attached to the human body. The dataset includes records
+alignment in those graphs. This adaptive weighting scheme                     from 36 subjects, each engaging in the same six activities as in
+allows us to better adapt the model to the evolving distributions             UCI-HAR. Similar to UCI-HAR, we consider each subject as a
+between domains. Furthermore, we also introduce λSCA and                      distinct domain, and we select ten cross-domain scenarios in line
+λSF A to balance the effect of iSCA and iSFA. By combining the                with previous research [19]. Compared to UCI-HAR, WISDM
+exo-feature alignment and the improved endo-feature alignment,                presents additional challenges due to imbalanced samples across
+the improved overall loss function (10) can be obtained as:                   subjects.
+                                                                                 Sleep-EDF describes sleep stages. The MTS data in Sleep-
+               min L = LC + LEXO + LiEndo .                            (10)   EDF originated from six channels, including EEG (Epz-Cz, Pz-
+                                                                              Oz), EOG, and EMG. The dataset includes records from 20
+                          V. EXPERIMENT                                       subjects, each classified into five sleep stages: wake, N1, N2,
+                                                                              N3, and REM [19]. We treat each subject as a separate domain
+A. Datasets and Setup                                                         and select ten cross-domain scenarios following prior study [19].
+   To evaluate the performance of SEA and SEA++ under var-                    It’s noted that each sample is collected over a duration of 30
+ious MTS scenarios, we conducted experiments on six pub-                      seconds with a sampling rate of 100 Hz, resulting in a total of
+lic datasets: C-MAPSS [52], Opportunity HAR [53], UCI-                        3000 timestamps per sample. To mitigate training time costs, we
+HAR [54], WISDM [55], Sleep-EDF [56], and OnHW [57].                          down-sample each data to a sampling rate of 10 Hz, resulting in
+   C-MAPSS describes the degradation process of aircraft en-                  300 timestamps per sample after downsampling.
+gines. The MTS data in C-MAPSS originated from 14 sensors                        OnHW describes English characters by online handwriting.
+to measure various physical parameters, such as temperature,                  The MTS data in OnHW originated from 13 channels, com-
+fan speed, and pressure. The dataset includes four sub-datasets               prising various sensors like accelerometers, gyroscopes, mag-
+collected under different working conditions and fault modes,                 netometers, and force sensors integrated into a digital pen to
+where each sub-dataset represents one domain. We processed                    record signals during writing. The dataset includes records from
+the sub-datasets following the data preparation in the previous               119 subjects, each tasked with writing the 26 alphabet characters
+work [58]. In particular, annotations in this dataset represent the           in both lower and upper cases. Consequently, the dataset is di-
+remaining useful life (RUL) of engines and it is a regression task            vided into three subsets: Lower (26 classes), Upper (26 classes),
+for RUL prediction.                                                           and Both (52 classes), denoting lower case only, upper case
+   Opportunity HAR describes human activities. The MTS                        only, and both cases, respectively. Additionally, the data is
+data in Opportunity HAR originated from 113 sensors deployed                  further divided into writer-dependent and writer-independent.
+to various locations of the human body, such as hand and                      For cross-domain scenarios, we followed the previous work [43]
+leg. After removing three sensors with constant values, 110                   and chose to transfer from right-handed writers to left-handed
+sensors were used for evaluation. The dataset was collected                   writers, considering that right-handed writers are typically more
+
+
+        Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+WANG et al.: SEA++: MULTI-GRAPH-BASED HIGHER-ORDER SENSOR ALIGNMENT FOR MULTIVARIATE TIME-SERIES                                                   10789
+
+
+
+                                                                  TABLE I
+                                          THE COMPARISONS WITH SOTAS IN C-MAPSS (R: RMSE, S: SCORE)
+
+
+
+
+prevalent than left-handed ones. Thus, we have a total of six                BNM [63], LMMD [64], and SDAT [65]. TS UDA methods
+cases (three alphabet cases with writer-dependent and writer-                were specifically designed for TS data, including AdvSKM [41],
+independent), each involving the transfer from right-handed to               CoDATs [39], CtsADA [58], SLARDA [59], and CLUDA [66].
+left-handed data.                                                            For fair comparisons, all methods were run ten times based on
+   The experiments include three parts, comparisons with state-              the same feature extractor (i.e., GNN-LSTM). Since the target
+of-the-art methods, the ablation study, and sensitivity analysis.            domain labels are unavailable, selecting optimal hyperparame-
+All experiments were run ten times with average results reported             ters using target domain samples poses a challenge. Thus, we
+to remove the effect of random initialization. Besides, we set               adopted the source risk approach for hyperparameter optimiza-
+the batch size as 50 and employed Adam as the optimizer with                 tion, as outlined in previous works [10], [19], [67], to implement
+a learning rate of 0.001. Meanwhile, we adopted 30 training                  all the baseline methods on the six datasets. Specifically, we
+epochs for training our model. Furthermore, we built and trained             selected the candidate model that achieves the best evaluation
+our model based on Pytorch 1.9 and NVIDIA GeForce RTX                        metric, e.g., accuracy for classification and MSE for regression,
+3080Ti GPU.                                                                  on a validation set from the source domain. During implemen-
+   We employed different evaluation indicators to assess the                 tations, LMMD and SLARDA were designed specifically for
+performance of our method on the two distinct tasks. For regres-             multi-class classification UDA, so they are not included for
+sion tasks, e.g., RUL prediction, we utilized Root Mean Square               RUL prediction on C-MAPSS dataset. Notably, in the previous
+Error (RMSE) and the Score function [58], [60], [61], [62] as                SEA paper, different cross-domain scenarios of C-MAPSS were
+evaluation metrics. Lower values for both indicators indicate                based on various sample lengths. For example, the cross-domain
+better model performance. For classification tasks, we employed              scenario 1→2 was based on a time length of 72 while 3→4 was
+accuracy as the evaluation metric. High accuracy values signify              based on a time length of 45. However, this training setting may
+superior model performance.                                                  be inapplicable in real-world systems where obtaining samples
+                                                                             with a fixed time length is desired. Thus, results in the C-MAPSS
+B. Comparisons With State-of-the-Art                                         dataset have been re-conducted based on a consistent time length
+   We compared SEA and SEA++ with State-Of-The-Art meth-                     of 60 timestamps. Additionally, we have included the results
+ods (SOTAs), including general UDA methods and TS UDA                        of Target-only (Target) and Source-only (Source) baselines for
+methods. General UDA methods were designed to be applicable                  comparison. The target-only baseline represents the upper bound
+to various tasks and domains, regardless of the specific data                of UDA, where training and testing were performed on the target
+type, including DDC [9], Deep CORAL [13], DANN [10],                         domain only. The source-only baseline represents the lower
+
+         Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+10790                                       IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE, VOL. 46, NO. 12, DECEMBER 2024
+
+
+
+                                                                  TABLE II
+                                                THE COMPARISONS WITH SOTAS IN OPPORTUNITY HAR
+
+
+
+
+                                                                   TABLE III
+                                                     THE COMPARISONS WITH SOTAS IN UCI-HAR
+
+
+
+
+bound of UDA, where only the source data were used for training               2.57% compared best baselines on Opportunity HAR, WISDM,
+without any UDA methods applied.                                              and OnHW respectively.
+   Tables I–VI show the results on the cross-domain scenarios                    These results indicate the effectiveness of SEA and SEA++,
+of all six datasets. From these results, we observe that both SEA             showing the necessity of aligning sensor-level information.
+and SEA++ achieve better performance than SOTA methods in                     Furthermore, SEA++ addresses the minor limitations of SEA,
+most cross-domain scenarios and outperform all the baselines in               resulting in improved performance that establishes its state-of-
+terms of average performance. For example, SEA made signif-                   the-art status compared to traditional methods.
+icant improvements on C-MAPSS, UCI-HAR, and Sleep-EDF,
+improving by 4.7% (Score), 1.34%, and 1.36%, respectively,
+compared to the best baselines. However, SEA’s lower-order                    C. Ablation Study
+alignment restricts its effectiveness in aligning sensor-level in-               To comprehensively evaluate the effectiveness of our endo-
+formation. Meanwhile, ignoring the alignment of multi-graphs                  feature alignment and the associated improvements, we have
+restricts the alignment of evolving sensor-level distributions,               conducted extensive ablation studies consisting of nine different
+limiting SEA’s performance. By addressing these issues, SEA++                 variants, which can be categorized into three aspects. The first
+further improves performance on all downstream datasets. On                   aspect compares our method with a variant that only performs
+C-MAPSS, UCI-HAR, and Sleep-EDF, SEA already achieved                         exo-feature alignment without utilizing any sensor-level align-
+significant improvements, while SEA++ further improves by                     ment. In the second and third aspects, we consider variants
+11.84%, 1.33%, and 1.58% compared to SEA, resulting in                        combined exo-feature alignment with one of endo-feature align-
+improvements of 16%, 2.67%, and 2.94% compared to best                        ment techniques: SCA or SFA. Each aspect further includes four
+baselines. Additionally, SEA++ improves by 1.82%, 2.54%, and                  variants based on different improvements. We utilize the variants
+2.25% compared to SEA, and improves by 2.78%, 2.62%, and                      with SCA for illustration. The “w/ Exo + SCA” variant represents
+
+
+        Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+WANG et al.: SEA++: MULTI-GRAPH-BASED HIGHER-ORDER SENSOR ALIGNMENT FOR MULTIVARIATE TIME-SERIES                                                   10791
+
+
+
+                                                                   TABLE IV
+                                                      THE COMPARISONS WITH SOTAS IN WISDM
+
+
+
+
+                                                                   TABLE V
+                                                    THE COMPARISONS WITH SOTAS IN SLEEP-EDF
+
+
+
+
+                                                                   TABLE VI
+                                                      THE COMPARISONS WITH SOTAS IN ONHW
+
+
+
+
+utilizing vanilla SCA for sensor correlation alignment. By intro-            Finally, by incorporating both improvements, i.e., MGA and
+ducing Multi-Graph Alignment (MGA), we have the “w/ Exo                      second-order alignment, we obtain the “w/ Exo + iSCA” variant.
++ SCA + MGA” variant, while still utilizing first-order align-               The same variations were applied for SFA, resulting in four
+ment. By introducing alignment with second-order statistics                  additional variants. Notably, only the results on C-MAPSS and
+without MGA, we have the variant “w/ Exo + SCA + 2-order”.                   Opportunity HAR have been reported, and the full results on
+
+         Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+10792                                       IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE, VOL. 46, NO. 12, DECEMBER 2024
+
+
+
+                                                                   TABLE VII
+                                               THE ABLATION STUDY IN C-MAPSS (R: RMSE, S: SCORE)
+
+
+
+
+                                                                    TABLE VIII
+                                                      THE ABLATION STUDY IN OPPORTUNITY HAR
+
+
+
+
+the remaining datasets can be found in our appendix, available                iSCA and iSFA for complete endo-feature alignment, we achieve
+online.                                                                       a remarkable improvement of 24.39% compared to the baseline.
+   Tables VII and VIII show the ablation study on C-MAPSS and                 Similar trends can also be observed in Opportunity HAR, as
+Opportunity HAR respectively. We focus on the average RMSE                    shown in Table VIII. Regarding the average accuracy, SEA++
+results on C-MAPSS for illustration and consider the variant                  increases by 3.96% compared to the model with exo-feature
+“w/ Exo” as the baseline. First, we observe that introducing                  alignment only. The results in the cross-domain scenarios of
+SCA and SFA leads to improvements of 9.38% and 11.71%,                        Opportunity HAR can further verify the effectiveness of our
+respectively, indicating the effectiveness of endo-feature align-             proposed modules.
+ment. As the endo-feature alignment still has minor limitations,                 These experiments highlight the significance of endo-feature
+we further introduce MGA and second-order statistic alignment                 alignment in achieving effective alignment at the sensor level
+to improve the sensor-level alignment. Introducing MGA leads                  for MTS-UDA. Furthermore, the additional modules for endo-
+to performance improvements of 13.36% (SCA) and 15.37%                        feature alignment, namely MGA and higher-order statistics
+(SFA), while introducing second-order statistic alignment im-                 alignment, prove to be highly effective in further improving the
+proves by 14.36% (SCA) and 13.96% (SFA). The improve-                         performance of MTS-UDA.
+ments indicate that MGA and second-order statistic alignment
+both show effectiveness for better sensor-level alignment, so
+it’s reasonable to combine both modules to further improve                    D. Sensitivity Analysis
+performance. Combining both parts, the variants “w/ iSCA” and                    We have conducted the sensitivity analysis to evaluate the
+“w/ iSFA” improve the performance by 17.37% and 20.14%                        impact of hyperparameters on our model’s performance, in-
+respectively compared to the baseline. Finally, by combining                  cluding four hyperparameters: λSCA , λSF A , number of heads,
+
+
+        Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+WANG et al.: SEA++: MULTI-GRAPH-BASED HIGHER-ORDER SENSOR ALIGNMENT FOR MULTIVARIATE TIME-SERIES                                                     10793
+
+
+
+
+                                                                               Fig. 6.   The sensitivity analysis for λSF A on C-MAPSS.
+
+
+Fig. 5.   The sensitivity analysis for λSCA on C-MAPSS.
+
+
+
+
+and patch sizes. λSCA and λSF A control the balance between
+sensor correlation alignment and sensor feature alignment. The
+number of heads determines the number of graph branches
+used to model spatial dependencies between sensors. The patch
+sizes determine the number of sequential graphs constructed.
+Conducting sensitivity analysis on these hyperparameters helps
+determine their sensitivity and find optimal values. Notably,
+the sensitivity analysis presented here pertains specifically to
+SEA++. Additional details regarding the analysis related to SEA
+can be found in our appendix, available online.
+   1) Analysis for λSCA and λSF A : We have conducted exper-
+iments with various values of λSCA and λSF A varying from
+0.001 to 10 with an interval of 10×. Figs. 5 and 6 present
+the analysis of λSCA and λSF A on C-MAPSS respectively,
+and Fig. 7 shows the analysis for λSCA and λSF A on Oppor-
+tunity HAR. From the results, we can find similar trends for
+the two hyperparameters, which include two points. First, our
+method demonstrates robustness to changes in hyperparameters
+in most cases. For example, we observe insensitivity to λSCA
+in cross-domain scenarios such as 1→4, 2→1, and 2→4 of                         Fig. 7.   The sensitivity analysis for λSCA and λSF A on Opportunity HAR.
+C-MAPSS, as well as 1→3, 2→3, and 4→2 of Opportunity
+HAR. Similarly, regarding λSF A , we observe insensitivity in
+scenarios 1→2, 2→1, and 3→4 of C-MAPSS, as well as 1→4,                        results on C-MAPSS as examples, we observe that our method
+3→2, and 4→3 of Opportunity HAR. These results indicate that                   achieves poor performance when λSCA is set to 10in the case of
+our method can maintain stable performance without requiring                   3→2, and when λSCA is set to 0.001in the case of 4→1. Similar
+extensive hyperparameter tuning, making it applicable for real-                trends can also be observed for λSF A , e.g., λSF A =10 in 2→3.
+world scenarios. Second, in cases where our method is sensitive                Based on these observations, we recommend setting the values
+to hyperparameters, optimal performance is typically achieved                  of these hyperparameters within the range of 0.01 to 1, where
+when their values fall within the range of [0.01, 1]. Taking the               our method consistently achieves good performance.
+
+           Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+10794                                           IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE, VOL. 46, NO. 12, DECEMBER 2024
+
+
+
+
+Fig. 8.   The sensitivity analysis for different heads on C-MAPSS.
+
+
+
+
+Fig. 9.   The sensitivity analysis for different heads on Opportunity HAR.
+                                                                                Fig. 10.   The sensitivity analysis for patch sizes on C-MAPSS.
+
+
+
+   2) Analysis for the Number of Heads: For constructing a
+graph with MSGC, we have multiple branches with differently
+initialized weights to model sensor correlations in various fea-
+ture spaces. In this part, we aim to evaluate the effect of the num-
+ber of branches on the model performance. Figs. 8 and 9 show the
+results on C-MAPSS and Opportunity HAR respectively. In our
+analysis, we analyze the effect using a maximum of 4 branches,
+as we observe that further increasing the number of branches                    Fig. 11.   The sensitivity analysis for patch sizes on Opportunity HAR.
+does not yield significant improvements. The results consistently
+show that SEA++ obtains performance improvements with in-
+creasing the number of branches. Specifically, SEA++ with only                  alignment of evolving distributions, so evaluating its effects is
+one branch tends to exhibit poorer performance in most cases,                   important. Notably, we conducted the analysis with different
+such as 2→3 of C-MAPSS and 2→4 of Opportunity HAR. With                         patch size choices for C-MAPSS and Opportunity HAR, as their
+increasing the number of branches, the performance improves.                    samples have different lengths. For C-MAPSS, the time length
+It’s worth noting that the improvements become less pronounced                  of each sample is fixed as 60, so we use patch sizes within
+when the number of branches is large enough, particularly when                  [4,5,6,7,8,9,10] for patch size analysis. For Opportunity HAR,
+transitioning from 3 to 4 branches. This suggests that using                    the time length of each sample is fixed as 128, so we use patch
+3 branches is generally sufficient for effectively capturing the                sizes within [2,4,8,16,32].
+spatial dependencies within MTS data. Overall, the analysis                        Based on the analysis of C-MAPSS in Fig. 10 and Opportunity
+demonstrates the importance of leveraging multiple branches in                  in Fig. 11, it is evident that increasing patch sizes tends to result in
+MSGC for modeling the complex relationships among sensors.                      better performance. This observation holds true in several cross-
+Increasing the number of branches allows our method to capture                  scenarios, such as 2→3, 3→1, and 3→4 of C-MAPSS, where the
+a more comprehensive understanding of sensor correlations,                      best performance is achieved with patch sizes of 8 or 9. Similar
+leading to improved performance for MTS-UDA. Meanwhile,                         observations can be found in Opportunity HAR, such as 1→3,
+three branches are good enough to capture such relational infor-                2→1, and 3→1, where the best performance is achieved with
+mation.                                                                         patch sizes of 16 or 32. Conversely, large patch sizes can also
+   3) Analysis for Patch Size: We segment each MTS sam-                         result in diminished performance. For instance, in cross-domain
+ple into multiple patches with a predefined size d, construct                   scenarios 2→3 and 3→1 of C-MAPSS, setting a patch size of
+sequential graphs with the patches, and conduct multi-graph                     10 yields decreased performance. Similarly, in scenarios 1→4
+alignment to align the evolving distributions within MTS data.                  and 3→2 of Opportunity HAR, employing a patch size of 32
+The patch size d affects sequential graph construction and the                  adversely affects performance. The reason behind these trends
+
+          Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+WANG et al.: SEA++: MULTI-GRAPH-BASED HIGHER-ORDER SENSOR ALIGNMENT FOR MULTIVARIATE TIME-SERIES                                                                 10795
+
+
+
+lies in two factors. First, we construct graphs to capture spatial                  [10] Y. Ganin et al., Domain-Adversarial Training of Neural Networks.
+dependencies by segmenting MTS data into patches. During                                 Cham, Switzerland: Springer International Publishing, 2017, pp. 189–209,
+                                                                                         doi: 10.1007/978-3-319-58347-1_10.
+graph construction, small patch sizes may not contain enough                        [11] E. Tzeng, J. Hoffman, K. Saenko, and T. Darrell, “Adversarial discrim-
+information to fully capture the complex spatial dependencies                            inative domain adaptation,” in Proc. IEEE Conf. Comput. Vis. Pattern
+among sensors for each patch, affecting the effective transfer                           Recognit., 2017, pp. 2962–2971.
+                                                                                    [12] M. Long, Z. Cao, J. Wang, and M. I. Jordan, “Conditional adversar-
+of the spatial information across domains. Second, large patch                           ial domain adaptation,” in Proc. Adv. Neural Inf. Process. Syst., 2018,
+sizes would reduce the number of sequential graphs, thereby                              pp. 1647–1657.
+affecting the ability to effectively capture the distributions in                   [13] B. Sun and K. Saenko, “Deep coral: Correlation alignment for deep domain
+                                                                                         adaptation,” in Proc. Eur. Conf. Comput. Vis. Workshops, Amsterdam, The
+local temporal intervals and consequently impacting the align-                           Netherlands, Springer, 2016, pp. 443–450.
+ment of evolving distributions across domains. Therefore, it is                     [14] M. Long, H. Zhu, J. Wang, and M. I. Jordan, “Deep transfer learning with
+recommended to make trade-off by choosing suitable patch sizes                           joint adaptation networks,” in Proc. Int. Conf. Mach. Learn., PMLR, 2017,
+                                                                                         pp. 2208–2217.
+for better MTS-UDA.                                                                 [15] S. Purushotham, W. Carvalho, T. Nilanon, and Y. Liu, “Variational re-
+                                                                                         current adversarial deep domain adaptation,” in Proc. Int. Conf. Learn.
+                                                                                         Representations, 2017, pp. 1–15.
+                            VI. CONCLUSION                                          [16] R. Cai et al., “Time series domain adaptation via sparse associative
+                                                                                         structure alignment,” in Proc. AAAI Conf. Artif. Intell., 2021, pp. 6859–
+   In this paper, we formulate Multivariate Time-Series Unsu-                            6867. [Online]. Available: https://ojs.aaai.org/index.php/AAAI/article/
+pervised Domain Adaptation (MTS-UDA). By analyzing the                                   view/16846
+problems underlying this task, we propose SEnsor Alignment                          [17] Q. Liu and H. Xue, “Adversarial spectral kernel matching for unsupervised
+                                                                                         time series domain adaptation,” in Proc. 30th Int. Joint Conf. Artif. Intell.,
+(SEA) to address these issues. To reduce the domain discrepancy                          Z.-H. Zhou, Ed., 2021, pp. 2744–2750, doi: 10.24963/ijcai.2021/378.
+at both the local and global sensor levels, we design endo-                         [18] Y. Shi, X. Ying, and J. Yang, “Deep unsupervised domain adaptation with
+feature alignment and exo-feature alignment. At the local sensor                         time series sensor data: A survey,” Sensors, vol. 22, no. 15, pp. 1–29, 2022.
+                                                                                    [19] M. Ragab et al., “ADATIME: A benchmarking suite for domain adaptation
+level, endo-feature alignment aligns sensor features and sensor                          on time series data,” ACM Trans. Knowl. Discov. Data, vol. 17, no. 8,
+correlations across domains, preventing misalignment at the                              pp. 1–18, 2023.
+sensor level. To enhance the endo-feature alignment, we further                     [20] Y. Wang et al., “Sensor alignment for multivariate time-series unsu-
+                                                                                         pervised domain adaptation,” in Proc. AAAI Conf. Artif. Intell., 2023,
+design SEA++, incorporating higher-order statistic alignment                             pp. 10253–10261.
+and a multi-graph alignment technique. These enhancements                           [21] Z. Pei, Z. Cao, M. Long, and J. Wang, “Multi-adversarial domain adap-
+are specifically designed to facilitate comprehensive alignment                          tation,” in Proc. AAAI Conf. Artif. Intell., 2018, Art. no. 482. [Online].
+                                                                                         Available: https://ojs.aaai.org/index.php/AAAI/article/view/11767
+across domains and effectively capture the evolving data dis-                       [22] C. Yu, J. Wang, Y. Chen, and M. Huang, “Transfer learning with dynamic
+tributions within MTS data. At the global sensor level, we                               adversarial adaptation network,” in Proc. IEEE Int. Conf. Data Mining,
+enforce restrictions on global sensor features to reduce domain                          2019, pp. 778–786.
+                                                                                    [23] Z. Du, J. Li, H. Su, L. Zhu, and K. Lu, “Cross-domain gradient discrepancy
+discrepancy. Our extensive experiments in all the six public                             minimization for unsupervised domain adaptation,” in Proc. IEEE/CVF
+datasets demonstrate the effectiveness of SEA and SEA++ for                              Conf. Comput. Vis. Pattern Recognit., 2021, pp. 3937–3946.
+MTS-UDA.                                                                            [24] Z. Gao, S. Zhang, K. Huang, Q. Wang, and C. Zhong, “Gradient distribu-
+                                                                                         tion alignment certificates better adversarial domain adaptation,” in Proc.
+                                                                                         IEEE/CVF Int. Conf. Comput. Vis., 2021, pp. 8937–8946.
+                                  REFERENCES                                        [25] L. Chen et al., “Reusing the task-specific classifier as a discriminator:
+                                                                                         Discriminator-free adversarial domain adaptation,” in Proc. IEEE/CVF
+ [1] E. Eldele et al., “Self-supervised contrastive representation learning for          Conf. Comput. Vis. Pattern Recognit., 2022, pp. 7181–7190.
+     semi-supervised time-series classification,” IEEE Trans. Pattern Anal.         [26] R. Shu, H. H. Bui, H. Narui, and S. Ermon, “A DIRT-T approach to
+     Mach. Intell., vol. 45, no. 12, pp. 15604–15618, Dec. 2023.                         unsupervised domain adaptation,” in Proc. 6th Int. Conf. Learn. Repre-
+ [2] Q. Ma, S. Li, and G. W. Cottrell, “Adversarial joint-learning recurrent             sentations, 2018, pp. 1–19.
+     neural network for incomplete time series classification,” IEEE Trans.         [27] J. Li, E. Chen, Z. Ding, L. Zhu, K. Lu, and H. T. Shen, “Maximum
+     Pattern Anal. Mach. Intell., vol. 44, no. 4, pp. 1765–1776, Apr. 2022.              density divergence for domain adaptation,” IEEE Trans. Pattern Anal.
+ [3] R. Zhao, R. Yan, Z. Chen, K. Mao, P. Wang, and R. X. Gao, “Deep learning            Mach. Intell., vol. 43, no. 11, pp. 3918–3930, Nov. 2021.
+     and its applications to machine health monitoring,” Mech. Syst. Signal         [28] S. Li et al., “Domain conditioned adaptation network,” in Proc. AAAI Conf.
+     Process., vol. 115, pp. 213–237, 2019.                                              Artif. Intell., 2020, pp. 11386–11393.
+ [4] K. Chen, D. Zhang, L. Yao, B. Guo, Z. Yu, and Y. Liu, “Deep learning           [29] M. Long, Y. Cao, Z. Cao, J. Wang, and M. I. Jordan, “Transferable rep-
+     for sensor-based human activity recognition: Overview, challenges, and              resentation learning with deep adaptation networks,” IEEE Trans. Pattern
+     opportunities,” ACM Comput. Surv., vol. 54, no. 4, pp. 1–40, 2021.                  Anal. Mach. Intell., vol. 41, no. 12, pp. 3071–3085, Dec. 2019.
+ [5] H. He, Q. Zhang, S. Bai, K. Yi, and Z. Niu, “CATN: Cross attentive tree-       [30] M. M. Rahman, C. Fookes, M. Baktashmotlagh, and S. Sridharan, “On
+     aware network for multivariate time series forecasting,” in Proc. AAAI              minimum discrepancy estimation for deep domain adaptation,” in Domain
+     Conf. Artif. Intell., 2022, pp. 4030–4038. [Online]. Available: https://ojs.        Adaptation for Visual Understanding, Berlin, Germany: Springer, 2020,
+     aaai.org/index.php/AAAI/article/view/20320                                          pp. 81–94.
+ [6] W. Zheng and J. Hu, “Multivariate time series prediction based on temporal     [31] W. Zhang, X. Zhang, L. Lan, and Z. Luo, “Maximum mean and covariance
+     change information learning method,” IEEE Trans. Neural Netw. Learn.                discrepancy for unsupervised domain adaptation,” Neural Process. Lett.,
+     Syst., vol. 34, no. 10, pp. 7034–7048, Oct. 2023.                                   vol. 51, pp. 347–366, 2020.
+ [7] A. Garg, W. Zhang, J. Samaran, R. Savitha, and C.-S. Foo, “An evaluation       [32] N. Alipour and J. Tahmoresnezhad, “Heterogeneous domain adaptation
+     of anomaly detection and diagnosis in multivariate time series,” IEEE               with statistical distribution alignment and progressive pseudo label selec-
+     Trans. Neural Netw. Learn. Syst., vol. 33, no. 6, pp. 2508–2517, Jun. 2022.         tion,” Appl. Intell., vol. 52, no. 7, pp. 8038–8055, 2022.
+ [8] S. Zhao et al., “A review of single-source deep unsupervised visual            [33] W. Zellinger, T. Grubinger, E. Lughofer, T. Natschläger, and S. Saminger-
+     domain adaptation,” IEEE Trans. Neural Netw. Learn. Syst., vol. 33, no. 2,          Platz, “Central moment discrepancy (CMD) for domain-invariant repre-
+     pp. 473–493, Feb. 2022.                                                             sentation learning,” 2017, arXiv: 1702.08811.
+ [9] E. Tzeng, J. Hoffman, N. Zhang, K. Saenko, and T. Darrell, “Deep domain        [34] C. Chen et al., “HoMM: Higher-order moment matching for unsu-
+     confusion: Maximizing for domain invariance,” 2014, arXiv:1412.3474.                pervised domain adaptation,” in Proc. AAAI Conf. Artif. Intell., 2020,
+     [Online]. Available: https://arxiv.org/abs/1412.3474                                pp. 3422–3429.
+
+
+
+           Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+10796                                              IEEE TRANSACTIONS ON PATTERN ANALYSIS AND MACHINE INTELLIGENCE, VOL. 46, NO. 12, DECEMBER 2024
+
+
+
+[35] Y. Xu et al., “Multi-source video domain adaptation with temporal attentive        [52] A. Saxena, K. Goebel, D. Simon, and N. Eklund, “Damage propagation
+     moment alignment network,” IEEE Trans. Circuits Syst. Video Technol.,                   modeling for aircraft engine run-to-failure simulation,” in Proc. Int. Conf.
+     vol. 33, no. 8, pp. 3860–3871, Aug. 2023.                                               Prognostics Health Manage., 2008, pp. 1–9.
+[36] Y. Xu, H. Cao, K. Mao, Z. Chen, L. Xie, and J. Yang, “Aligning correlation         [53] D. Roggen et al., “Collecting complex activity datasets in highly rich
+     information for domain adaptation in action recognition,” IEEE Trans.                   networked sensor environments,” in Proc. 7th Int. Conf. Netw. Sens. Syst.,
+     Neural Netw. Learn. Syst., vol. 35, no. 5, pp. 6767–6778, May 2024.                     2010, pp. 233–240.
+[37] J. Li, S. Qiu, C. Du, Y. Wang, and H. He, “Domain adaptation for EEG               [54] D. Anguita et al., “A public domain dataset for human activity recogni-
+     emotion recognition based on latent representation similarity,” IEEE Trans.             tion using smartphones,” in Proc. Eur. Symp. Artif. Neural Netw., 2013,
+     Cogn. Devel. Syst., vol. 12, no. 2, pp. 344–353, Jun. 2020.                             pp. 347–442.
+[38] H. Zhao, Q. Zheng, K. Ma, H. Li, and Y. Zheng, “Deep representation-               [55] J. R. Kwapisz, G. M. Weiss, and S. A. Moore, “Activity recognition using
+     based domain adaptation for nonstationary EEG classification,” IEEE                     cell phone accelerometers,” ACM SigKDD Explorations Newslett., vol. 12,
+     Trans. Neural Netw. Learn. Syst., vol. 32, no. 2, pp. 535–545, Feb. 2021.               no. 2, pp. 74–82, 2011.
+[39] G. Wilson, J. R. Doppa, and D. J. Cook, “Multi-source deep domain adapta-          [56] B. Kemp, A. H. Zwinderman, B. Tuk, H. A. C. Kamphuisen, and J. J. L.
+     tion with weak supervision for time-series sensor data,” in Proc. 26th ACM              Oberye, “Analysis of a sleep-dependent neuronal feedback loop: The slow-
+     SIGKDD Int. Conf. Knowl. Discov. Data Mining, 2020, pp. 1768–1778.                      wave microcontinuity of the EEG,” IEEE Trans. Biomed. Eng., vol. 47,
+[40] G. Wilson, J. R. Doppa, and D. J. Cook, “CALDA: Improving multi-source                  no. 9, pp. 1185–1194, Sep. 2000.
+     time series domain adaptation with contrastive adversarial learning,” IEEE         [57] F. Ott, M. Wehbi, T. Hamann, J. Barth, B. Eskofier, and C. Mutschler,
+     Trans. Pattern Anal. Mach. Intell., vol. 45, no. 12, pp. 14208–14221,                   “The OnHW dataset: Online handwriting recognition from IMU-enhanced
+     Dec. 2023.                                                                              ballpoint pens with machine learning,” in Proc. ACM Interactive Mobile
+[41] Q. Liu and H. Xue, “Adversarial spectral kernel matching for unsupervised               Wearable Ubiquitous Technol., vol. 4, no. 3, pp. 1–20, 2020.
+     time series domain adaptation,” in Proc. Int. Joint Conf. Artif. Intell., 2021,    [58] M. Ragab et al., “Contrastive adversarial domain adaptation for machine
+     pp. 2744–2750.                                                                          remaining useful life prediction,” IEEE Trans. Ind. Inform., vol. 17, no. 8,
+[42] E. Eldele, M. Ragab, Z. Chen, M. Wu, C.-K. Kwoh, and X. Li, “Contrastive                pp. 5239–5249, Aug. 2021.
+     domain adaptation for time-series via temporal mixup,” IEEE Trans. Artif.          [59] M. Ragab, E. Eldele, Z. Chen, M. Wu, C.-K. Kwoh, and X. Li, “Self-
+     Intell., vol. 5, no. 3, pp. 1185–1194, Mar. 2024.                                       supervised autoregressive domain adaptation for time series data,” IEEE
+[43] F. Ott, D. Rügamer, L. Heublein, B. Bischl, and C. Mutschler, “Domain                   Trans. Neural Netw. Learn. Syst., vol. 35, no. 1, pp. 1341–1351, Jan. 2024.
+     adaptation for time-series classification to mitigate covariate shift,” in Proc.   [60] Z. Chen, M. Wu, R. Zhao, F. Guretno, R. Yan, and X. Li, “Machine
+     30th ACM Int. Conf. Multimedia, 2022, pp. 5934–5943.                                    remaining useful life prediction via an attention-based deep learning
+[44] T. Yang, X. Yu, N. Ma, Y. Zhao, and H. Li, “A novel domain adaptive                     approach,” IEEE Trans. Ind. Electron., vol. 68, no. 3, pp. 2521–2531,
+     deep recurrent network for multivariate time series prediction,” Eng. Appl.             Mar. 2021.
+     Artif. Intell., vol. 106, 2021, Art. no. 104498. [Online]. Available: https:       [61] Q. Xu, Z. Chen, K. Wu, C. Wang, M. Wu, and X. Li, “KDnet-RUL: A
+     //www.sciencedirect.com/science/article/pii/S0952197621003468                           knowledge distillation framework to compress deep neural networks for
+[45] A. Deng and B. Hooi, “Graph neural network-based anomaly detection                      machine remaining useful life prediction,” IEEE Trans. Ind. Electron.,
+     in multivariate time series,” in Proc. AAAI Conf. Artif. Intell., 2021,                 vol. 69, no. 2, pp. 2022–2032, Feb. 2022.
+     pp. 4027–4035.                                                                     [62] S. Fu, S. Zhong, L. Lin, and M. Zhao, “A novel time-series memory auto-
+[46] Z. Jia et al., “GraphSleepNet: Adaptive spatial-temporal graph convolu-                 encoder with sequentially updated reconstructions for remaining useful
+     tional networks for sleep stage classification,” in Proc. 29th Int. Joint Conf.         life prediction,” IEEE Trans. Neural Netw. Learn. Syst., vol. 33, no. 12,
+     Artif. Intell., C. Bessiere, Ed., 2020, pp. 1324–1330.                                  pp. 7114–7125, Dec. 2022.
+[47] Y. Wang et al., “Fully-connected spatial-temporal graph for multi-                 [63] S. Cui, S. Wang, J. Zhuo, L. Li, Q. Huang, and Q. Tian, “Towards dis-
+     variate time-series data,” in Proc. AAAI Conf. Artif. Intell., 2024,                    criminability and diversity: Batch nuclear-norm maximization under label
+     pp. 15715–15724.                                                                        insufficient situations,” in Proc. IEEE/CVF Conf. Comput. Vis. Pattern
+[48] J. Gilmer, S. S. Schoenholz, P. F. Riley, O. Vinyals, and G. E. Dahl, “Neural           Recognit., 2020, pp. 3940–3949.
+     message passing for quantum chemistry,” 2017, arXiv: 1704.01212.                   [64] Y. Zhu et al., “Deep subdomain adaptation network for image classifica-
+[49] H. Guo, R. Pasunuru, and M. Bansal, “Multi-source domain adaptation                     tion,” IEEE Trans. Neural Netw. Learn. Syst., vol. 32, no. 4, pp. 1713–1722,
+     for text classification via distancenet-bandits,” in Proc. AAAI Conf. Artif.            Apr. 2021.
+     Intell., 2020, pp. 7830–7838.                                                      [65] H. Rangwani, S. K. Aithal, M. Mishra, A. Jain, and R. V. Babu, “A closer
+[50] Y. Wang, M. Wu, X. Li, L. Xie, and Z. Chen, “Multivariate time series                   look at smoothness in domain adversarial training,” in Proc. 39th Int. Conf.
+     representation learning via hierarchical correlation pooling boosted graph              Mach. Learn., 2022, pp. 18378–18399.
+     neural network,” IEEE Trans. Artif. Intell., vol. 5, no. 1, pp. 321–333,           [66] M. Vayyat, J. Kasi, A. Bhattacharya, S. Ahmed, and R. Tallamraju,
+     Jan. 2024.                                                                              “CLUDA: Contrastive learning in unsupervised domain adaptation for
+[51] R.-G. Cirstea, B. Yang, and C. Guo, “Graph attention recurrent neural                   semantic segmentation,” 2022, arXiv:2208.14227.
+     networks for correlated time series forecasting,” in Proc. MileTS19, KDD,          [67] L. Ericsson, D. Li, and T. Hospedales, “Better practices for domain adap-
+     2019, pp. 1–6.                                                                          tation,” in Proc. Int. Conf. Autom. Mach. Learn., PMLR, 2023, pp. 1–25.
+
+
+
+
+          Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on June 11,2025 at 09:30:20 UTC from IEEE Xplore. Restrictions apply.
+
