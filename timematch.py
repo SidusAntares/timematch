@@ -25,6 +25,42 @@ from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda, cycle
 
 
+def compute_class_prototypes(features, labels):
+    prototypes = {}
+    for class_id in torch.unique(labels):
+        class_mask = labels == class_id
+        if torch.count_nonzero(class_mask) == 0:
+            continue
+        prototypes[int(class_id.item())] = features[class_mask].mean(dim=0)
+    return prototypes
+
+
+def compute_relation_matrix(prototypes, class_ids):
+    proto_stack = torch.stack([prototypes[class_id] for class_id in class_ids], dim=0)
+    proto_stack = F.normalize(proto_stack, dim=1)
+    relation_matrix = proto_stack @ proto_stack.t()
+    relation_matrix.fill_diagonal_(0.0)
+
+    norm = relation_matrix.norm(p="fro")
+    if norm > 0:
+        relation_matrix = relation_matrix / norm
+
+    return relation_matrix
+
+
+def prototype_relation_alignment_loss(source_features, source_labels, target_features, target_labels):
+    source_prototypes = compute_class_prototypes(source_features, source_labels)
+    target_prototypes = compute_class_prototypes(target_features, target_labels)
+
+    shared_classes = sorted(set(source_prototypes.keys()) & set(target_prototypes.keys()))
+    if len(shared_classes) < 2:
+        return source_features.new_tensor(0.0)
+
+    source_rel = compute_relation_matrix(source_prototypes, shared_classes)
+    target_rel = compute_relation_matrix(target_prototypes, shared_classes)
+    return F.mse_loss(source_rel, target_rel)
+
+
 
 def train_timematch(student, config, writer, val_loader, device, best_model_path, fold_num, splits):
     source_loader, target_loader_no_aug, target_loader = get_data_loaders(splits, config, config.balance_source)
@@ -123,23 +159,38 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             source_labels = sample_source['label'].cuda(device, non_blocking=True)
             pixels_t, mask_t, position_t, extra_t = to_cuda(sample_target_strong, device)
             logits_target = None
+            target_feats = None
+            source_feats = None
             loss_target = 0.0
+            loss_relation = pixels_s.new_tensor(0.0)
             if config.domain_specific_bn:
-                logits_source = student.forward(pixels_s, mask_s, position_s + source_to_target_shift, extra_s)
+                logits_source, source_feats = student.forward(
+                    pixels_s, mask_s, position_s + source_to_target_shift, extra_s, return_feats=True
+                )
                 if len(torch.nonzero(pseudo_mask)) >= 2:  # at least 2 examples required for BN
-                    logits_target = student.forward(pixels_t[pseudo_mask], mask_t[pseudo_mask], position_t[pseudo_mask], extra_t[pseudo_mask])
+                    logits_target, target_feats = student.forward(
+                        pixels_t[pseudo_mask], mask_t[pseudo_mask], position_t[pseudo_mask], extra_t[pseudo_mask], return_feats=True
+                    )
             else:
                 pixels = torch.cat([pixels_s, pixels_t[pseudo_mask]])
                 mask = torch.cat([mask_s, mask_t[pseudo_mask]])
                 position = torch.cat([position_s + source_to_target_shift, position_t[pseudo_mask]])
                 extra = torch.cat([extra_s, extra_t[pseudo_mask]])
-                logits = student.forward(pixels, mask, position, extra)
+                logits, feats = student.forward(pixels, mask, position, extra, return_feats=True)
                 logits_source, logits_target = logits[:config.batch_size], logits[config.batch_size:]
+                source_feats, target_feats = feats[:config.batch_size], feats[config.batch_size:]
 
             loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
-            loss = loss_source + config.trade_off * loss_target
+                if config.use_prototype_relation_alignment:
+                    loss_relation = prototype_relation_alignment_loss(
+                        source_feats,
+                        source_labels,
+                        target_feats,
+                        pseudo_targets[pseudo_mask],
+                    )
+            loss = loss_source + config.trade_off * loss_target + config.pra_trade_off * loss_relation
 
             # compute loss and backprop
             optimizer.zero_grad()
@@ -158,6 +209,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
             if step % config.log_step == 0:
                 writer.add_scalar("train/loss", loss_meter.val, global_step)
+                writer.add_scalar("train/loss_source", float(loss_source.item()), global_step)
+                writer.add_scalar("train/loss_target", float(loss_target) if isinstance(loss_target, float) else float(loss_target.item()), global_step)
+                writer.add_scalar("train/loss_relation", float(loss_relation.item()), global_step)
                 writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
                 writer.add_scalar("train/target_updates", len(torch.nonzero(pseudo_mask)), global_step)
 
