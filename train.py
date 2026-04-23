@@ -91,12 +91,13 @@ def main(config):
             print(model)
             print('Number of trainable parameters:', get_num_trainable_params(model))
 
-            # if os.path.isfile(best_model_path):
-            #     answer = input(f'Model already exists at {best_model_path}! Override y/[n]? ')
-            #     override = strtobool(answer) if len(answer) > 0 else False
-            #     if not override:
-            #         print('Skipping fold', fold_num)
-            #         continue
+            if os.path.isfile(best_model_path):
+                continue
+                # answer = input(f'Model already exists at {best_model_path}! Override y/[n]? ')
+                # override = strtobool(answer) if len(answer) > 0 else False
+                # if not override:
+                #     print('Skipping fold', fold_num)
+                #     continue
 
             writer = SummaryWriter(log_dir=f'{config.tensorboard_log_dir}_fold{fold_num}', purge_step=0)
             if config.method == 'timematch':
@@ -281,19 +282,23 @@ def save_results(metrics, config):
     conf_mat = metrics.pop('confusion_matrix')
     class_report = metrics.pop('classification_report')
     target_name = str(config.target).replace('/', '_')
-    metrics['experiment_name'] = config.experiment_name
-    metrics['method'] = config.method
-    metrics['source'] = config.source
-    metrics['target'] = config.target
-    metrics['use_prototype_relation_alignment'] = bool(
-        getattr(config, 'use_prototype_relation_alignment', False)
-    )
-    metrics['pra_trade_off'] = float(getattr(config, 'pra_trade_off', 0.0))
-    metrics['pra_warmup_epochs'] = int(getattr(config, 'pra_warmup_epochs', 0))
-    metrics['pra_min_samples_per_class'] = int(getattr(config, 'pra_min_samples_per_class', 0))
+    metadata = {
+        'experiment_name': config.experiment_name,
+        'method': config.method,
+        'source': config.source,
+        'target': config.target,
+        'use_prototype_relation_alignment': bool(
+            getattr(config, 'use_prototype_relation_alignment', False)
+        ),
+        'pra_trade_off': float(getattr(config, 'pra_trade_off', 0.0)),
+        'pra_warmup_epochs': int(getattr(config, 'pra_warmup_epochs', 0)),
+        'pra_min_samples_per_class': int(getattr(config, 'pra_min_samples_per_class', 0)),
+    }
+    metrics_with_metadata = dict(metrics)
+    metrics_with_metadata['metadata'] = metadata
 
     with open(os.path.join(out_dir, f'test_metrics_{target_name}.json'), 'w') as outfile:
-        json.dump(metrics, outfile, indent=4)
+        json.dump(metrics_with_metadata, outfile, indent=4)
     with open(os.path.join(out_dir, f'class_report_{target_name}.txt'), 'w') as outfile:
         outfile.write(
             f"use_prototype_relation_alignment={getattr(config, 'use_prototype_relation_alignment', False)}\n"
@@ -311,10 +316,18 @@ def overall_performance(config):
     target_name = str(config.target).replace("/", "_")
 
     cms = []
+    metadata = None
     for fold in range(config.num_folds):
         fold_dir = os.path.join(config.output_dir, f'fold_{fold}')
         test_metrics = json.load(open(os.path.join(fold_dir, f'test_metrics_{target_name}.json')))
-        for metric, value in test_metrics.items():
+        if metadata is None:
+            metadata = test_metrics.get('metadata', {})
+        numeric_metrics = {
+            metric: value
+            for metric, value in test_metrics.items()
+            if metric != 'metadata' and isinstance(value, (int, float))
+        }
+        for metric, value in numeric_metrics.items():
             overall_metrics[metric].append(value)
         cm = pkl.load(open(os.path.join(fold_dir, f'conf_mat_{target_name}.pkl'), 'rb'))
         cms.append(cm)
@@ -335,16 +348,7 @@ def overall_performance(config):
     with open(os.path.join(config.output_dir, f'overall_{target_name}.json'), 'w') as file:
         output = {
             'metrics': overall_metrics,
-            'experiment_name': config.experiment_name,
-            'method': config.method,
-            'source': config.source,
-            'target': config.target,
-            'use_prototype_relation_alignment': bool(
-                getattr(config, 'use_prototype_relation_alignment', False)
-            ),
-            'pra_trade_off': float(getattr(config, 'pra_trade_off', 0.0)),
-            'pra_warmup_epochs': int(getattr(config, 'pra_warmup_epochs', 0)),
-            'pra_min_samples_per_class': int(getattr(config, 'pra_min_samples_per_class', 0)),
+            'metadata': metadata or {},
         }
         file.write(json.dumps(output, indent=4))
 
@@ -355,7 +359,7 @@ if __name__ == '__main__':
     # Setup parameters
     parser.add_argument('--data_root', default='/data/user/DBL/timematch_data', type=str,
                         help='Path to datasets root directory')
-    parser.add_argument('--num_blocks', default=100, type=int,
+    parser.add_argument('--num_blocks', default=50, type=int,
                         help='Number of geographical blocks in dataset for splitting. Default 100.')
 
     available_tiles = ['denmark/32VNH/2017', 'france/30TXT/2017', 'france/31TCJ/2017', 'austria/33UVP/2017']
