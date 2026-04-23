@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.backends.cudnn
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader
 from torchvision.transforms import transforms
 from tqdm import tqdm
 
@@ -19,8 +20,10 @@ from competitors.jumbot.jumbot import train_jumbot
 from competitors.mmd.train_mmd import train_mmd
 from competitors.alda.train_alda import train_alda
 from dataset import PixelSetData, create_evaluation_loaders, create_train_loader
+from dataset import GroupByShapesBatchSampler
 from evaluation import evaluation, validation
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
+from temp import compute_pairwise_structure, compute_separability, compute_class_doy_means, collect_class_doy_parcel_means
 from timematch import train_timematch
 from transforms import Normalize, RandomSamplePixels, RandomSampleTimeSteps, ToTensor, RandomTemporalShift, Identity
 from utils import label_utils
@@ -44,6 +47,10 @@ def main(config):
     print('Using classes:', source_classes)
     cfg.classes = source_classes
     cfg.num_classes = len(source_classes)
+
+    if config.compute_separability:
+        compute_and_save_separability(config)
+        return
 
     # Randomly assign parcels to train/val/test
     indices = {config.source: len(source_data),
@@ -127,6 +134,57 @@ def get_num_trainable_params(model):
 def get_dataset_size(data_root, dataset):
     dir = os.path.join(data_root, dataset)
     return len([name for name in os.listdir(os.path.join(dir, 'data')) if name.endswith('.zarr')])
+
+
+def create_separability_loader(config):
+    transform = transforms.Compose([
+        Normalize(),
+        ToTensor(),
+    ])
+    dataset = PixelSetData(
+        config.data_root,
+        config.source,
+        config.classes,
+        transform=transform,
+        with_extra=config.with_extra,
+    )
+    data_loader = DataLoader(
+        dataset,
+        num_workers=config.num_workers,
+        batch_sampler=GroupByShapesBatchSampler(dataset, config.batch_size),
+        pin_memory=torch.cuda.is_available(),
+    )
+    print(f'separability dataset: {config.source}, n={len(dataset)}, batches={len(data_loader)}')
+    return data_loader
+
+
+def save_separability_results(config, separability, classes, dist_mat, pair_scores):
+    source_name = str(config.source).replace('/', '_')
+    result = {
+        'source': config.source,
+        'target': config.target,
+        'separability': float(separability),
+        'num_classes': len(classes),
+        'classes': list(classes),
+        'pair_scores': {f'{a}-{b}': float(score) for (a, b), score in pair_scores.items()},
+        'distance_matrix': dist_mat.tolist(),
+    }
+
+    output_path = os.path.join(config.output_dir, f'separability_{source_name}.json')
+    with open(output_path, 'w') as outfile:
+        json.dump(result, outfile, indent=4)
+
+    print(f"Separability for {config.source}: {separability:.6f}")
+    print(f'Saved separability result to {output_path}')
+
+
+def compute_and_save_separability(config):
+    data_loader = create_separability_loader(config)
+    data_dict = collect_class_doy_parcel_means(data_loader)
+    class_doy_means = compute_class_doy_means(data_dict)
+    separability = compute_separability(class_doy_means)
+    classes, dist_mat, pair_scores = compute_pairwise_structure(class_doy_means)
+    save_separability_results(config, separability, classes, dist_mat, pair_scores)
 
 
 def train_supervised(model, config, writer, splits, val_loader, device, best_model_path):
@@ -289,6 +347,8 @@ if __name__ == '__main__':
                         help='Interval in batches between display of training metrics')
     parser.add_argument('--eval', action='store_true', help='run only evaluation')
     parser.add_argument('--overall', action='store_true', help='print overall results, if exists')
+    parser.add_argument('--compute_separability', action='store_true',
+                        help='compute source-domain class separability and exit')
     parser.add_argument('--combine_spring_and_winter', default=False, type=bool_flag)
 
     # Training configuration
@@ -398,7 +458,7 @@ if __name__ == '__main__':
         os.makedirs(os.path.join(cfg.output_dir, 'fold_{}'.format(fold)), exist_ok=True)
 
     # write training config to file
-    if not cfg.eval:
+    if not cfg.eval and not cfg.compute_separability:
         with open(os.path.join(cfg.output_dir, 'train_config.json'), 'w') as f:
             f.write(json.dumps(vars(cfg), indent=4))
     print(cfg)
