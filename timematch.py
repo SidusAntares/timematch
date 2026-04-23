@@ -25,11 +25,13 @@ from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda, cycle
 
 
-def compute_class_prototypes(features, labels):
+def compute_class_prototypes(features, labels, ignore_class_id=None, min_samples=1):
     prototypes = {}
     for class_id in torch.unique(labels):
+        if ignore_class_id is not None and int(class_id.item()) == int(ignore_class_id):
+            continue
         class_mask = labels == class_id
-        if torch.count_nonzero(class_mask) == 0:
+        if torch.count_nonzero(class_mask) < min_samples:
             continue
         prototypes[int(class_id.item())] = features[class_mask].mean(dim=0)
     return prototypes
@@ -48,9 +50,26 @@ def compute_relation_matrix(prototypes, class_ids):
     return relation_matrix
 
 
-def prototype_relation_alignment_loss(source_features, source_labels, target_features, target_labels):
-    source_prototypes = compute_class_prototypes(source_features, source_labels)
-    target_prototypes = compute_class_prototypes(target_features, target_labels)
+def prototype_relation_alignment_loss(
+    source_features,
+    source_labels,
+    target_features,
+    target_labels,
+    ignore_class_id=None,
+    min_samples_per_class=1,
+):
+    source_prototypes = compute_class_prototypes(
+        source_features,
+        source_labels,
+        ignore_class_id=ignore_class_id,
+        min_samples=min_samples_per_class,
+    )
+    target_prototypes = compute_class_prototypes(
+        target_features,
+        target_labels,
+        ignore_class_id=ignore_class_id,
+        min_samples=min_samples_per_class,
+    )
 
     shared_classes = sorted(set(source_prototypes.keys()) & set(target_prototypes.keys()))
     if len(shared_classes) < 2:
@@ -183,12 +202,18 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
-                if config.use_prototype_relation_alignment:
+                use_pra = (
+                    config.use_prototype_relation_alignment
+                    and epoch >= config.pra_warmup_epochs
+                )
+                if use_pra:
                     loss_relation = prototype_relation_alignment_loss(
                         source_feats,
                         source_labels,
                         target_feats,
                         pseudo_targets[pseudo_mask],
+                        ignore_class_id=getattr(config, "unknown_class_idx", None),
+                        min_samples_per_class=config.pra_min_samples_per_class,
                     )
             loss = loss_source + config.trade_off * loss_target + config.pra_trade_off * loss_relation
 
