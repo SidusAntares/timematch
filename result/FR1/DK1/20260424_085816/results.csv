@@ -1,0 +1,2 @@
+source,target,seed,source_experiment,timematch_experiment,timematch_pra_experiment,source_macro_f1,timematch_macro_f1,timematch_pra_macro_f1,pra_minus_timematch_macro_f1,pra_minus_source_macro_f1,timematch_pra_enabled,pra_trade_off,pra_warmup_epochs,pra_min_samples_per_class,pra_pseudo_threshold
+france/30TXT/2017,denmark/32VNH/2017,111,pseltae_FR1,timematch_FR1_to_DK1,timematch_FR1_to_DK1_pra_t002_w8_m8_pt093,0.5302635328134317,0.5607915125415436,0.5413243266838683,-0.019467185857675262,0.01106079387043657,True,0.02,8,8,0.93

@@ -1,0 +1,26 @@
+recovered_from_log=true
+source_log=C:\Users\wzj\OneDrive\Desktop\train_.log
+use_prototype_relation_alignment=False
+pra_trade_off=0.1
+pra_warmup_epochs=5
+pra_min_samples_per_class=4
+experiment_name=timematch_FR1_to_DK1
+
+                  precision    recall  f1-score   support
+
+            corn       0.89      0.98      0.93       755
+      horsebeans       0.48      0.24      0.32        67
+          meadow       0.88      0.76      0.81      2484
+   spring_barley       0.84      0.92      0.88      2737
+     spring_peas       0.58      0.43      0.50        67
+      sunflowers       0.00      0.00      0.00         0
+         unknown       0.61      0.43      0.51      2516
+   winter_barley       0.98      0.82      0.89       761
+      winter_oat       0.00      0.00      0.00         0
+ winter_rapeseed       0.88      0.99      0.93       608
+winter_triticale       0.17      0.12      0.14        81
+    winter_wheat       0.70      0.97      0.82      1990
+
+        accuracy                           0.78     12066
+       macro avg       0.58      0.55      0.56     12066
+    weighted avg       0.77      0.78      0.77     12066

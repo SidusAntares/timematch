@@ -5,7 +5,7 @@ import torch.backends.cudnn
 import torch.nn.functional as F
 from tqdm import tqdm
 import sklearn.metrics
-from utils.train_utils import AverageMeter, to_cuda
+from utils.train_utils import AverageMeter, to_cuda, should_disable_tqdm
 
 
 def validation(best_f1, best_model_path, config, criterion, device, epoch, model, val_loader, writer, temporal_shift=None):
@@ -34,7 +34,11 @@ def evaluation(model, data_loader, device, class_names, criterion=None, mode='va
     loss_meter = AverageMeter()
 
     model.eval()
-    for sample in tqdm(data_loader, desc='Validating' if mode == 'val' else 'Testing'):
+    for sample in tqdm(
+        data_loader,
+        desc='Validating' if mode == 'val' else 'Testing',
+        disable=should_disable_tqdm(),
+    ):
         target = sample['label']
         y_true.extend(target.tolist())
         target = target.cuda(device=device, non_blocking=True)
