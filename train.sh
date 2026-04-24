@@ -15,14 +15,18 @@ SOURCES=("france/30TXT/2017")
 TARGETS=("denmark/32VNH/2017")
 SEEDS=(111)
 
-# By default, reuse completed source-only and baseline TimeMatch runs and train only PRA.
-RUN_SOURCE_ONLY="${RUN_SOURCE_ONLY:-0}"
-RUN_TIMEMATCH_BASELINE="${RUN_TIMEMATCH_BASELINE:-0}"
-RUN_TIMEMATCH_PRA="${RUN_TIMEMATCH_PRA:-1}"
+# PRA-only follow-up script: reuse completed source-only and baseline TimeMatch runs.
+RUN_SOURCE_ONLY="0"
+RUN_TIMEMATCH_BASELINE="0"
+RUN_TIMEMATCH_PRA="1"
 SKIP_EXISTING_RUNS="${SKIP_EXISTING_RUNS:-1}"
 
-# Default PRA configuration for the current FR1 -> DK1 follow-up experiments.
-PRA_EXP_SUFFIX="${PRA_EXP_SUFFIX:-pra}"
+# Default PRA configuration for the current FR1 -> DK1 follow-up experiment.
+# `PRA_RUN_LABEL` is the human-readable experiment name.
+# `PRA_CONFIG_TAG` keeps the key hyperparameters visible in the output folder name.
+PRA_RUN_LABEL="${PRA_RUN_LABEL:-pra}"
+PRA_CONFIG_TAG="${PRA_CONFIG_TAG:-t002_w8_m8_pt093}"
+PRA_EXP_SUFFIX="${PRA_EXP_SUFFIX:-${PRA_RUN_LABEL}_${PRA_CONFIG_TAG}}"
 PRA_TRADE_OFF="${PRA_TRADE_OFF:-0.02}"
 PRA_WARMUP_EPOCHS="${PRA_WARMUP_EPOCHS:-8}"
 PRA_MIN_SAMPLES_PER_CLASS="${PRA_MIN_SAMPLES_PER_CLASS:-8}"
@@ -260,6 +264,7 @@ run_experiment() {
     echo "--------------------------------------------------"
     echo "[INFO] Starting experiment flow: source=$source_path, target=$target_path, seed=$seed"
     echo "[INFO] RUN_SOURCE_ONLY=$RUN_SOURCE_ONLY RUN_TIMEMATCH_BASELINE=$RUN_TIMEMATCH_BASELINE RUN_TIMEMATCH_PRA=$RUN_TIMEMATCH_PRA"
+    echo "[INFO] PRA naming: label=$PRA_RUN_LABEL config_tag=$PRA_CONFIG_TAG exp_suffix=$PRA_EXP_SUFFIX"
     echo "[INFO] PRA config: trade_off=$PRA_TRADE_OFF warmup=$PRA_WARMUP_EPOCHS min_samples=$PRA_MIN_SAMPLES_PER_CLASS pseudo_threshold=$PRA_PSEUDO_THRESHOLD"
     echo "--------------------------------------------------"
 
