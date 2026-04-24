@@ -1,0 +1,13 @@
+source,target,source_macro_f1,timematch_macro_f1,timematch_minus_source_macro_f1,source_accuracy,timematch_accuracy,result_file
+austria/33UVP/2017,denmark/32VNH/2017,0.6170,0.6227,+0.0057,,,result\AT1\DK1\20260423_180421\results.csv
+austria/33UVP/2017,france/30TXT/2017,0.6156,0.6564,+0.0408,,,result\AT1\FR1\20260423_174144\results.csv
+austria/33UVP/2017,france/31TCJ/2017,0.5751,0.5934,+0.0183,,,result\AT1\FR2\20260423_171740\results.csv
+denmark/32VNH/2017,austria/33UVP/2017,0.5346,0.5482,+0.0136,,,result\DK1\AT1\20260423_165418\results.csv
+denmark/32VNH/2017,france/30TXT/2017,0.4248,0.5322,+0.1074,,,result\DK1\FR1\20260423_122335\results.csv
+denmark/32VNH/2017,france/31TCJ/2017,0.4039,0.3873,-0.0166,,,result\DK1\FR2\20260423_160031\results.csv
+france/30TXT/2017,austria/33UVP/2017,0.6244,0.6337,+0.0093,,,result\FR1\AT1\20260423_153633\results.csv
+france/30TXT/2017,denmark/32VNH/2017,0.5303,0.5608,+0.0305,,,result\FR1\DK1\20260423_150356\results.csv
+france/30TXT/2017,france/31TCJ/2017,0.7206,0.6864,-0.0342,,,result\FR1\FR2\20260423_142902\results.csv
+france/31TCJ/2017,austria/33UVP/2017,0.5302,0.5648,+0.0346,,,result\FR2\AT1\20260423_135555\results.csv
+france/31TCJ/2017,denmark/32VNH/2017,0.4052,0.4819,+0.0767,,,result\FR2\DK1\20260423_132609\results.csv
+france/31TCJ/2017,france/30TXT/2017,0.6785,0.7375,+0.0590,,,result\FR2\FR1\20260423_125535\results.csv

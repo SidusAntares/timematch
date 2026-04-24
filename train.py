@@ -29,7 +29,7 @@ from transforms import Normalize, RandomSamplePixels, RandomSampleTimeSteps, ToT
 from utils import label_utils
 from utils.focal_loss import FocalLoss
 from utils.metrics import overall_classification_report
-from utils.train_utils import AverageMeter, bool_flag, to_cuda
+from utils.train_utils import AverageMeter, bool_flag, to_cuda, should_disable_tqdm
 
 
 def main(config):
@@ -91,7 +91,7 @@ def main(config):
             print(model)
             print('Number of trainable parameters:', get_num_trainable_params(model))
 
-            if os.path.isfile(best_model_path):
+            if os.path.isfile(best_model_path) and not config.overwrite_existing:
                 continue
                 # answer = input(f'Model already exists at {best_model_path}! Override y/[n]? ')
                 # override = strtobool(answer) if len(answer) > 0 else False
@@ -221,7 +221,12 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
         model.train()
         loss_meter = AverageMeter()
 
-        progress_bar = tqdm(enumerate(data_loader), total=len(data_loader), desc=f'Epoch {epoch + 1}/{config.epochs}')
+        progress_bar = tqdm(
+            enumerate(data_loader),
+            total=len(data_loader),
+            desc=f'Epoch {epoch + 1}/{config.epochs}',
+            disable=should_disable_tqdm(config),
+        )
         global_step = epoch * len(data_loader)
         for step, sample in progress_bar:
             targets = sample['label'].cuda(device=device, non_blocking=True)
@@ -239,7 +244,13 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
 
             if step % config.log_step == 0:
                 lr = optimizer.param_groups[0]["lr"]
-                progress_bar.set_postfix(lr=f'{lr:.1E}', loss=f"{loss_meter.avg:.3f}")
+                if should_disable_tqdm(config):
+                    print(
+                        f"Epoch {epoch + 1}/{config.epochs} Step {step}/{len(data_loader)}: "
+                        f"lr={lr:.1E}, loss={loss_meter.avg:.3f}"
+                    )
+                else:
+                    progress_bar.set_postfix(lr=f'{lr:.1E}', loss=f"{loss_meter.avg:.3f}")
                 writer.add_scalar("train/loss", loss_meter.val, global_step + step)
                 writer.add_scalar("train/lr", lr, global_step + step)
 
@@ -291,8 +302,10 @@ def save_results(metrics, config):
             getattr(config, 'use_prototype_relation_alignment', False)
         ),
         'pra_trade_off': float(getattr(config, 'pra_trade_off', 0.0)),
+        'pra_point_trade_off': float(getattr(config, 'pra_point_trade_off', 0.0)),
         'pra_warmup_epochs': int(getattr(config, 'pra_warmup_epochs', 0)),
         'pra_min_samples_per_class': int(getattr(config, 'pra_min_samples_per_class', 0)),
+        'pra_bank_momentum': float(getattr(config, 'pra_bank_momentum', 0.9)),
     }
     metrics_with_metadata = dict(metrics)
     metrics_with_metadata['metadata'] = metadata
@@ -304,8 +317,10 @@ def save_results(metrics, config):
             f"use_prototype_relation_alignment={getattr(config, 'use_prototype_relation_alignment', False)}\n"
         )
         outfile.write(f"pra_trade_off={getattr(config, 'pra_trade_off', 0.0)}\n")
+        outfile.write(f"pra_point_trade_off={getattr(config, 'pra_point_trade_off', 0.0)}\n")
         outfile.write(f"pra_warmup_epochs={getattr(config, 'pra_warmup_epochs', 0)}\n")
         outfile.write(f"pra_min_samples_per_class={getattr(config, 'pra_min_samples_per_class', 0)}\n")
+        outfile.write(f"pra_bank_momentum={getattr(config, 'pra_bank_momentum', 0.9)}\n")
         outfile.write(f"experiment_name={config.experiment_name}\n\n")
         outfile.write(str(class_report))
     pkl.dump(conf_mat, open(os.path.join(out_dir, f'conf_mat_{target_name}.pkl'), 'wb'))
@@ -337,14 +352,11 @@ def overall_performance(config):
 
     print(f'Overall result across {config.num_folds} folds:')
     print(overall_classification_report(cms, config.classes))
-    for metric, values in overall_metrics.items():
-        values = np.array(values)
-        if metric == 'loss':
-            print(f"{metric}: {np.mean(values):.4}±{np.std(values):.4}")
-        else:
-            values *= 100
-            print(f"{metric}: {np.mean(values):.1f}±{np.std(values):.1f}")
-
+    for metric in ['accuracy', 'macro_f1']:
+        if metric not in overall_metrics:
+            continue
+        values = np.array(overall_metrics[metric]) * 100
+        print(f"{metric}: {np.mean(values):.1f}??{np.std(values):.1f}")
     with open(os.path.join(config.output_dir, f'overall_{target_name}.json'), 'w') as file:
         output = {
             'metrics': overall_metrics,
@@ -380,6 +392,10 @@ if __name__ == '__main__':
     parser.add_argument('--device', default='cuda', type=str, help='Name of device to use for tensor computations')
     parser.add_argument('--log_step', default=10, type=int,
                         help='Interval in batches between display of training metrics')
+    parser.add_argument('--disable_tqdm', action='store_true',
+                        help='disable tqdm progress bars explicitly (also disabled automatically in non-interactive logs)')
+    parser.add_argument('--overwrite_existing', action='store_true',
+                        help='overwrite existing fold checkpoints and force retraining')
     parser.add_argument('--eval', action='store_true', help='run only evaluation')
     parser.add_argument('--overall', action='store_true', help='print overall results, if exists')
     parser.add_argument('--compute_separability', action='store_true',
@@ -495,11 +511,15 @@ if __name__ == '__main__':
     )
     timematch.set_defaults(use_prototype_relation_alignment=False)
     timematch.add_argument("--pra_trade_off", type=float, default=0.1,
-                           help='weight for prototype relation alignment loss')
+                           help='weight for prototype edge alignment loss')
+    timematch.add_argument("--pra_point_trade_off", type=float, default=0.005,
+                           help='weight for prototype point alignment loss')
     timematch.add_argument("--pra_warmup_epochs", type=int, default=5,
                            help='number of warmup epochs before enabling prototype relation alignment')
     timematch.add_argument("--pra_min_samples_per_class", type=int, default=4,
                            help='minimum number of source and target samples per class within a batch to build PRA prototypes')
+    timematch.add_argument("--pra_bank_momentum", type=float, default=0.9,
+                           help='EMA momentum for source/target prototype memory banks used by PRA')
 
     cfg = parser.parse_args()
 

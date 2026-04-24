@@ -15,22 +15,22 @@ SOURCES=("france/30TXT/2017")
 TARGETS=("denmark/32VNH/2017")
 SEEDS=(111)
 
-# PRA-only follow-up script: reuse completed source-only and baseline TimeMatch runs.
+# Follow-up script: by default, reuse completed source-only and baseline TimeMatch runs,
+# then launch a small PRA sweep for FR1 -> DK1.
 RUN_SOURCE_ONLY="0"
 RUN_TIMEMATCH_BASELINE="0"
 RUN_TIMEMATCH_PRA="1"
 SKIP_EXISTING_RUNS="${SKIP_EXISTING_RUNS:-1}"
+OVERWRITE_EXISTING="${OVERWRITE_EXISTING:-0}"
 
-# Default PRA configuration for the current FR1 -> DK1 follow-up experiment.
-# `PRA_RUN_LABEL` is the human-readable experiment name.
-# `PRA_CONFIG_TAG` keeps the key hyperparameters visible in the output folder name.
-PRA_RUN_LABEL="${PRA_RUN_LABEL:-pra}"
-PRA_CONFIG_TAG="${PRA_CONFIG_TAG:-t002_w8_m8_pt093}"
-PRA_EXP_SUFFIX="${PRA_EXP_SUFFIX:-${PRA_RUN_LABEL}_${PRA_CONFIG_TAG}}"
-PRA_TRADE_OFF="${PRA_TRADE_OFF:-0.02}"
-PRA_WARMUP_EPOCHS="${PRA_WARMUP_EPOCHS:-8}"
-PRA_MIN_SAMPLES_PER_CLASS="${PRA_MIN_SAMPLES_PER_CLASS:-8}"
-PRA_PSEUDO_THRESHOLD="${PRA_PSEUDO_THRESHOLD:-0.93}"
+# PRA sweep configurations for the final focused FR1 -> DK1 validation round.
+# Format:
+#   config_tag|point_trade_off|edge_trade_off|warmup_epochs|min_samples_per_class|pseudo_threshold|bank_momentum
+PRA_CONFIGS=(
+    "p0002_e0005_w8_m2_pt090_b097|0.002|0.005|8|2|0.90|0.97"
+    "p0001_e0005_w8_m2_pt090_b097|0.001|0.005|8|2|0.90|0.97"
+    "p0002_e0005_w8_m2_pt092_b097|0.002|0.005|8|2|0.92|0.97"
+)
 
 match() {
     local domain="$1"
@@ -76,6 +76,11 @@ extract_macro_f1() {
     "$PYTHON_EXEC" -c "import json; print(json.load(open(r'''$metrics_path'''))['macro_f1'])"
 }
 
+extract_accuracy() {
+    local metrics_path="$1"
+    "$PYTHON_EXEC" -c "import json; print(json.load(open(r'''$metrics_path'''))['accuracy'])"
+}
+
 extract_pra_flag() {
     local metrics_path="$1"
     "$PYTHON_EXEC" -c "import json; data=json.load(open(r'''$metrics_path''')); print(data.get('use_prototype_relation_alignment', data.get('metadata', {}).get('use_prototype_relation_alignment', False)))"
@@ -97,15 +102,26 @@ write_summary_csv() {
     local timematch_exp="$5"
     local timematch_pra_exp="$6"
     local result_dir="$7"
+    local pra_point_trade_off="$8"
+    local pra_trade_off="$9"
+    local pra_warmup_epochs="${10}"
+    local pra_min_samples_per_class="${11}"
+    local pra_pseudo_threshold="${12}"
+    local pra_bank_momentum="${13}"
 
     local csv_path
     local source_metrics_path
     local timematch_metrics_path
     local timematch_pra_metrics_path
+    local source_accuracy
     local source_macro_f1
+    local timematch_accuracy
     local timematch_macro_f1
+    local timematch_pra_accuracy
     local timematch_pra_macro_f1
     local timematch_pra_flag
+    local delta_acc_pra_vs_timematch
+    local delta_acc_pra_vs_source
     local delta_pra_vs_timematch
     local delta_pra_vs_source
 
@@ -117,17 +133,22 @@ write_summary_csv() {
     assert_file_exists "$timematch_metrics_path" "baseline TimeMatch metrics"
     assert_file_exists "$timematch_pra_metrics_path" "PRA TimeMatch metrics"
 
+    source_accuracy="$(extract_accuracy "$source_metrics_path")"
     source_macro_f1="$(extract_macro_f1 "$source_metrics_path")"
+    timematch_accuracy="$(extract_accuracy "$timematch_metrics_path")"
     timematch_macro_f1="$(extract_macro_f1 "$timematch_metrics_path")"
+    timematch_pra_accuracy="$(extract_accuracy "$timematch_pra_metrics_path")"
     timematch_pra_macro_f1="$(extract_macro_f1 "$timematch_pra_metrics_path")"
     timematch_pra_flag="$(extract_pra_flag "$timematch_pra_metrics_path")"
+    delta_acc_pra_vs_timematch="$("$PYTHON_EXEC" -c "print(float('$timematch_pra_accuracy') - float('$timematch_accuracy'))")"
+    delta_acc_pra_vs_source="$("$PYTHON_EXEC" -c "print(float('$timematch_pra_accuracy') - float('$source_accuracy'))")"
     delta_pra_vs_timematch="$("$PYTHON_EXEC" -c "print(float('$timematch_pra_macro_f1') - float('$timematch_macro_f1'))")"
     delta_pra_vs_source="$("$PYTHON_EXEC" -c "print(float('$timematch_pra_macro_f1') - float('$source_macro_f1'))")"
 
     csv_path="$result_dir/results.csv"
     {
-        echo "source,target,seed,source_experiment,timematch_experiment,timematch_pra_experiment,source_macro_f1,timematch_macro_f1,timematch_pra_macro_f1,pra_minus_timematch_macro_f1,pra_minus_source_macro_f1,timematch_pra_enabled,pra_trade_off,pra_warmup_epochs,pra_min_samples_per_class,pra_pseudo_threshold"
-        echo "$source_path,$target_path,$seed,$source_exp,$timematch_exp,$timematch_pra_exp,$source_macro_f1,$timematch_macro_f1,$timematch_pra_macro_f1,$delta_pra_vs_timematch,$delta_pra_vs_source,$timematch_pra_flag,$PRA_TRADE_OFF,$PRA_WARMUP_EPOCHS,$PRA_MIN_SAMPLES_PER_CLASS,$PRA_PSEUDO_THRESHOLD"
+        echo "source,target,seed,source_experiment,timematch_experiment,timematch_pra_experiment,source_accuracy,timematch_accuracy,timematch_pra_accuracy,pra_minus_timematch_accuracy,pra_minus_source_accuracy,source_macro_f1,timematch_macro_f1,timematch_pra_macro_f1,pra_minus_timematch_macro_f1,pra_minus_source_macro_f1,timematch_pra_enabled,pra_point_trade_off,pra_trade_off,pra_warmup_epochs,pra_min_samples_per_class,pra_pseudo_threshold,pra_bank_momentum"
+        echo "$source_path,$target_path,$seed,$source_exp,$timematch_exp,$timematch_pra_exp,$source_accuracy,$timematch_accuracy,$timematch_pra_accuracy,$delta_acc_pra_vs_timematch,$delta_acc_pra_vs_source,$source_macro_f1,$timematch_macro_f1,$timematch_pra_macro_f1,$delta_pra_vs_timematch,$delta_pra_vs_source,$timematch_pra_flag,$pra_point_trade_off,$pra_trade_off,$pra_warmup_epochs,$pra_min_samples_per_class,$pra_pseudo_threshold,$pra_bank_momentum"
     } > "$csv_path"
 
     echo "[INFO] Summary CSV saved to: $csv_path"
@@ -250,6 +271,13 @@ run_experiment() {
     local source_path="$1"
     local target_path="$2"
     local seed="$3"
+    local pra_config_tag="$4"
+    local pra_point_trade_off="$5"
+    local pra_trade_off="$6"
+    local pra_warmup_epochs="$7"
+    local pra_min_samples_per_class="$8"
+    local pra_pseudo_threshold="$9"
+    local pra_bank_momentum="${10}"
     local source_tag
     local target_tag
     local source_exp
@@ -264,15 +292,16 @@ run_experiment() {
     echo "--------------------------------------------------"
     echo "[INFO] Starting experiment flow: source=$source_path, target=$target_path, seed=$seed"
     echo "[INFO] RUN_SOURCE_ONLY=$RUN_SOURCE_ONLY RUN_TIMEMATCH_BASELINE=$RUN_TIMEMATCH_BASELINE RUN_TIMEMATCH_PRA=$RUN_TIMEMATCH_PRA"
-    echo "[INFO] PRA naming: label=$PRA_RUN_LABEL config_tag=$PRA_CONFIG_TAG exp_suffix=$PRA_EXP_SUFFIX"
-    echo "[INFO] PRA config: trade_off=$PRA_TRADE_OFF warmup=$PRA_WARMUP_EPOCHS min_samples=$PRA_MIN_SAMPLES_PER_CLASS pseudo_threshold=$PRA_PSEUDO_THRESHOLD"
+    echo "[INFO] SKIP_EXISTING_RUNS=$SKIP_EXISTING_RUNS OVERWRITE_EXISTING=$OVERWRITE_EXISTING"
+    echo "[INFO] PRA naming: label=pra config_tag=$pra_config_tag exp_suffix=pra_$pra_config_tag"
+    echo "[INFO] PRA config: point_trade_off=$pra_point_trade_off edge_trade_off=$pra_trade_off warmup=$pra_warmup_epochs min_samples=$pra_min_samples_per_class pseudo_threshold=$pra_pseudo_threshold bank_momentum=$pra_bank_momentum"
     echo "--------------------------------------------------"
 
     source_tag="$(match "$source_path")"
     target_tag="$(match "$target_path")"
     source_exp="pseltae_${source_tag}"
     timematch_exp="timematch_${source_tag}_to_${target_tag}"
-    timematch_pra_exp="timematch_${source_tag}_to_${target_tag}_${PRA_EXP_SUFFIX}"
+    timematch_pra_exp="timematch_${source_tag}_to_${target_tag}_pra_${pra_config_tag}"
 
     source_metrics_path="$(metrics_path_for_exp "$source_exp" "$target_path")"
     timematch_metrics_path="$(metrics_path_for_exp "$timematch_exp" "$target_path")"
@@ -285,7 +314,8 @@ run_experiment() {
         -e "$source_exp" \
         --source "$source_path" \
         --target "$target_path" \
-        --seed "$seed"
+        --seed "$seed" \
+        $( [[ "$OVERWRITE_EXISTING" == "1" ]] && printf '%s' '--overwrite_existing' )
 
     run_or_skip_experiment \
         "$RUN_TIMEMATCH_BASELINE" \
@@ -295,6 +325,7 @@ run_experiment() {
         --source "$source_path" \
         --target "$target_path" \
         --seed "$seed" \
+        $( [[ "$OVERWRITE_EXISTING" == "1" ]] && printf '%s' '--overwrite_existing' ) \
         timematch \
         --weights "outputs/$source_exp"
 
@@ -306,19 +337,35 @@ run_experiment() {
         --source "$source_path" \
         --target "$target_path" \
         --seed "$seed" \
+        $( [[ "$OVERWRITE_EXISTING" == "1" ]] && printf '%s' '--overwrite_existing' ) \
         timematch \
         --weights "outputs/$source_exp" \
         --use_pra \
-        --pra_trade_off "$PRA_TRADE_OFF" \
-        --pra_warmup_epochs "$PRA_WARMUP_EPOCHS" \
-        --pra_min_samples_per_class "$PRA_MIN_SAMPLES_PER_CLASS" \
-        --pseudo_threshold "$PRA_PSEUDO_THRESHOLD"
+        --pra_point_trade_off "$pra_point_trade_off" \
+        --pra_trade_off "$pra_trade_off" \
+        --pra_warmup_epochs "$pra_warmup_epochs" \
+        --pra_min_samples_per_class "$pra_min_samples_per_class" \
+        --pseudo_threshold "$pra_pseudo_threshold" \
+        --pra_bank_momentum "$pra_bank_momentum"
 
-    timestamp="$(date +"%Y%m%d_%H%M%S")"
+    timestamp="$(date +"%Y%m%d_%H%M%S")_${pra_config_tag}"
     result_dir="$SCRIPT_DIR/result/$source_tag/$target_tag/$timestamp"
     mkdir -p "$result_dir"
 
-    write_summary_csv "$source_path" "$target_path" "$seed" "$source_exp" "$timematch_exp" "$timematch_pra_exp" "$result_dir"
+    write_summary_csv \
+        "$source_path" \
+        "$target_path" \
+        "$seed" \
+        "$source_exp" \
+        "$timematch_exp" \
+        "$timematch_pra_exp" \
+        "$result_dir" \
+        "$pra_point_trade_off" \
+        "$pra_trade_off" \
+        "$pra_warmup_epochs" \
+        "$pra_min_samples_per_class" \
+        "$pra_pseudo_threshold" \
+        "$pra_bank_momentum"
     write_classwise_csv "$target_path" "$source_exp" "$timematch_exp" "$timematch_pra_exp" "$result_dir"
 }
 
@@ -328,7 +375,20 @@ for source in "${SOURCES[@]}"; do
             continue
         fi
         for seed in "${SEEDS[@]}"; do
-            run_experiment "$source" "$target" "$seed"
+            for pra_config in "${PRA_CONFIGS[@]}"; do
+                IFS='|' read -r pra_config_tag pra_point_trade_off pra_trade_off pra_warmup_epochs pra_min_samples_per_class pra_pseudo_threshold pra_bank_momentum <<< "$pra_config"
+                run_experiment \
+                    "$source" \
+                    "$target" \
+                    "$seed" \
+                    "$pra_config_tag" \
+                    "$pra_point_trade_off" \
+                    "$pra_trade_off" \
+                    "$pra_warmup_epochs" \
+                    "$pra_min_samples_per_class" \
+                    "$pra_pseudo_threshold" \
+                    "$pra_bank_momentum"
+            done
         done
     done
 done

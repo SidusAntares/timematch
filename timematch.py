@@ -22,19 +22,23 @@ from transforms import (
     Identity,
 )
 from utils.focal_loss import FocalLoss
-from utils.train_utils import AverageMeter, to_cuda, cycle
+from utils.train_utils import AverageMeter, to_cuda, cycle, should_disable_tqdm
 
 
 def compute_class_prototypes(features, labels, ignore_class_id=None, min_samples=1):
     prototypes = {}
+    counts = {}
     for class_id in torch.unique(labels):
         if ignore_class_id is not None and int(class_id.item()) == int(ignore_class_id):
             continue
         class_mask = labels == class_id
-        if torch.count_nonzero(class_mask) < min_samples:
+        class_count = int(torch.count_nonzero(class_mask).item())
+        if class_count < min_samples:
             continue
-        prototypes[int(class_id.item())] = features[class_mask].mean(dim=0)
-    return prototypes
+        class_id_int = int(class_id.item())
+        prototypes[class_id_int] = features[class_mask].mean(dim=0)
+        counts[class_id_int] = class_count
+    return prototypes, counts
 
 
 def compute_relation_matrix(prototypes, class_ids):
@@ -50,34 +54,75 @@ def compute_relation_matrix(prototypes, class_ids):
     return relation_matrix
 
 
-def prototype_relation_alignment_loss(
-    source_features,
-    source_labels,
-    target_features,
-    target_labels,
-    ignore_class_id=None,
-    min_samples_per_class=1,
-):
-    source_prototypes = compute_class_prototypes(
-        source_features,
-        source_labels,
-        ignore_class_id=ignore_class_id,
-        min_samples=min_samples_per_class,
-    )
-    target_prototypes = compute_class_prototypes(
-        target_features,
-        target_labels,
-        ignore_class_id=ignore_class_id,
-        min_samples=min_samples_per_class,
-    )
+def init_prototype_bank(num_classes, feat_dim, device):
+    bank = torch.zeros(num_classes, feat_dim, device=device)
+    valid_mask = torch.zeros(num_classes, dtype=torch.bool, device=device)
+    return bank, valid_mask
 
+
+@torch.no_grad()
+def update_prototype_bank(bank, valid_mask, prototypes, momentum):
+    updated_classes = []
+    for class_id, prototype in prototypes.items():
+        if valid_mask[class_id]:
+            bank[class_id] = momentum * bank[class_id] + (1.0 - momentum) * prototype.detach()
+        else:
+            bank[class_id] = prototype.detach()
+            valid_mask[class_id] = True
+        updated_classes.append(class_id)
+    return updated_classes
+
+
+def merge_prototypes_with_bank(current_prototypes, bank, valid_mask, ignore_class_id=None):
+    merged = {}
+    for class_id in range(valid_mask.shape[0]):
+        if ignore_class_id is not None and class_id == int(ignore_class_id):
+            continue
+        if class_id in current_prototypes:
+            merged[class_id] = current_prototypes[class_id]
+        elif valid_mask[class_id]:
+            merged[class_id] = bank[class_id]
+    return merged
+
+
+def prototype_relation_alignment_loss(source_prototypes, target_prototypes):
     shared_classes = sorted(set(source_prototypes.keys()) & set(target_prototypes.keys()))
+    diagnostics = {
+        'shared_classes': len(shared_classes),
+        'active_pairs': 0,
+        'enabled': int(len(shared_classes) >= 2),
+    }
     if len(shared_classes) < 2:
-        return source_features.new_tensor(0.0)
+        reference = next(iter(source_prototypes.values()), None)
+        if reference is None:
+            reference = next(iter(target_prototypes.values()))
+        return reference.new_tensor(0.0), diagnostics
 
     source_rel = compute_relation_matrix(source_prototypes, shared_classes)
     target_rel = compute_relation_matrix(target_prototypes, shared_classes)
-    return F.mse_loss(source_rel, target_rel)
+    diagnostics['active_pairs'] = int(len(shared_classes) * (len(shared_classes) - 1) / 2)
+    return F.mse_loss(source_rel, target_rel), diagnostics
+
+
+def prototype_point_alignment_loss(source_prototypes, target_prototypes):
+    shared_classes = sorted(set(source_prototypes.keys()) & set(target_prototypes.keys()))
+    diagnostics = {
+        'shared_classes': len(shared_classes),
+        'active_points': len(shared_classes),
+        'enabled': int(len(shared_classes) >= 1),
+    }
+    if len(shared_classes) == 0:
+        reference = next(iter(source_prototypes.values()), None)
+        if reference is None:
+            reference = next(iter(target_prototypes.values()))
+        return reference.new_tensor(0.0), diagnostics
+
+    source_stack = torch.stack([source_prototypes[class_id] for class_id in shared_classes], dim=0)
+    target_stack = torch.stack([target_prototypes[class_id] for class_id in shared_classes], dim=0)
+    source_stack = F.normalize(source_stack, dim=1)
+    target_stack = F.normalize(target_stack, dim=1)
+    point_loss = 1.0 - F.cosine_similarity(source_stack, target_stack, dim=1).mean()
+    return point_loss, diagnostics
 
 
 
@@ -108,6 +153,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
     target_iter = iter(cycle(target_loader))
     min_shift, max_shift = -config.max_temporal_shift, config.max_temporal_shift
     target_to_source_shift = 0
+    source_bank, source_bank_valid = None, None
+    target_bank, target_bank_valid = None, None
 
     # To evaluate how well we estimate class distribution
     target_labels = target_loader_no_aug.dataset.get_labels()
@@ -128,8 +175,26 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
     source_to_target_shift = 0
     for epoch in range(config.epochs):
-        progress_bar = tqdm(range(steps_per_epoch), desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}")
+        progress_bar = tqdm(
+            range(steps_per_epoch),
+            desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}",
+            disable=should_disable_tqdm(config),
+        )
         loss_meter = AverageMeter()
+        point_loss_meter = AverageMeter()
+        relation_loss_meter = AverageMeter()
+        pra_batches_enabled = 0
+        pra_batches_with_pairs = 0
+        pra_batches_with_points = 0
+        pra_active_points_total = 0
+        pra_shared_classes_total = 0
+        pra_active_pairs_total = 0
+        pra_source_samples_total = 0
+        pra_target_samples_total = 0
+        pra_source_classes_updated_total = 0
+        pra_target_classes_updated_total = 0
+        pra_source_bank_classes_total = 0
+        pra_target_bank_classes_total = 0
 
         if config.estimate_shift:
             confident_pseudo_labels = np.array([])
@@ -181,7 +246,20 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             target_feats = None
             source_feats = None
             loss_target = 0.0
+            loss_point = pixels_s.new_tensor(0.0)
             loss_relation = pixels_s.new_tensor(0.0)
+            relation_stats = {
+                'shared_classes': 0,
+                'active_points': 0,
+                'active_pairs': 0,
+                'source_samples_used': 0,
+                'target_samples_used': 0,
+                'enabled': 0,
+                'source_classes_updated': 0,
+                'target_classes_updated': 0,
+                'source_bank_classes': 0,
+                'target_bank_classes': 0,
+            }
             if config.domain_specific_bn:
                 logits_source, source_feats = student.forward(
                     pixels_s, mask_s, position_s + source_to_target_shift, extra_s, return_feats=True
@@ -207,15 +285,78 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     and epoch >= config.pra_warmup_epochs
                 )
                 if use_pra:
-                    loss_relation = prototype_relation_alignment_loss(
+                    if source_bank is None:
+                        source_bank, source_bank_valid = init_prototype_bank(
+                            config.num_classes, source_feats.shape[1], source_feats.device
+                        )
+                        target_bank, target_bank_valid = init_prototype_bank(
+                            config.num_classes, target_feats.shape[1], target_feats.device
+                        )
+
+                    source_batch_prototypes, source_batch_counts = compute_class_prototypes(
                         source_feats,
                         source_labels,
+                        ignore_class_id=getattr(config, "unknown_class_idx", None),
+                        min_samples=config.pra_min_samples_per_class,
+                    )
+                    target_batch_prototypes, target_batch_counts = compute_class_prototypes(
                         target_feats,
                         pseudo_targets[pseudo_mask],
                         ignore_class_id=getattr(config, "unknown_class_idx", None),
-                        min_samples_per_class=config.pra_min_samples_per_class,
+                        min_samples=config.pra_min_samples_per_class,
                     )
-            loss = loss_source + config.trade_off * loss_target + config.pra_trade_off * loss_relation
+                    updated_source_classes = update_prototype_bank(
+                        source_bank,
+                        source_bank_valid,
+                        source_batch_prototypes,
+                        momentum=config.pra_bank_momentum,
+                    )
+                    updated_target_classes = update_prototype_bank(
+                        target_bank,
+                        target_bank_valid,
+                        target_batch_prototypes,
+                        momentum=config.pra_bank_momentum,
+                    )
+
+                    merged_source_prototypes = merge_prototypes_with_bank(
+                        source_batch_prototypes,
+                        source_bank,
+                        source_bank_valid,
+                        ignore_class_id=getattr(config, "unknown_class_idx", None),
+                    )
+                    merged_target_prototypes = merge_prototypes_with_bank(
+                        target_batch_prototypes,
+                        target_bank,
+                        target_bank_valid,
+                        ignore_class_id=getattr(config, "unknown_class_idx", None),
+                    )
+
+                    loss_relation, relation_diag = prototype_relation_alignment_loss(
+                        merged_source_prototypes,
+                        merged_target_prototypes,
+                    )
+                    loss_point, point_diag = prototype_point_alignment_loss(
+                        merged_source_prototypes,
+                        merged_target_prototypes,
+                    )
+                    relation_stats = {
+                        'shared_classes': max(relation_diag['shared_classes'], point_diag['shared_classes']),
+                        'active_points': point_diag['active_points'],
+                        'active_pairs': relation_diag['active_pairs'],
+                        'source_samples_used': int(sum(source_batch_counts.values())),
+                        'target_samples_used': int(sum(target_batch_counts.values())),
+                        'enabled': int(relation_diag['enabled'] or point_diag['enabled']),
+                        'source_classes_updated': len(updated_source_classes),
+                        'target_classes_updated': len(updated_target_classes),
+                        'source_bank_classes': int(source_bank_valid.sum().item()),
+                        'target_bank_classes': int(target_bank_valid.sum().item()),
+                    }
+            loss = (
+                loss_source
+                + config.trade_off * loss_target
+                + config.pra_point_trade_off * loss_point
+                + config.pra_trade_off * loss_relation
+            )
 
             # compute loss and backprop
             optimizer.zero_grad()
@@ -227,7 +368,38 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
             # Metrics
             loss_meter.update(loss.item())
-            progress_bar.set_postfix(loss=f"{loss_meter.avg:.3f}")
+            if relation_stats['enabled']:
+                point_loss_meter.update(float(loss_point.item()))
+                relation_loss_meter.update(float(loss_relation.item()))
+                pra_batches_enabled += 1
+            if relation_stats['active_points'] > 0:
+                pra_batches_with_points += 1
+                pra_active_points_total += relation_stats['active_points']
+            if relation_stats['active_pairs'] > 0:
+                pra_batches_with_pairs += 1
+                pra_shared_classes_total += relation_stats['shared_classes']
+                pra_active_pairs_total += relation_stats['active_pairs']
+                pra_source_samples_total += relation_stats['source_samples_used']
+                pra_target_samples_total += relation_stats['target_samples_used']
+            pra_source_classes_updated_total += relation_stats['source_classes_updated']
+            pra_target_classes_updated_total += relation_stats['target_classes_updated']
+            pra_source_bank_classes_total += relation_stats['source_bank_classes']
+            pra_target_bank_classes_total += relation_stats['target_bank_classes']
+
+            if should_disable_tqdm(config):
+                if step % config.log_step == 0:
+                    print(
+                        f"Epoch {epoch + 1}/{config.epochs} Step {step}/{steps_per_epoch}: "
+                        f"loss={loss_meter.avg:.3f}, source={float(loss_source.item()):.3f}, "
+                        f"target={float(loss_target) if isinstance(loss_target, float) else float(loss_target.item()):.3f}, "
+                        f"point={float(loss_point.item()):.5f}, edge={float(loss_relation.item()):.5f}"
+                    )
+            else:
+                progress_bar.set_postfix(
+                    loss=f"{loss_meter.avg:.3f}",
+                    point=f"{point_loss_meter.avg:.5f}" if point_loss_meter.count > 0 else "0.00000",
+                    rel=f"{relation_loss_meter.avg:.5f}" if relation_loss_meter.count > 0 else "0.00000",
+                )
             all_labels.extend(sample_target_weak['label'].tolist())
             all_pseudo_labels.extend(pseudo_targets.tolist())
             all_pseudo_mask.extend(pseudo_mask.tolist())
@@ -236,6 +408,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 writer.add_scalar("train/loss", loss_meter.val, global_step)
                 writer.add_scalar("train/loss_source", float(loss_source.item()), global_step)
                 writer.add_scalar("train/loss_target", float(loss_target) if isinstance(loss_target, float) else float(loss_target.item()), global_step)
+                writer.add_scalar("train/loss_point", float(loss_point.item()), global_step)
                 writer.add_scalar("train/loss_relation", float(loss_relation.item()), global_step)
                 writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
                 writer.add_scalar("train/target_updates", len(torch.nonzero(pseudo_mask)), global_step)
@@ -252,8 +425,50 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
         writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
 
-        writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
-        writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
+        pra_active_batches_denom = max(1, pra_batches_with_pairs)
+        pra_point_batches_denom = max(1, pra_batches_with_points)
+        avg_point_loss = point_loss_meter.avg if point_loss_meter.count > 0 else 0.0
+        avg_relation_loss = relation_loss_meter.avg if relation_loss_meter.count > 0 else 0.0
+        avg_active_points = pra_active_points_total / pra_point_batches_denom
+        avg_shared_classes = pra_shared_classes_total / pra_active_batches_denom
+        avg_active_pairs = pra_active_pairs_total / pra_active_batches_denom
+        avg_source_samples = pra_source_samples_total / pra_active_batches_denom
+        avg_target_samples = pra_target_samples_total / pra_active_batches_denom
+        avg_source_classes_updated = pra_source_classes_updated_total / max(1, steps_per_epoch)
+        avg_target_classes_updated = pra_target_classes_updated_total / max(1, steps_per_epoch)
+        avg_source_bank_classes = pra_source_bank_classes_total / max(1, steps_per_epoch)
+        avg_target_bank_classes = pra_target_bank_classes_total / max(1, steps_per_epoch)
+        writer.add_scalar("train/pra_avg_point_loss", avg_point_loss, epoch)
+        writer.add_scalar("train/pra_avg_relation_loss", avg_relation_loss, epoch)
+        writer.add_scalar("train/pra_batches_enabled", pra_batches_enabled, epoch)
+        writer.add_scalar("train/pra_batches_with_points", pra_batches_with_points, epoch)
+        writer.add_scalar("train/pra_batches_with_pairs", pra_batches_with_pairs, epoch)
+        writer.add_scalar("train/pra_avg_active_points", avg_active_points, epoch)
+        writer.add_scalar("train/pra_avg_shared_classes", avg_shared_classes, epoch)
+        writer.add_scalar("train/pra_avg_active_pairs", avg_active_pairs, epoch)
+        writer.add_scalar("train/pra_avg_source_samples", avg_source_samples, epoch)
+        writer.add_scalar("train/pra_avg_target_samples", avg_target_samples, epoch)
+        writer.add_scalar("train/pra_avg_source_classes_updated", avg_source_classes_updated, epoch)
+        writer.add_scalar("train/pra_avg_target_classes_updated", avg_target_classes_updated, epoch)
+        writer.add_scalar("train/pra_avg_source_bank_classes", avg_source_bank_classes, epoch)
+        writer.add_scalar("train/pra_avg_target_bank_classes", avg_target_bank_classes, epoch)
+        print(
+            "PRA diagnostics: "
+            f"enabled_batches={pra_batches_enabled}/{steps_per_epoch}, "
+            f"active_point_batches={pra_batches_with_points}/{steps_per_epoch}, "
+            f"active_pair_batches={pra_batches_with_pairs}/{steps_per_epoch}, "
+            f"avg_point_loss={avg_point_loss:.6f}, "
+            f"avg_relation_loss={avg_relation_loss:.6f}, "
+            f"avg_active_points={avg_active_points:.2f}, "
+            f"avg_shared_classes={avg_shared_classes:.2f}, "
+            f"avg_active_pairs={avg_active_pairs:.2f}, "
+            f"avg_source_samples={avg_source_samples:.2f}, "
+            f"avg_target_samples={avg_target_samples:.2f}, "
+            f"avg_source_classes_updated={avg_source_classes_updated:.2f}, "
+            f"avg_target_classes_updated={avg_target_classes_updated:.2f}, "
+            f"avg_source_bank_classes={avg_source_bank_classes:.2f}, "
+            f"avg_target_bank_classes={avg_target_bank_classes:.2f}"
+        )
 
         if config.run_validation:
             if config.output_student:
@@ -417,7 +632,11 @@ def estimate_temporal_shift(model, target_loader, device, class_distribution=Non
 
     target_iter = iter(target_loader)
     shift_softmaxes, labels = [], []
-    for _ in tqdm(range(sample_size), desc=f'Estimating shift between [{min_shift}, {max_shift}]'):
+    for _ in tqdm(
+        range(sample_size),
+        desc=f'Estimating shift between [{min_shift}, {max_shift}]',
+        disable=should_disable_tqdm(),
+    ):
         sample = next(target_iter)
         labels.extend(sample['label'].tolist())
         pixels, valid_pixels, positions, extra = to_cuda(sample, device)
@@ -512,7 +731,7 @@ def get_pseudo_labels(model, data_loader, device, best_shift, n=500):
     model.eval()
     pseudo_softmaxes = []
     indices = []
-    for i, sample in enumerate(tqdm(data_loader, "computing pseudo labels")):
+    for i, sample in enumerate(tqdm(data_loader, "computing pseudo labels", disable=should_disable_tqdm())):
         if n is not None and i == n:
             break
         indices.extend(sample["index"].tolist())

@@ -1,5 +1,6 @@
 import torch
 import argparse
+import sys
 
 FALSY_STRINGS = {"off", "false", "0"}
 TRUTHY_STRINGS = {"on", "true", "1"}
@@ -65,3 +66,9 @@ def bool_flag(s):
         return True
     else:
         raise argparse.ArgumentTypeError("invalid value for a boolean flag")
+
+
+def should_disable_tqdm(config=None):
+    if config is not None and getattr(config, 'disable_tqdm', False):
+        return True
+    return not sys.stderr.isatty()

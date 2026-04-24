@@ -1,0 +1,2 @@
+source,target,timematch_macro_f1,source_f1,timestamp,source_tag,target_tag,seed,source_experiment,timematch_experiment
+france/30TXT/2017,france/31TCJ/2017,0.6864298893114521,0.7205844404028494,20260423_142902,FR1,FR2,111,pseltae_FR1,timematch_FR1_to_FR2
