@@ -206,6 +206,23 @@ def build_domain_invariant_prototypes(source_prototypes, target_prototypes, igno
     return shared
 
 
+def build_memory_invariant_prototypes(source_bank, source_valid_mask, target_bank, target_valid_mask, ignore_class_id=None):
+    anchors = {}
+    num_classes = int(source_valid_mask.shape[0])
+    for class_id in range(num_classes):
+        if ignore_class_id is not None and class_id == int(ignore_class_id):
+            continue
+        source_valid = bool(source_valid_mask[class_id].item())
+        target_valid = bool(target_valid_mask[class_id].item())
+        if source_valid and target_valid:
+            anchors[class_id] = 0.5 * (source_bank[class_id] + target_bank[class_id])
+        elif source_valid:
+            anchors[class_id] = source_bank[class_id]
+        elif target_valid:
+            anchors[class_id] = target_bank[class_id]
+    return anchors
+
+
 def prototype_contrastive_loss(features, labels, anchor_prototypes, temperature=0.1, ignore_class_id=None):
     class_ids = sorted(anchor_prototypes.keys())
     diagnostics = {
@@ -498,10 +515,12 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
+                enable_relation_alignment = bool(getattr(config, "use_prototype_relation_alignment", False))
+                enable_prototype_contrastive = bool(getattr(config, "pra_use_prototype_contrastive", False))
                 use_pra = (
                     (
-                        config.use_prototype_relation_alignment
-                        or getattr(config, "pra_use_prototype_contrastive", False)
+                        enable_relation_alignment
+                        or enable_prototype_contrastive
                     )
                     and epoch >= config.pra_warmup_epochs
                 )
@@ -559,22 +578,36 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         ignore_class_id=getattr(config, "unknown_class_idx", None),
                     )
 
-                    loss_relation, relation_diag = prototype_relation_alignment_loss(
-                        merged_source_prototypes,
-                        merged_target_prototypes,
-                        normalize_geometry=getattr(config, "pra_normalize_geometry", True),
-                    )
-                    loss_point, point_diag = prototype_point_alignment_loss(
-                        merged_source_prototypes,
-                        merged_target_prototypes,
-                        normalize_geometry=getattr(config, "pra_normalize_geometry", True),
-                    )
-                    if getattr(config, "pra_use_prototype_contrastive", False):
-                        invariant_prototypes = build_domain_invariant_prototypes(
+                    if enable_relation_alignment:
+                        loss_relation, relation_diag = prototype_relation_alignment_loss(
                             merged_source_prototypes,
                             merged_target_prototypes,
-                            ignore_class_id=getattr(config, "unknown_class_idx", None),
+                            normalize_geometry=getattr(config, "pra_normalize_geometry", True),
                         )
+                        loss_point, point_diag = prototype_point_alignment_loss(
+                            merged_source_prototypes,
+                            merged_target_prototypes,
+                            normalize_geometry=getattr(config, "pra_normalize_geometry", True),
+                        )
+                    else:
+                        relation_diag = {'shared_classes': 0, 'active_pairs': 0, 'enabled': 0}
+                        point_diag = {'shared_classes': 0, 'active_points': 0, 'enabled': 0}
+
+                    if enable_prototype_contrastive:
+                        if getattr(config, "pra_use_memory_invariant_prototypes", False):
+                            invariant_prototypes = build_memory_invariant_prototypes(
+                                source_bank,
+                                source_bank_valid,
+                                target_bank,
+                                target_bank_valid,
+                                ignore_class_id=getattr(config, "unknown_class_idx", None),
+                            )
+                        else:
+                            invariant_prototypes = build_domain_invariant_prototypes(
+                                merged_source_prototypes,
+                                merged_target_prototypes,
+                                ignore_class_id=getattr(config, "unknown_class_idx", None),
+                            )
                         source_contrastive_loss, source_contrastive_diag = prototype_contrastive_loss(
                             source_proto_feats,
                             source_labels,
@@ -590,6 +623,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                             ignore_class_id=getattr(config, "unknown_class_idx", None),
                         )
                         loss_proto_contrastive = source_contrastive_loss + target_contrastive_loss
+                    else:
+                        source_contrastive_diag = {'num_anchor_classes': 0, 'num_valid_queries': 0}
+                        target_contrastive_diag = {'num_anchor_classes': 0, 'num_valid_queries': 0}
                     relation_stats = {
                         'shared_classes': max(relation_diag['shared_classes'], point_diag['shared_classes']),
                         'active_points': point_diag['active_points'],
@@ -605,17 +641,18 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         'target_avg_instability': target_refine_diag['avg_instability'],
                         'source_avg_stable_ratio': source_refine_diag['avg_stable_ratio'],
                         'target_avg_stable_ratio': target_refine_diag['avg_stable_ratio'],
-                        'contrastive_enabled': int(getattr(config, "pra_use_prototype_contrastive", False)),
+                        'contrastive_enabled': int(enable_prototype_contrastive),
+                        'memory_anchor_enabled': int(getattr(config, "pra_use_memory_invariant_prototypes", False)),
                         'contrastive_anchor_classes': int(
                             max(
-                                source_contrastive_diag['num_anchor_classes'] if getattr(config, "pra_use_prototype_contrastive", False) else 0,
-                                target_contrastive_diag['num_anchor_classes'] if getattr(config, "pra_use_prototype_contrastive", False) else 0,
+                                source_contrastive_diag['num_anchor_classes'] if enable_prototype_contrastive else 0,
+                                target_contrastive_diag['num_anchor_classes'] if enable_prototype_contrastive else 0,
                             )
                         ),
                         'contrastive_valid_queries': int(
                             (
                                 source_contrastive_diag['num_valid_queries'] + target_contrastive_diag['num_valid_queries']
-                            ) if getattr(config, "pra_use_prototype_contrastive", False) else 0
+                            ) if enable_prototype_contrastive else 0
                         ),
                     }
             loss = (
