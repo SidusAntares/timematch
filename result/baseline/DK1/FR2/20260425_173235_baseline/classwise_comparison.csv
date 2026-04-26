@@ -1,0 +1,13 @@
+class_name,source_precision,source_recall,source_f1,source_support,timematch_precision,timematch_recall,timematch_f1,timematch_support,timematch_minus_source_f1
+corn,0.8,0.98,0.88,725,0.84,0.99,0.91,725,0.030000000000000027
+horsebeans,0.8,0.08,0.15,97,0.65,0.27,0.38,97,0.23
+meadow,0.97,0.78,0.87,1771,0.99,0.84,0.91,1771,0.040000000000000036
+spring_barley,0.06,0.7,0.11,50,0.24,0.22,0.23,50,0.12000000000000001
+spring_oat,0.0,0.0,0.0,4,0.17,0.25,0.2,4,0.2
+spring_peas,0.89,0.42,0.57,74,0.82,0.81,0.82,74,0.25
+spring_wheat,0.0,0.0,0.0,10,0.0,0.0,0.0,10,0.0
+winter_barley,0.52,0.67,0.59,458,0.58,0.93,0.72,458,0.13
+winter_rapeseed,0.99,0.92,0.96,334,0.99,0.92,0.96,334,0.0
+winter_rye,0.0,0.0,0.0,2,0.0,0.0,0.0,2,0.0
+winter_triticale,0.0,0.0,0.0,93,0.14,0.01,0.02,93,0.02
+winter_wheat,0.96,0.88,0.92,3592,0.95,0.95,0.95,3592,0.029999999999999916

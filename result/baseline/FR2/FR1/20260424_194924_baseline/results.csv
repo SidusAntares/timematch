@@ -1,0 +1,2 @@
+run_type,source,target,seed,source_experiment,timematch_experiment,source_accuracy,timematch_accuracy,timematch_minus_source_accuracy,source_macro_f1,timematch_macro_f1,timematch_minus_source_macro_f1
+baseline,france/31TCJ/2017,france/30TXT/2017,111,pseltae_FR2_baseline,timematch_FR2_to_FR1_baseline,0.9025960001727787,0.9101550688955121,0.007559068722733375,0.6785221120482389,0.7374828992683451,0.058960787220106226

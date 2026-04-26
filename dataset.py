@@ -94,6 +94,7 @@ class PixelSetData(data.Dataset):
         code_to_class_name = label_utils.get_code_to_class(country)
 
         unknown_crop_codes = set()
+        excluded_class_counts = defaultdict(int)
 
         for parcel_idx, parcel in enumerate(metadata["parcels"]):
             if indices is not None:
@@ -106,7 +107,10 @@ class PixelSetData(data.Dataset):
             if crop_code not in code_to_class_name:
                 unknown_crop_codes.add(crop_code)
             class_name = code_to_class_name.get(crop_code, "unknown")
-            class_index = class_to_idx.get(class_name, class_to_idx["unknown"])
+            if class_name == "unknown" or class_name not in class_to_idx:
+                excluded_class_counts[class_name] += 1
+                continue
+            class_index = class_to_idx[class_name]
             extra = parcel['geometric_features']
 
             item = (parcel_path, parcel_idx, class_index, extra)
@@ -115,7 +119,12 @@ class PixelSetData(data.Dataset):
 
         for crop_code in unknown_crop_codes:
             print(
-                f"Parcels with crop code {crop_code} was not found in .yml class mapping and was assigned to unknown."
+                f"Parcels with crop code {crop_code} was not found in .yml class mapping and was excluded from the closed set."
+            )
+
+        for class_name, count in sorted(excluded_class_counts.items()):
+            print(
+                f"Excluded {count} parcels from closed-set loading because class '{class_name}' is not kept."
             )
 
         metadata["parcels"] = new_parcel_metadata

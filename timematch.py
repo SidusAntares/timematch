@@ -41,6 +41,49 @@ def compute_class_prototypes(features, labels, ignore_class_id=None, min_samples
     return prototypes, counts
 
 
+def compute_temporal_instability(sequence_feats):
+    if sequence_feats.dim() != 3:
+        raise ValueError("sequence_feats must have shape (B, T, C)")
+
+    if sequence_feats.shape[1] <= 1:
+        return sequence_feats.new_zeros(sequence_feats.shape[:2])
+
+    deltas = torch.norm(sequence_feats[:, 1:, :] - sequence_feats[:, :-1, :], dim=2)
+    first_delta = deltas[:, :1]
+    return torch.cat([first_delta, deltas], dim=1)
+
+
+def compute_stable_temporal_mask(sequence_feats, keep_ratio):
+    keep_ratio = float(min(max(keep_ratio, 0.0), 1.0))
+    instability = compute_temporal_instability(sequence_feats)
+    batch_size, seq_len = instability.shape
+
+    if keep_ratio >= 1.0 or seq_len <= 1:
+        mask = torch.ones_like(instability)
+        return mask, instability
+
+    keep_steps = max(1, int(round(seq_len * keep_ratio)))
+    keep_steps = min(keep_steps, seq_len)
+
+    sorted_idx = torch.argsort(instability, dim=1, descending=False)
+    selected_idx = sorted_idx[:, :keep_steps]
+    mask = torch.zeros_like(instability)
+    mask.scatter_(1, selected_idx, 1.0)
+    return mask, instability
+
+
+def pool_stable_temporal_features(sequence_feats, keep_ratio):
+    stable_mask, instability = compute_stable_temporal_mask(sequence_feats, keep_ratio)
+    weights = stable_mask.unsqueeze(-1)
+    denom = weights.sum(dim=1).clamp_min(1.0)
+    pooled = (sequence_feats * weights).sum(dim=1) / denom
+    diagnostics = {
+        "avg_instability": float(instability.mean().item()),
+        "avg_stable_ratio": float(stable_mask.mean().item()),
+    }
+    return pooled, diagnostics
+
+
 def compute_relation_matrix(prototypes, class_ids):
     proto_stack = torch.stack([prototypes[class_id] for class_id in class_ids], dim=0)
     proto_stack = F.normalize(proto_stack, dim=1)
@@ -52,6 +95,23 @@ def compute_relation_matrix(prototypes, class_ids):
         relation_matrix = relation_matrix / norm
 
     return relation_matrix
+
+
+def normalize_prototype_geometry(prototypes, class_ids, eps=1e-6):
+    proto_stack = torch.stack([prototypes[class_id] for class_id in class_ids], dim=0)
+    centered = proto_stack - proto_stack.mean(dim=0, keepdim=True)
+
+    if centered.shape[0] >= 2:
+        pairwise_dist = torch.pdist(centered, p=2)
+        scale = pairwise_dist.mean()
+    else:
+        scale = centered.norm(dim=1).mean()
+
+    if torch.isnan(scale) or torch.isinf(scale) or scale <= eps:
+        scale = centered.new_tensor(1.0)
+
+    normalized = centered / scale
+    return {class_id: normalized[idx] for idx, class_id in enumerate(class_ids)}
 
 
 def init_prototype_bank(num_classes, feat_dim, device):
@@ -85,7 +145,7 @@ def merge_prototypes_with_bank(current_prototypes, bank, valid_mask, ignore_clas
     return merged
 
 
-def prototype_relation_alignment_loss(source_prototypes, target_prototypes):
+def prototype_relation_alignment_loss(source_prototypes, target_prototypes, normalize_geometry=False):
     shared_classes = sorted(set(source_prototypes.keys()) & set(target_prototypes.keys()))
     diagnostics = {
         'shared_classes': len(shared_classes),
@@ -98,13 +158,16 @@ def prototype_relation_alignment_loss(source_prototypes, target_prototypes):
             reference = next(iter(target_prototypes.values()))
         return reference.new_tensor(0.0), diagnostics
 
+    if normalize_geometry:
+        source_prototypes = normalize_prototype_geometry(source_prototypes, shared_classes)
+        target_prototypes = normalize_prototype_geometry(target_prototypes, shared_classes)
     source_rel = compute_relation_matrix(source_prototypes, shared_classes)
     target_rel = compute_relation_matrix(target_prototypes, shared_classes)
     diagnostics['active_pairs'] = int(len(shared_classes) * (len(shared_classes) - 1) / 2)
     return F.mse_loss(source_rel, target_rel), diagnostics
 
 
-def prototype_point_alignment_loss(source_prototypes, target_prototypes):
+def prototype_point_alignment_loss(source_prototypes, target_prototypes, normalize_geometry=False):
     shared_classes = sorted(set(source_prototypes.keys()) & set(target_prototypes.keys()))
     diagnostics = {
         'shared_classes': len(shared_classes),
@@ -117,12 +180,55 @@ def prototype_point_alignment_loss(source_prototypes, target_prototypes):
             reference = next(iter(target_prototypes.values()))
         return reference.new_tensor(0.0), diagnostics
 
+    if normalize_geometry:
+        source_prototypes = normalize_prototype_geometry(source_prototypes, shared_classes)
+        target_prototypes = normalize_prototype_geometry(target_prototypes, shared_classes)
     source_stack = torch.stack([source_prototypes[class_id] for class_id in shared_classes], dim=0)
     target_stack = torch.stack([target_prototypes[class_id] for class_id in shared_classes], dim=0)
     source_stack = F.normalize(source_stack, dim=1)
     target_stack = F.normalize(target_stack, dim=1)
     point_loss = 1.0 - F.cosine_similarity(source_stack, target_stack, dim=1).mean()
     return point_loss, diagnostics
+
+
+def extract_refined_prototype_features(base_feats, sequence_feats, config):
+    if getattr(config, "pra_use_refined_prototypes", False) and sequence_feats is not None:
+        refined_feats, refine_diag = pool_stable_temporal_features(
+            sequence_feats, getattr(config, "pra_refinement_keep_ratio", 0.7)
+        )
+        return refined_feats, refine_diag
+
+    return base_feats, {
+        "avg_instability": 0.0,
+        "avg_stable_ratio": 1.0,
+    }
+
+
+def get_pseudo_label_mask(teacher_probs, config):
+    pseudo_conf, pseudo_targets = torch.max(teacher_probs, dim=1)
+    pseudo_mask = pseudo_conf > config.pseudo_threshold
+
+    top2_probs = torch.topk(teacher_probs, k=min(2, teacher_probs.shape[1]), dim=1).values
+    if top2_probs.shape[1] >= 2:
+        pseudo_margin = top2_probs[:, 0] - top2_probs[:, 1]
+    else:
+        pseudo_margin = torch.ones_like(pseudo_conf)
+
+    pseudo_entropy = -(teacher_probs * torch.log(teacher_probs + 1e-8)).sum(dim=1)
+    pseudo_entropy = pseudo_entropy / np.log(teacher_probs.shape[1])
+
+    selection = getattr(config, "pseudo_selection", "confidence")
+    if selection in {"margin", "confidence_margin", "hybrid"}:
+        pseudo_mask = pseudo_mask & (pseudo_margin > config.pseudo_margin_threshold)
+    if selection in {"entropy", "confidence_entropy", "hybrid"}:
+        pseudo_mask = pseudo_mask & (pseudo_entropy < config.pseudo_entropy_threshold)
+
+    diagnostics = {
+        "confidence": pseudo_conf,
+        "margin": pseudo_margin,
+        "entropy": pseudo_entropy,
+    }
+    return pseudo_targets, pseudo_mask, diagnostics
 
 
 
@@ -234,9 +340,16 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             # Get pseudo labels from teacher
             pixels_t_weak, mask_t_weak, position_t_weak, extra_t_weak = to_cuda(sample_target_weak, device)
             with torch.no_grad():
-                teacher_preds = F.softmax(teacher.forward(pixels_t_weak, mask_t_weak, position_t_weak + target_to_source_shift, extra_t_weak), dim=1)
-            pseudo_conf, pseudo_targets = torch.max(teacher_preds, dim=1)
-            pseudo_mask = pseudo_conf > config.pseudo_threshold
+                teacher_preds = F.softmax(
+                    teacher.forward(
+                        pixels_t_weak,
+                        mask_t_weak,
+                        position_t_weak + target_to_source_shift,
+                        extra_t_weak,
+                    ),
+                    dim=1,
+                )
+            pseudo_targets, pseudo_mask, pseudo_diag = get_pseudo_label_mask(teacher_preds, config)
 
             # Update student on shifted source data and pseudo-labeled target data
             pixels_s, mask_s, position_s, extra_s = to_cuda(sample_source, device)
@@ -259,23 +372,67 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 'target_classes_updated': 0,
                 'source_bank_classes': 0,
                 'target_bank_classes': 0,
+                'source_avg_instability': 0.0,
+                'target_avg_instability': 0.0,
+                'source_avg_stable_ratio': 1.0,
+                'target_avg_stable_ratio': 1.0,
             }
             if config.domain_specific_bn:
-                logits_source, source_feats = student.forward(
-                    pixels_s, mask_s, position_s + source_to_target_shift, extra_s, return_feats=True
+                return_sequence_feats = getattr(config, "pra_use_refined_prototypes", False)
+                source_outputs = student.forward(
+                    pixels_s,
+                    mask_s,
+                    position_s + source_to_target_shift,
+                    extra_s,
+                    return_feats=True,
+                    return_sequence_feats=return_sequence_feats,
                 )
+                if return_sequence_feats:
+                    logits_source, source_feats, source_sequence_feats = source_outputs
+                else:
+                    logits_source, source_feats = source_outputs
+                    source_sequence_feats = None
                 if len(torch.nonzero(pseudo_mask)) >= 2:  # at least 2 examples required for BN
-                    logits_target, target_feats = student.forward(
-                        pixels_t[pseudo_mask], mask_t[pseudo_mask], position_t[pseudo_mask], extra_t[pseudo_mask], return_feats=True
+                    target_outputs = student.forward(
+                        pixels_t[pseudo_mask],
+                        mask_t[pseudo_mask],
+                        position_t[pseudo_mask],
+                        extra_t[pseudo_mask],
+                        return_feats=True,
+                        return_sequence_feats=return_sequence_feats,
                     )
+                    if return_sequence_feats:
+                        logits_target, target_feats, target_sequence_feats = target_outputs
+                    else:
+                        logits_target, target_feats = target_outputs
+                        target_sequence_feats = None
             else:
                 pixels = torch.cat([pixels_s, pixels_t[pseudo_mask]])
                 mask = torch.cat([mask_s, mask_t[pseudo_mask]])
                 position = torch.cat([position_s + source_to_target_shift, position_t[pseudo_mask]])
                 extra = torch.cat([extra_s, extra_t[pseudo_mask]])
-                logits, feats = student.forward(pixels, mask, position, extra, return_feats=True)
+                return_sequence_feats = getattr(config, "pra_use_refined_prototypes", False)
+                outputs = student.forward(
+                    pixels,
+                    mask,
+                    position,
+                    extra,
+                    return_feats=True,
+                    return_sequence_feats=return_sequence_feats,
+                )
+                if return_sequence_feats:
+                    logits, feats, sequence_feats = outputs
+                else:
+                    logits, feats = outputs
+                    sequence_feats = None
                 logits_source, logits_target = logits[:config.batch_size], logits[config.batch_size:]
                 source_feats, target_feats = feats[:config.batch_size], feats[config.batch_size:]
+                if sequence_feats is not None:
+                    source_sequence_feats = sequence_feats[:config.batch_size]
+                    target_sequence_feats = sequence_feats[config.batch_size:]
+                else:
+                    source_sequence_feats = None
+                    target_sequence_feats = None
 
             loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
@@ -293,14 +450,21 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                             config.num_classes, target_feats.shape[1], target_feats.device
                         )
 
+                    source_proto_feats, source_refine_diag = extract_refined_prototype_features(
+                        source_feats, source_sequence_feats, config
+                    )
+                    target_proto_feats, target_refine_diag = extract_refined_prototype_features(
+                        target_feats, target_sequence_feats, config
+                    )
+
                     source_batch_prototypes, source_batch_counts = compute_class_prototypes(
-                        source_feats,
+                        source_proto_feats,
                         source_labels,
                         ignore_class_id=getattr(config, "unknown_class_idx", None),
                         min_samples=config.pra_min_samples_per_class,
                     )
                     target_batch_prototypes, target_batch_counts = compute_class_prototypes(
-                        target_feats,
+                        target_proto_feats,
                         pseudo_targets[pseudo_mask],
                         ignore_class_id=getattr(config, "unknown_class_idx", None),
                         min_samples=config.pra_min_samples_per_class,
@@ -334,10 +498,12 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     loss_relation, relation_diag = prototype_relation_alignment_loss(
                         merged_source_prototypes,
                         merged_target_prototypes,
+                        normalize_geometry=getattr(config, "pra_normalize_geometry", True),
                     )
                     loss_point, point_diag = prototype_point_alignment_loss(
                         merged_source_prototypes,
                         merged_target_prototypes,
+                        normalize_geometry=getattr(config, "pra_normalize_geometry", True),
                     )
                     relation_stats = {
                         'shared_classes': max(relation_diag['shared_classes'], point_diag['shared_classes']),
@@ -350,6 +516,10 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         'target_classes_updated': len(updated_target_classes),
                         'source_bank_classes': int(source_bank_valid.sum().item()),
                         'target_bank_classes': int(target_bank_valid.sum().item()),
+                        'source_avg_instability': source_refine_diag['avg_instability'],
+                        'target_avg_instability': target_refine_diag['avg_instability'],
+                        'source_avg_stable_ratio': source_refine_diag['avg_stable_ratio'],
+                        'target_avg_stable_ratio': target_refine_diag['avg_stable_ratio'],
                     }
             loss = (
                 loss_source
@@ -412,6 +582,13 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 writer.add_scalar("train/loss_relation", float(loss_relation.item()), global_step)
                 writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
                 writer.add_scalar("train/target_updates", len(torch.nonzero(pseudo_mask)), global_step)
+                writer.add_scalar("train/pseudo_confidence", float(pseudo_diag["confidence"].mean().item()), global_step)
+                writer.add_scalar("train/pseudo_margin", float(pseudo_diag["margin"].mean().item()), global_step)
+                writer.add_scalar("train/pseudo_entropy", float(pseudo_diag["entropy"].mean().item()), global_step)
+                writer.add_scalar("train/source_avg_instability", relation_stats["source_avg_instability"], global_step)
+                writer.add_scalar("train/target_avg_instability", relation_stats["target_avg_instability"], global_step)
+                writer.add_scalar("train/source_avg_stable_ratio", relation_stats["source_avg_stable_ratio"], global_step)
+                writer.add_scalar("train/target_avg_stable_ratio", relation_stats["target_avg_stable_ratio"], global_step)
 
             global_step += 1
 

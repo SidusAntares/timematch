@@ -1,0 +1,2 @@
+run_type,source,target,seed,source_experiment,timematch_experiment,source_accuracy,timematch_accuracy,timematch_minus_source_accuracy,source_macro_f1,timematch_macro_f1,timematch_minus_source_macro_f1
+baseline,austria/33UVP/2017,france/30TXT/2017,111,pseltae_AT1_baseline,timematch_AT1_to_FR1_baseline,0.8939369529026369,0.9477471671768434,0.053810214274206514,0.6397103431691009,0.703146821838395,0.06343647866929414

@@ -38,16 +38,18 @@ def main(config):
     torch.manual_seed(config.seed)
     device = torch.device(config.device)
 
-    # Select classes that appear at least 200 times source
+    # Build a closed-set label space from source classes.
+    # Rare source classes and the fallback "unknown" bucket are excluded.
     source_classes = label_utils.get_classes(cfg.source.split('/')[0],
                                              combine_spring_and_winter=cfg.combine_spring_and_winter)
     source_data = PixelSetData(cfg.data_root, cfg.source, source_classes)
     labels, counts = np.unique(source_data.get_labels(), return_counts=True)
     source_classes = [source_classes[i] for i in labels[counts >= 200]]
-    print('Using classes:', source_classes)
+    source_classes = [class_name for class_name in source_classes if class_name != 'unknown']
+    print('Using closed-set classes:', source_classes)
     cfg.classes = source_classes
     cfg.num_classes = len(source_classes)
-    cfg.unknown_class_idx = source_classes.index('unknown') if 'unknown' in source_classes else None
+    cfg.unknown_class_idx = None
 
     if config.compute_separability:
         compute_and_save_separability(config)
@@ -306,6 +308,8 @@ def save_results(metrics, config):
         'pra_warmup_epochs': int(getattr(config, 'pra_warmup_epochs', 0)),
         'pra_min_samples_per_class': int(getattr(config, 'pra_min_samples_per_class', 0)),
         'pra_bank_momentum': float(getattr(config, 'pra_bank_momentum', 0.9)),
+        'pra_use_refined_prototypes': bool(getattr(config, 'pra_use_refined_prototypes', False)),
+        'pra_refinement_keep_ratio': float(getattr(config, 'pra_refinement_keep_ratio', 1.0)),
     }
     metrics_with_metadata = dict(metrics)
     metrics_with_metadata['metadata'] = metadata
@@ -321,6 +325,8 @@ def save_results(metrics, config):
         outfile.write(f"pra_warmup_epochs={getattr(config, 'pra_warmup_epochs', 0)}\n")
         outfile.write(f"pra_min_samples_per_class={getattr(config, 'pra_min_samples_per_class', 0)}\n")
         outfile.write(f"pra_bank_momentum={getattr(config, 'pra_bank_momentum', 0.9)}\n")
+        outfile.write(f"pra_use_refined_prototypes={getattr(config, 'pra_use_refined_prototypes', False)}\n")
+        outfile.write(f"pra_refinement_keep_ratio={getattr(config, 'pra_refinement_keep_ratio', 1.0)}\n")
         outfile.write(f"experiment_name={config.experiment_name}\n\n")
         outfile.write(str(class_report))
     pkl.dump(conf_mat, open(os.path.join(out_dir, f'conf_mat_{target_name}.pkl'), 'wb'))
@@ -477,6 +483,24 @@ if __name__ == '__main__':
     timematch.add_argument('--lr', default=0.0001, type=float, help='Learning rate')
     timematch.add_argument("--pseudo_threshold", default=0.9, type=float,
                            help='confidence threshold for assigning pseudo labels')
+    timematch.add_argument(
+        "--pseudo_selection",
+        default="confidence",
+        choices=["confidence", "confidence_margin", "confidence_entropy", "hybrid"],
+        help='pseudo-label filtering strategy for target updates',
+    )
+    timematch.add_argument(
+        "--pseudo_margin_threshold",
+        default=0.05,
+        type=float,
+        help='minimum top1-top2 probability margin when margin-based pseudo filtering is enabled',
+    )
+    timematch.add_argument(
+        "--pseudo_entropy_threshold",
+        default=0.30,
+        type=float,
+        help='maximum normalized entropy when entropy-based pseudo filtering is enabled',
+    )
     timematch.add_argument("--ema_decay", default=0.9999, type=float, help='decay rate for mean teacher')
     timematch.add_argument("--trade_off", type=float, default=2.0, help='weight for unsupervised loss')
     timematch.add_argument("--estimate_shift", type=bool_flag, default=True,
@@ -520,6 +544,12 @@ if __name__ == '__main__':
                            help='minimum number of source and target samples per class within a batch to build PRA prototypes')
     timematch.add_argument("--pra_bank_momentum", type=float, default=0.9,
                            help='EMA momentum for source/target prototype memory banks used by PRA')
+    timematch.add_argument("--pra_normalize_geometry", type=bool_flag, default=True,
+                           help='center and rescale shared source/target prototypes before PRA point/edge alignment')
+    timematch.add_argument("--pra_use_refined_prototypes", type=bool_flag, default=False,
+                           help='use stable temporal segments instead of full-sequence features when constructing PRA prototypes')
+    timematch.add_argument("--pra_refinement_keep_ratio", type=float, default=0.7,
+                           help='fraction of lowest-instability timesteps kept for refined prototype pooling')
 
     cfg = parser.parse_args()
 

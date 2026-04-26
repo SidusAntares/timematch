@@ -1,0 +1,2 @@
+run_type,source,target,seed,source_experiment,timematch_experiment,source_accuracy,timematch_accuracy,timematch_minus_source_accuracy,source_macro_f1,timematch_macro_f1,timematch_minus_source_macro_f1
+baseline,france/30TXT/2017,denmark/32VNH/2017,111,pseltae_FR1_baseline,timematch_FR1_to_DK1_baseline,0.7655395325708603,0.7844356041770264,0.01889607160616613,0.5302635328134317,0.5607915125415436,0.03052797972811183
