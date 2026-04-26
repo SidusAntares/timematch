@@ -191,6 +191,63 @@ def prototype_point_alignment_loss(source_prototypes, target_prototypes, normali
     return point_loss, diagnostics
 
 
+def build_domain_invariant_prototypes(source_prototypes, target_prototypes, ignore_class_id=None):
+    shared = {}
+    all_class_ids = sorted(set(source_prototypes.keys()) | set(target_prototypes.keys()))
+    for class_id in all_class_ids:
+        if ignore_class_id is not None and class_id == int(ignore_class_id):
+            continue
+        if class_id in source_prototypes and class_id in target_prototypes:
+            shared[class_id] = 0.5 * (source_prototypes[class_id] + target_prototypes[class_id])
+        elif class_id in source_prototypes:
+            shared[class_id] = source_prototypes[class_id]
+        else:
+            shared[class_id] = target_prototypes[class_id]
+    return shared
+
+
+def prototype_contrastive_loss(features, labels, anchor_prototypes, temperature=0.1, ignore_class_id=None):
+    class_ids = sorted(anchor_prototypes.keys())
+    diagnostics = {
+        "enabled": int(len(class_ids) >= 2),
+        "num_anchor_classes": len(class_ids),
+        "num_valid_queries": 0,
+    }
+    if len(class_ids) < 2:
+        reference = next(iter(anchor_prototypes.values()), None)
+        if reference is None:
+            return features.new_tensor(0.0), diagnostics
+        return reference.new_tensor(0.0), diagnostics
+
+    label_to_index = {class_id: idx for idx, class_id in enumerate(class_ids)}
+    valid_mask = torch.tensor(
+        [
+            (ignore_class_id is None or int(label.item()) != int(ignore_class_id))
+            and int(label.item()) in label_to_index
+            for label in labels
+        ],
+        device=labels.device,
+        dtype=torch.bool,
+    )
+    diagnostics["num_valid_queries"] = int(valid_mask.sum().item())
+    if diagnostics["num_valid_queries"] == 0:
+        reference = next(iter(anchor_prototypes.values()))
+        return reference.new_tensor(0.0), diagnostics
+
+    query_feats = F.normalize(features[valid_mask], dim=1)
+    anchor_stack = torch.stack([anchor_prototypes[class_id] for class_id in class_ids], dim=0)
+    anchor_stack = F.normalize(anchor_stack, dim=1)
+    target_indices = torch.tensor(
+        [label_to_index[int(label.item())] for label in labels[valid_mask]],
+        device=labels.device,
+        dtype=torch.long,
+    )
+    logits = query_feats @ anchor_stack.t()
+    logits = logits / temperature
+    loss = F.cross_entropy(logits, target_indices)
+    return loss, diagnostics
+
+
 def extract_refined_prototype_features(base_feats, sequence_feats, config):
     if getattr(config, "pra_use_refined_prototypes", False) and sequence_feats is not None:
         refined_feats, refine_diag = pool_stable_temporal_features(
@@ -361,6 +418,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             loss_target = 0.0
             loss_point = pixels_s.new_tensor(0.0)
             loss_relation = pixels_s.new_tensor(0.0)
+            loss_proto_contrastive = pixels_s.new_tensor(0.0)
             relation_stats = {
                 'shared_classes': 0,
                 'active_points': 0,
@@ -376,6 +434,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 'target_avg_instability': 0.0,
                 'source_avg_stable_ratio': 1.0,
                 'target_avg_stable_ratio': 1.0,
+                'contrastive_enabled': 0,
+                'contrastive_anchor_classes': 0,
+                'contrastive_valid_queries': 0,
             }
             if config.domain_specific_bn:
                 return_sequence_feats = getattr(config, "pra_use_refined_prototypes", False)
@@ -438,7 +499,10 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
                 use_pra = (
-                    config.use_prototype_relation_alignment
+                    (
+                        config.use_prototype_relation_alignment
+                        or getattr(config, "pra_use_prototype_contrastive", False)
+                    )
                     and epoch >= config.pra_warmup_epochs
                 )
                 if use_pra:
@@ -505,6 +569,27 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         merged_target_prototypes,
                         normalize_geometry=getattr(config, "pra_normalize_geometry", True),
                     )
+                    if getattr(config, "pra_use_prototype_contrastive", False):
+                        invariant_prototypes = build_domain_invariant_prototypes(
+                            merged_source_prototypes,
+                            merged_target_prototypes,
+                            ignore_class_id=getattr(config, "unknown_class_idx", None),
+                        )
+                        source_contrastive_loss, source_contrastive_diag = prototype_contrastive_loss(
+                            source_proto_feats,
+                            source_labels,
+                            invariant_prototypes,
+                            temperature=getattr(config, "pra_contrastive_temperature", 0.1),
+                            ignore_class_id=getattr(config, "unknown_class_idx", None),
+                        )
+                        target_contrastive_loss, target_contrastive_diag = prototype_contrastive_loss(
+                            target_proto_feats,
+                            pseudo_targets[pseudo_mask],
+                            invariant_prototypes,
+                            temperature=getattr(config, "pra_contrastive_temperature", 0.1),
+                            ignore_class_id=getattr(config, "unknown_class_idx", None),
+                        )
+                        loss_proto_contrastive = source_contrastive_loss + target_contrastive_loss
                     relation_stats = {
                         'shared_classes': max(relation_diag['shared_classes'], point_diag['shared_classes']),
                         'active_points': point_diag['active_points'],
@@ -520,12 +605,25 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         'target_avg_instability': target_refine_diag['avg_instability'],
                         'source_avg_stable_ratio': source_refine_diag['avg_stable_ratio'],
                         'target_avg_stable_ratio': target_refine_diag['avg_stable_ratio'],
+                        'contrastive_enabled': int(getattr(config, "pra_use_prototype_contrastive", False)),
+                        'contrastive_anchor_classes': int(
+                            max(
+                                source_contrastive_diag['num_anchor_classes'] if getattr(config, "pra_use_prototype_contrastive", False) else 0,
+                                target_contrastive_diag['num_anchor_classes'] if getattr(config, "pra_use_prototype_contrastive", False) else 0,
+                            )
+                        ),
+                        'contrastive_valid_queries': int(
+                            (
+                                source_contrastive_diag['num_valid_queries'] + target_contrastive_diag['num_valid_queries']
+                            ) if getattr(config, "pra_use_prototype_contrastive", False) else 0
+                        ),
                     }
             loss = (
                 loss_source
                 + config.trade_off * loss_target
                 + config.pra_point_trade_off * loss_point
                 + config.pra_trade_off * loss_relation
+                + getattr(config, "pra_contrastive_trade_off", 0.0) * loss_proto_contrastive
             )
 
             # compute loss and backprop
@@ -562,7 +660,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         f"Epoch {epoch + 1}/{config.epochs} Step {step}/{steps_per_epoch}: "
                         f"loss={loss_meter.avg:.3f}, source={float(loss_source.item()):.3f}, "
                         f"target={float(loss_target) if isinstance(loss_target, float) else float(loss_target.item()):.3f}, "
-                        f"point={float(loss_point.item()):.5f}, edge={float(loss_relation.item()):.5f}"
+                        f"point={float(loss_point.item()):.5f}, edge={float(loss_relation.item()):.5f}, "
+                        f"proto_con={float(loss_proto_contrastive.item()):.5f}"
                     )
             else:
                 progress_bar.set_postfix(
@@ -580,6 +679,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 writer.add_scalar("train/loss_target", float(loss_target) if isinstance(loss_target, float) else float(loss_target.item()), global_step)
                 writer.add_scalar("train/loss_point", float(loss_point.item()), global_step)
                 writer.add_scalar("train/loss_relation", float(loss_relation.item()), global_step)
+                writer.add_scalar("train/loss_proto_contrastive", float(loss_proto_contrastive.item()), global_step)
                 writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
                 writer.add_scalar("train/target_updates", len(torch.nonzero(pseudo_mask)), global_step)
                 writer.add_scalar("train/pseudo_confidence", float(pseudo_diag["confidence"].mean().item()), global_step)
@@ -589,6 +689,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 writer.add_scalar("train/target_avg_instability", relation_stats["target_avg_instability"], global_step)
                 writer.add_scalar("train/source_avg_stable_ratio", relation_stats["source_avg_stable_ratio"], global_step)
                 writer.add_scalar("train/target_avg_stable_ratio", relation_stats["target_avg_stable_ratio"], global_step)
+                writer.add_scalar("train/contrastive_anchor_classes", relation_stats["contrastive_anchor_classes"], global_step)
+                writer.add_scalar("train/contrastive_valid_queries", relation_stats["contrastive_valid_queries"], global_step)
 
             global_step += 1
 

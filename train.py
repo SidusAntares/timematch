@@ -310,6 +310,9 @@ def save_results(metrics, config):
         'pra_bank_momentum': float(getattr(config, 'pra_bank_momentum', 0.9)),
         'pra_use_refined_prototypes': bool(getattr(config, 'pra_use_refined_prototypes', False)),
         'pra_refinement_keep_ratio': float(getattr(config, 'pra_refinement_keep_ratio', 1.0)),
+        'pra_use_prototype_contrastive': bool(getattr(config, 'pra_use_prototype_contrastive', False)),
+        'pra_contrastive_trade_off': float(getattr(config, 'pra_contrastive_trade_off', 0.0)),
+        'pra_contrastive_temperature': float(getattr(config, 'pra_contrastive_temperature', 0.1)),
     }
     metrics_with_metadata = dict(metrics)
     metrics_with_metadata['metadata'] = metadata
@@ -327,6 +330,9 @@ def save_results(metrics, config):
         outfile.write(f"pra_bank_momentum={getattr(config, 'pra_bank_momentum', 0.9)}\n")
         outfile.write(f"pra_use_refined_prototypes={getattr(config, 'pra_use_refined_prototypes', False)}\n")
         outfile.write(f"pra_refinement_keep_ratio={getattr(config, 'pra_refinement_keep_ratio', 1.0)}\n")
+        outfile.write(f"pra_use_prototype_contrastive={getattr(config, 'pra_use_prototype_contrastive', False)}\n")
+        outfile.write(f"pra_contrastive_trade_off={getattr(config, 'pra_contrastive_trade_off', 0.0)}\n")
+        outfile.write(f"pra_contrastive_temperature={getattr(config, 'pra_contrastive_temperature', 0.1)}\n")
         outfile.write(f"experiment_name={config.experiment_name}\n\n")
         outfile.write(str(class_report))
     pkl.dump(conf_mat, open(os.path.join(out_dir, f'conf_mat_{target_name}.pkl'), 'wb'))
@@ -550,6 +556,12 @@ if __name__ == '__main__':
                            help='use stable temporal segments instead of full-sequence features when constructing PRA prototypes')
     timematch.add_argument("--pra_refinement_keep_ratio", type=float, default=0.7,
                            help='fraction of lowest-instability timesteps kept for refined prototype pooling')
+    timematch.add_argument("--pra_use_prototype_contrastive", type=bool_flag, default=False,
+                           help='enable sample-to-prototype contrastive adaptation using shared prototype anchors')
+    timematch.add_argument("--pra_contrastive_trade_off", type=float, default=0.0,
+                           help='weight for prototype contrastive adaptation loss')
+    timematch.add_argument("--pra_contrastive_temperature", type=float, default=0.1,
+                           help='temperature for prototype contrastive logits')
 
     cfg = parser.parse_args()
 
