@@ -15,21 +15,20 @@ SOURCES=("france/30TXT/2017")
 TARGETS=("denmark/32VNH/2017")
 SEEDS=(111)
 
-# Follow-up script: by default, reuse completed source-only and baseline TimeMatch runs,
-# then launch a small PRA sweep for FR1 -> DK1.
+# Focused follow-up script: reuse completed source-only and baseline TimeMatch runs,
+# then compare the best PRA setting with prototype-geometry normalization on FR1 -> DK1.
 RUN_SOURCE_ONLY="0"
 RUN_TIMEMATCH_BASELINE="0"
 RUN_TIMEMATCH_PRA="1"
 SKIP_EXISTING_RUNS="${SKIP_EXISTING_RUNS:-1}"
 OVERWRITE_EXISTING="${OVERWRITE_EXISTING:-0}"
 
-# PRA sweep configurations for the final focused FR1 -> DK1 validation round.
+# Best PRA configuration + geometry-normalization ablations.
 # Format:
-#   config_tag|point_trade_off|edge_trade_off|warmup_epochs|min_samples_per_class|pseudo_threshold|bank_momentum
+#   config_tag|point_trade_off|edge_trade_off|warmup_epochs|min_samples_per_class|pseudo_threshold|bank_momentum|pseudo_selection|pseudo_margin_threshold|pseudo_entropy_threshold|pra_normalize_geometry
 PRA_CONFIGS=(
-    "p0002_e0005_w8_m2_pt090_b097|0.002|0.005|8|2|0.90|0.97"
-    "p0001_e0005_w8_m2_pt090_b097|0.001|0.005|8|2|0.90|0.97"
-    "p0002_e0005_w8_m2_pt092_b097|0.002|0.005|8|2|0.92|0.97"
+    "p0001_e0005_w8_m2_pt090_b097_geom_on|0.001|0.005|8|2|0.90|0.97|confidence|0.05|0.30|True"
+    "p0001_e0005_w8_m2_pt090_b097_geom_off|0.001|0.005|8|2|0.90|0.97|confidence|0.05|0.30|False"
 )
 
 match() {
@@ -108,6 +107,10 @@ write_summary_csv() {
     local pra_min_samples_per_class="${11}"
     local pra_pseudo_threshold="${12}"
     local pra_bank_momentum="${13}"
+    local pseudo_selection="${14}"
+    local pseudo_margin_threshold="${15}"
+    local pseudo_entropy_threshold="${16}"
+    local pra_normalize_geometry="${17}"
 
     local csv_path
     local source_metrics_path
@@ -147,8 +150,8 @@ write_summary_csv() {
 
     csv_path="$result_dir/results.csv"
     {
-        echo "source,target,seed,source_experiment,timematch_experiment,timematch_pra_experiment,source_accuracy,timematch_accuracy,timematch_pra_accuracy,pra_minus_timematch_accuracy,pra_minus_source_accuracy,source_macro_f1,timematch_macro_f1,timematch_pra_macro_f1,pra_minus_timematch_macro_f1,pra_minus_source_macro_f1,timematch_pra_enabled,pra_point_trade_off,pra_trade_off,pra_warmup_epochs,pra_min_samples_per_class,pra_pseudo_threshold,pra_bank_momentum"
-        echo "$source_path,$target_path,$seed,$source_exp,$timematch_exp,$timematch_pra_exp,$source_accuracy,$timematch_accuracy,$timematch_pra_accuracy,$delta_acc_pra_vs_timematch,$delta_acc_pra_vs_source,$source_macro_f1,$timematch_macro_f1,$timematch_pra_macro_f1,$delta_pra_vs_timematch,$delta_pra_vs_source,$timematch_pra_flag,$pra_point_trade_off,$pra_trade_off,$pra_warmup_epochs,$pra_min_samples_per_class,$pra_pseudo_threshold,$pra_bank_momentum"
+        echo "source,target,seed,source_experiment,timematch_experiment,timematch_pra_experiment,source_accuracy,timematch_accuracy,timematch_pra_accuracy,pra_minus_timematch_accuracy,pra_minus_source_accuracy,source_macro_f1,timematch_macro_f1,timematch_pra_macro_f1,pra_minus_timematch_macro_f1,pra_minus_source_macro_f1,timematch_pra_enabled,pra_point_trade_off,pra_trade_off,pra_warmup_epochs,pra_min_samples_per_class,pra_pseudo_threshold,pra_bank_momentum,pseudo_selection,pseudo_margin_threshold,pseudo_entropy_threshold,pra_normalize_geometry"
+        echo "$source_path,$target_path,$seed,$source_exp,$timematch_exp,$timematch_pra_exp,$source_accuracy,$timematch_accuracy,$timematch_pra_accuracy,$delta_acc_pra_vs_timematch,$delta_acc_pra_vs_source,$source_macro_f1,$timematch_macro_f1,$timematch_pra_macro_f1,$delta_pra_vs_timematch,$delta_pra_vs_source,$timematch_pra_flag,$pra_point_trade_off,$pra_trade_off,$pra_warmup_epochs,$pra_min_samples_per_class,$pra_pseudo_threshold,$pra_bank_momentum,$pseudo_selection,$pseudo_margin_threshold,$pseudo_entropy_threshold,$pra_normalize_geometry"
     } > "$csv_path"
 
     echo "[INFO] Summary CSV saved to: $csv_path"
@@ -278,6 +281,10 @@ run_experiment() {
     local pra_min_samples_per_class="$8"
     local pra_pseudo_threshold="$9"
     local pra_bank_momentum="${10}"
+    local pseudo_selection="${11}"
+    local pseudo_margin_threshold="${12}"
+    local pseudo_entropy_threshold="${13}"
+    local pra_normalize_geometry="${14}"
     local source_tag
     local target_tag
     local source_exp
@@ -295,6 +302,8 @@ run_experiment() {
     echo "[INFO] SKIP_EXISTING_RUNS=$SKIP_EXISTING_RUNS OVERWRITE_EXISTING=$OVERWRITE_EXISTING"
     echo "[INFO] PRA naming: label=pra config_tag=$pra_config_tag exp_suffix=pra_$pra_config_tag"
     echo "[INFO] PRA config: point_trade_off=$pra_point_trade_off edge_trade_off=$pra_trade_off warmup=$pra_warmup_epochs min_samples=$pra_min_samples_per_class pseudo_threshold=$pra_pseudo_threshold bank_momentum=$pra_bank_momentum"
+    echo "[INFO] Pseudo-label filter: selection=$pseudo_selection margin_threshold=$pseudo_margin_threshold entropy_threshold=$pseudo_entropy_threshold"
+    echo "[INFO] PRA geometry normalization: $pra_normalize_geometry"
     echo "--------------------------------------------------"
 
     source_tag="$(match "$source_path")"
@@ -346,7 +355,11 @@ run_experiment() {
         --pra_warmup_epochs "$pra_warmup_epochs" \
         --pra_min_samples_per_class "$pra_min_samples_per_class" \
         --pseudo_threshold "$pra_pseudo_threshold" \
-        --pra_bank_momentum "$pra_bank_momentum"
+        --pra_bank_momentum "$pra_bank_momentum" \
+        --pseudo_selection "$pseudo_selection" \
+        --pseudo_margin_threshold "$pseudo_margin_threshold" \
+        --pseudo_entropy_threshold "$pseudo_entropy_threshold" \
+        --pra_normalize_geometry "$pra_normalize_geometry"
 
     timestamp="$(date +"%Y%m%d_%H%M%S")_${pra_config_tag}"
     result_dir="$SCRIPT_DIR/result/$source_tag/$target_tag/$timestamp"
@@ -365,7 +378,11 @@ run_experiment() {
         "$pra_warmup_epochs" \
         "$pra_min_samples_per_class" \
         "$pra_pseudo_threshold" \
-        "$pra_bank_momentum"
+        "$pra_bank_momentum" \
+        "$pseudo_selection" \
+        "$pseudo_margin_threshold" \
+        "$pseudo_entropy_threshold" \
+        "$pra_normalize_geometry"
     write_classwise_csv "$target_path" "$source_exp" "$timematch_exp" "$timematch_pra_exp" "$result_dir"
 }
 
@@ -376,7 +393,7 @@ for source in "${SOURCES[@]}"; do
         fi
         for seed in "${SEEDS[@]}"; do
             for pra_config in "${PRA_CONFIGS[@]}"; do
-                IFS='|' read -r pra_config_tag pra_point_trade_off pra_trade_off pra_warmup_epochs pra_min_samples_per_class pra_pseudo_threshold pra_bank_momentum <<< "$pra_config"
+                IFS='|' read -r pra_config_tag pra_point_trade_off pra_trade_off pra_warmup_epochs pra_min_samples_per_class pra_pseudo_threshold pra_bank_momentum pseudo_selection pseudo_margin_threshold pseudo_entropy_threshold pra_normalize_geometry <<< "$pra_config"
                 run_experiment \
                     "$source" \
                     "$target" \
@@ -387,7 +404,11 @@ for source in "${SOURCES[@]}"; do
                     "$pra_warmup_epochs" \
                     "$pra_min_samples_per_class" \
                     "$pra_pseudo_threshold" \
-                    "$pra_bank_momentum"
+                    "$pra_bank_momentum" \
+                    "$pseudo_selection" \
+                    "$pseudo_margin_threshold" \
+                    "$pseudo_entropy_threshold" \
+                    "$pra_normalize_geometry"
             done
         done
     done

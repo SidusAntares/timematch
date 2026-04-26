@@ -1,0 +1,2 @@
+run_type,source,target,seed,source_experiment,timematch_experiment,source_accuracy,timematch_accuracy,timematch_minus_source_accuracy,source_macro_f1,timematch_macro_f1,timematch_minus_source_macro_f1
+baseline,austria/33UVP/2017,denmark/32VNH/2017,111,pseltae_AT1_baseline,timematch_AT1_to_DK1_baseline,0.6544007956240676,0.71026023537212,0.05585943974805241,0.6169891602166269,0.6226853686953525,0.005696208478725651

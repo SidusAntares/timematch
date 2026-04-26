@@ -1,38 +1,168 @@
-# Result Organization Notes
+# Project Progress Summary
 
 ## Current scope
-- PRA is only tested on `FR1 -> DK1`.
-- All other transfer pairs should still be treated as TimeMatch baseline results.
-- Unless PRA first exceeds the `FR1 -> DK1` baseline, there is no strong reason to expand PRA to other domain adaptation pairs yet.
+- Main baseline has moved from the original open-set setting to a **closed-set** setting.
+- PRA remains a single-pair validation track centered on `FR1 -> DK1`.
+- Multi-source closed-set TimeMatch baseline has now been rerun for all 12 transfer tasks.
+- Structure analysis is now a separate analysis track based on the saved closed-set baseline checkpoints rather than new training runs.
 
-## Baseline overview
-- `austria/33UVP/2017 -> denmark/32VNH/2017`: source `0.6170`, TimeMatch `0.6227`, delta `+0.0057`
-- `austria/33UVP/2017 -> france/30TXT/2017`: source `0.6156`, TimeMatch `0.6564`, delta `+0.0408`
-- `austria/33UVP/2017 -> france/31TCJ/2017`: source `0.5751`, TimeMatch `0.5934`, delta `+0.0183`
-- `denmark/32VNH/2017 -> austria/33UVP/2017`: source `0.5346`, TimeMatch `0.5482`, delta `+0.0136`
-- `denmark/32VNH/2017 -> france/30TXT/2017`: source `0.4248`, TimeMatch `0.5322`, delta `+0.1074`
-- `denmark/32VNH/2017 -> france/31TCJ/2017`: source `0.4039`, TimeMatch `0.3873`, delta `-0.0166`
-- `france/30TXT/2017 -> austria/33UVP/2017`: source `0.6244`, TimeMatch `0.6337`, delta `+0.0093`
-- `france/30TXT/2017 -> denmark/32VNH/2017`: source `0.5303`, TimeMatch `0.5608`, delta `+0.0305`
-- `france/30TXT/2017 -> france/31TCJ/2017`: source `0.7206`, TimeMatch `0.6864`, delta `-0.0342`
-- `france/31TCJ/2017 -> austria/33UVP/2017`: source `0.5302`, TimeMatch `0.5648`, delta `+0.0346`
-- `france/31TCJ/2017 -> denmark/32VNH/2017`: source `0.4052`, TimeMatch `0.4819`, delta `+0.0767`
-- `france/31TCJ/2017 -> france/30TXT/2017`: source `0.6785`, TimeMatch `0.7375`, delta `+0.0590`
+## Why the project focus changed
+- Earlier discussion started from the idea that "more complex source domains may transfer better".
+- However, source-only complexity measures did not align well with actual adaptation outcomes.
+- After switching to closed-set evaluation and computing task-level structure metrics, the project focus became:
 
-## FR1 -> DK1 PRA overview
-- `20260424_085816`: PRA `0.5413`, vs TimeMatch `-0.0195`, vs source `+0.0111`
-- `20260424_114127_t0005_w8_m8_pt095`: PRA `0.5340`, vs TimeMatch `-0.0268`, vs source `+0.0037`
-- `20260424_115418_t001_w8_m8_pt095`: PRA `0.5340`, vs TimeMatch `-0.0268`, vs source `+0.0037`
-- `20260424_124912_t0005_w8_m2_pt090`: PRA `0.5591`, vs TimeMatch `-0.0017`, vs source `+0.0288`
-- `20260424_130315_t001_w8_m2_pt090`: PRA `0.5588`, vs TimeMatch `-0.0020`, vs source `+0.0286`
-- `20260424_170957_p0005_e0005_w8_m2_pt090_b095`: PRA `0.5601`, vs TimeMatch `-0.0007`, vs source `+0.0299`
-- `20260424_172346_p0005_e001_w8_m2_pt090_b095`: PRA `0.5598`, vs TimeMatch `-0.0010`, vs source `+0.0295`
+> The key question is not which domain is more complex by itself, but which source domain provides **more stable and more useful transferable structure** for a target domain.
 
-## Recommended next step
-- Stop expanding PRA to other source-target pairs for now.
-- Keep `FR1 -> DK1` as the single PRA validation track until PRA clearly beats the TimeMatch baseline `0.5608` macro-F1.
-- The next useful experiments should focus on prototype quality and scheduling, not on adding more transfer pairs.
-- Suggested order:
-  1. tune point alignment weight downward from `0.005`
-  2. tune bank momentum upward from `0.95`
-  3. if needed, retune pseudo-threshold around `0.90-0.93`
+- This means the analysis target is now `source -> target` pairs rather than standalone source domains.
+
+## Closed-set baseline overview
+
+| Task | TimeMatch |
+|---|---:|
+| FR1 -> FR2 | 0.7998860 |
+| FR1 -> DK1 | 0.6391047 |
+| FR1 -> AT1 | 0.7395250 |
+| FR2 -> FR1 | 0.7146287 |
+| FR2 -> DK1 | 0.4652110 |
+| FR2 -> AT1 | 0.6486893 |
+| DK1 -> FR1 | 0.5917054 |
+| DK1 -> FR2 | 0.5071109 |
+| DK1 -> AT1 | 0.5264147 |
+| AT1 -> FR1 | 0.7031468 |
+| AT1 -> FR2 | 0.6226317 |
+| AT1 -> DK1 | 0.7511958 |
+
+## Closed-set vs previous open-set baseline
+- Compared with the earlier open-set baseline table, the closed-set rerun improved in most tasks.
+- Among the 11 tasks with directly comparable old open-set results:
+  - 8 improved
+  - 3 decreased
+- Large gains appeared in:
+  - `DK1 -> FR2`
+  - `FR1 -> FR2`
+  - `FR1 -> AT1`
+- This confirms that removing the `unknown` bucket and enforcing a proper closed-set protocol materially changes the transfer landscape.
+
+## Closed-set data loading change
+- `unknown` is no longer kept in the active class list.
+- Rare source classes and classes that do not belong to the source closed set are excluded during loading rather than collapsed into `unknown`.
+- As a result:
+  - target classes used in training/evaluation are always a subset of the source closed-set classes
+  - source-only rare classes and target-only unseen classes are removed
+
+## PRA status
+- PRA has been tested mainly on `FR1 -> DK1`.
+- Multiple variants were tried:
+  - point/edge trade-off tuning
+  - bank momentum tuning
+  - pseudo-threshold tuning
+  - pseudo-label filtering variants
+  - geometry normalization before point/edge alignment
+- The consistent outcome is:
+  - PRA can train stably
+  - PRA can get close to baseline
+  - PRA has **not** shown a stable gain over the debugged TimeMatch baseline
+
+## Structure analysis track
+
+### Goal
+- Before adding new structure losses, determine which structure metrics actually explain transfer performance.
+- Reuse the 12 closed-set TimeMatch baseline checkpoints and compute task-level structure metrics for each `source -> target` pair.
+
+### Metrics currently implemented
+- `Target F1`
+- `MMD`
+- `CORAL`
+- `Prototype Distance`
+- `Relation Structure Distance`
+- `ACF Distance`
+
+### Current analysis table
+
+| Source | Target | Target F1 | MMD | CORAL | Prototype Distance | Relation Structure Distance | ACF Distance |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| AT1 | DK1 | 0.7512 | 0.0849 | 0.001696 | 2.6984 | 0.000617 | 0.0581 |
+| AT1 | FR1 | 0.7031 | 0.0646 | 0.000263 | 1.6566 | 0.000830 | 0.0662 |
+| AT1 | FR2 | 0.6226 | 0.0697 | 0.000183 | 1.1330 | 0.000601 | 0.0678 |
+| DK1 | AT1 | 0.5264 | 0.0612 | 0.001852 | 3.0822 | 0.000994 | 0.0581 |
+| DK1 | FR1 | 0.5917 | 0.0884 | 0.001355 | 3.0653 | 0.000892 | 0.0444 |
+| DK1 | FR2 | 0.5071 | 0.0902 | 0.000152 | 2.3737 | 0.001596 | 0.0670 |
+| FR1 | AT1 | 0.7395 | 0.0458 | 0.000009 | 0.7958 | 0.001419 | 0.0665 |
+| FR1 | DK1 | 0.6391 | 0.0933 | 0.000033 | 1.3149 | 0.001948 | 0.0441 |
+| FR1 | FR2 | 0.7999 | 0.1047 | 0.000013 | 0.6940 | 0.001205 | 0.0766 |
+| FR2 | AT1 | 0.6487 | 0.0648 | 0.003278 | 2.4584 | 0.000579 | 0.0696 |
+| FR2 | DK1 | 0.4652 | 0.0572 | 0.001645 | 2.7916 | 0.001897 | 0.0667 |
+| FR2 | FR1 | 0.7146 | 0.0976 | 0.000415 | 1.0041 | 0.000457 | 0.0766 |
+
+### Correlation with target F1
+- `prototype_distance`: `-0.6518`
+- `relation_structure_distance`: `-0.4135`
+- `coral`: `-0.2866`
+- `acf_distance`: `+0.2818`
+- `mmd`: `+0.2765`
+
+## What the current analysis shows
+
+### 1. Prototype distance is the strongest signal so far
+- The clearest result is that **smaller source-target prototype distance tends to correspond to higher target F1**.
+- This means that category-level structure stability is currently the most useful explanatory factor.
+
+### 2. Relation structure matters, but is secondary
+- `relation_structure_distance` also shows a useful negative relationship with target F1.
+- However, it is clearly weaker than `prototype_distance`.
+- This suggests:
+  - point-level prototype alignment is likely more important than relation-only alignment
+  - relation structure may still help, but it should not be the first design priority
+
+### 3. Source-only complexity is not the main story
+- Earlier source-only MSE-based "separability/complexity" did not explain the observed transfer results well.
+- The current evidence points toward:
+
+> Transfer performance depends more on **source-target category structure stability** than on source-only structural strength.
+
+### 4. ACF / global discrepancy are not yet the main drivers
+- `MMD`, `CORAL`, and `ACF Distance` currently show weaker explanatory power than prototype-based measures.
+- This does not mean temporal structure is irrelevant, but it suggests the current implementation is not capturing the dominant transferable factor yet.
+
+## Method-design implication
+- If a new structure-based adaptation method is developed, the first priority should be:
+  1. improve target prototype construction
+  2. stabilize cross-domain prototype alignment
+  3. only then consider stronger relation/graph modeling
+
+- In other words, current evidence supports:
+  - **prototype quality first**
+  - **relation structure second**
+
+## Pseudo labels vs clustering for target structure
+- At this stage, the preferred mainline remains:
+  - **high-confidence pseudo labels as the first main solution**
+  - **clustering as an auxiliary or comparative solution**
+- Reason:
+  - the strongest current signal is category-level prototype stability
+  - pseudo-label prototypes are more directly tied to semantic class structure
+- Clustering is still worth studying, especially as:
+  - a target-structure discovery tool
+  - a comparison baseline
+  - or a first-stage grouping method before semantic refinement
+
+## Files added for analysis
+- Closed-set transfer analysis script:
+  - [analyze_closed_set_transfer.py](/C:/Code/dev/PythonProject/timematch/analyze_closed_set_transfer.py)
+- Current analysis result table:
+  - [closed_set_transfer_metrics.csv](/C:/Code/dev/PythonProject/timematch/result/baseline_analysis/closed_set_transfer_metrics.csv)
+
+## Next steps
+1. Read and summarize prototype-alignment / structure-alignment papers with emphasis on:
+   - how target prototypes are constructed
+   - whether they use pseudo labels, clustering, memory banks, or hybrid strategies
+   - how relation structure is modeled beyond simple MSE
+2. Decide whether the next analysis should add:
+   - clustering-based prototype distance
+   - class-wise MMD
+   - more explicit temporal/frequency structure measures
+3. Only after the structure definition becomes clearer, design the next training method.
+
+## Current mainline conclusion
+
+> At the current stage, the most promising direction is not to keep expanding PRA variants or source-only complexity analysis, but to study **category-level transferable structure**, especially target prototype construction and source-target prototype stability.

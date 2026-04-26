@@ -1,0 +1,24 @@
+use_prototype_relation_alignment=False
+pra_trade_off=0.1
+pra_point_trade_off=0.005
+pra_warmup_epochs=5
+pra_min_samples_per_class=4
+pra_bank_momentum=0.9
+experiment_name=timematch_AT1_to_DK1_baseline
+
+                  precision    recall  f1-score   support
+
+            corn       0.91      0.97      0.94       697
+      horsebeans       0.87      0.83      0.85        54
+          meadow       0.89      0.99      0.94      2238
+   spring_barley       0.96      0.57      0.71      2478
+      spring_oat       0.21      0.73      0.33       264
+   winter_barley       0.90      0.93      0.92       694
+ winter_rapeseed       0.98      0.98      0.98       538
+      winter_rye       0.71      0.89      0.79       698
+winter_triticale       0.11      0.56      0.19        70
+    winter_wheat       0.99      0.77      0.87      1742
+
+        accuracy                           0.81      9473
+       macro avg       0.75      0.82      0.75      9473
+    weighted avg       0.90      0.81      0.83      9473

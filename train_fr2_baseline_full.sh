@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+CONDA_BASE=$(conda info --base)
+PYTHON_EXEC="$CONDA_BASE/envs/ti/bin/python"
+
+export CUDA_LAUNCH_BLOCKING=1
+export TORCH_USE_CUDA_DSA=1
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-1,2,3}"
+
+# Full rerun script for original TimeMatch baseline on all source-target pairs.
+# This script keeps baseline artifacts separate from the older reused runs.
+# It trains fresh experiments with explicit baseline names:
+#   source model: pseltae_<SRC>_baseline
+#   DA models:    timematch_<SRC>_to_<TGT>_baseline
+# and stores summary files under result/baseline/...
+
+SOURCES=(
+    "france/30TXT/2017"
+    "denmark/32VNH/2017"
+    "austria/33UVP/2017"
+)
+TARGETS=(
+    "france/31TCJ/2017"
+    "france/30TXT/2017"
+    "denmark/32VNH/2017"
+    "austria/33UVP/2017"
+)
+SEEDS=(111)
+
+RUN_SOURCE_ONLY="${RUN_SOURCE_ONLY:-1}"
+RUN_TIMEMATCH_BASELINE="${RUN_TIMEMATCH_BASELINE:-1}"
+SKIP_EXISTING_RUNS="${SKIP_EXISTING_RUNS:-0}"
+OVERWRITE_EXISTING="${OVERWRITE_EXISTING:-1}"
+
+match() {
+    local domain="$1"
+    if [[ "$domain" == "france/30TXT/2017" ]]; then
+        echo "FR1"
+    elif [[ "$domain" == "france/31TCJ/2017" ]]; then
+        echo "FR2"
+    elif [[ "$domain" == "denmark/32VNH/2017" ]]; then
+        echo "DK1"
+    else
+        echo "AT1"
+    fi
+}
+
+target_file_name() {
+    local target_path="$1"
+    echo "${target_path//\//_}"
+}
+
+metrics_path_for_exp() {
+    local exp_name="$1"
+    local target_path="$2"
+    echo "$SCRIPT_DIR/outputs/$exp_name/fold_0/test_metrics_$(target_file_name "$target_path").json"
+}
+
+class_report_path_for_exp() {
+    local exp_name="$1"
+    local target_path="$2"
+    echo "$SCRIPT_DIR/outputs/$exp_name/fold_0/class_report_$(target_file_name "$target_path").txt"
+}
+
+assert_file_exists() {
+    local file_path="$1"
+    local description="$2"
+    if [[ ! -f "$file_path" ]]; then
+        echo "[ERROR] Missing $description: $file_path" >&2
+        exit 1
+    fi
+}
+
+extract_macro_f1() {
+    local metrics_path="$1"
+    "$PYTHON_EXEC" -c "import json; print(json.load(open(r'''$metrics_path'''))['macro_f1'])"
+}
+
+extract_accuracy() {
+    local metrics_path="$1"
+    "$PYTHON_EXEC" -c "import json; print(json.load(open(r'''$metrics_path'''))['accuracy'])"
+}
+
+copy_artifact_if_exists() {
+    local source_path="$1"
+    local destination_path="$2"
+    if [[ -f "$source_path" ]]; then
+        cp "$source_path" "$destination_path"
+    fi
+}
+
+run_or_skip_experiment() {
+    local should_run="$1"
+    local exp_name="$2"
+    local metrics_path="$3"
+    shift 3
+
+    if [[ "$should_run" == "1" ]]; then
+        if [[ "$SKIP_EXISTING_RUNS" == "1" && -f "$metrics_path" ]]; then
+            echo "[INFO] Skip existing run: $exp_name"
+            return
+        fi
+        echo "[INFO] Running experiment: $exp_name"
+        "$PYTHON_EXEC" ./train.py "$@"
+        return
+    fi
+
+    assert_file_exists "$metrics_path" "reused metrics for $exp_name"
+    echo "[INFO] Reusing existing experiment: $exp_name"
+}
+
+write_summary_csv() {
+    local source_path="$1"
+    local target_path="$2"
+    local seed="$3"
+    local source_exp="$4"
+    local timematch_exp="$5"
+    local result_dir="$6"
+
+    local source_metrics_path
+    local timematch_metrics_path
+    local source_accuracy
+    local source_macro_f1
+    local timematch_accuracy
+    local timematch_macro_f1
+    local delta_acc
+    local delta_f1
+    local csv_path
+
+    source_metrics_path="$(metrics_path_for_exp "$source_exp" "$target_path")"
+    timematch_metrics_path="$(metrics_path_for_exp "$timematch_exp" "$target_path")"
+
+    assert_file_exists "$source_metrics_path" "source-only metrics"
+    assert_file_exists "$timematch_metrics_path" "baseline TimeMatch metrics"
+
+    source_accuracy="$(extract_accuracy "$source_metrics_path")"
+    source_macro_f1="$(extract_macro_f1 "$source_metrics_path")"
+    timematch_accuracy="$(extract_accuracy "$timematch_metrics_path")"
+    timematch_macro_f1="$(extract_macro_f1 "$timematch_metrics_path")"
+    delta_acc="$("$PYTHON_EXEC" -c "print(float('$timematch_accuracy') - float('$source_accuracy'))")"
+    delta_f1="$("$PYTHON_EXEC" -c "print(float('$timematch_macro_f1') - float('$source_macro_f1'))")"
+
+    csv_path="$result_dir/results.csv"
+    {
+        echo "run_type,source,target,seed,source_experiment,timematch_experiment,source_accuracy,timematch_accuracy,timematch_minus_source_accuracy,source_macro_f1,timematch_macro_f1,timematch_minus_source_macro_f1"
+        echo "baseline,$source_path,$target_path,$seed,$source_exp,$timematch_exp,$source_accuracy,$timematch_accuracy,$delta_acc,$source_macro_f1,$timematch_macro_f1,$delta_f1"
+    } > "$csv_path"
+
+    echo "[INFO] Summary CSV saved to: $csv_path"
+}
+
+write_classwise_csv() {
+    local target_path="$1"
+    local source_exp="$2"
+    local timematch_exp="$3"
+    local result_dir="$4"
+
+    local source_report_path
+    local timematch_report_path
+    local csv_path
+
+    source_report_path="$(class_report_path_for_exp "$source_exp" "$target_path")"
+    timematch_report_path="$(class_report_path_for_exp "$timematch_exp" "$target_path")"
+
+    assert_file_exists "$source_report_path" "source-only class report"
+    assert_file_exists "$timematch_report_path" "baseline TimeMatch class report"
+
+    csv_path="$result_dir/classwise_comparison.csv"
+    "$PYTHON_EXEC" -c "
+import csv
+import re
+from pathlib import Path
+
+def parse_report(path):
+    rows = {}
+    pattern = re.compile(r'^\s*(.+?)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9]+)\s*$')
+    for line in Path(path).read_text(encoding='utf-8').splitlines():
+        line = line.rstrip()
+        match = pattern.match(line)
+        if not match:
+            continue
+        class_name, precision, recall, f1_score, support = match.groups()
+        class_name = class_name.strip()
+        if class_name in {'macro avg', 'weighted avg', 'accuracy'}:
+            continue
+        rows[class_name] = {
+            'precision': float(precision),
+            'recall': float(recall),
+            'f1': float(f1_score),
+            'support': int(support),
+        }
+    return rows
+
+source_rows = parse_report(r'''$source_report_path''')
+timematch_rows = parse_report(r'''$timematch_report_path''')
+all_classes = sorted(set(source_rows) | set(timematch_rows))
+
+with open(r'''$csv_path''', 'w', newline='', encoding='utf-8') as f:
+    writer = csv.writer(f)
+    writer.writerow([
+        'class_name',
+        'source_precision', 'source_recall', 'source_f1', 'source_support',
+        'timematch_precision', 'timematch_recall', 'timematch_f1', 'timematch_support',
+        'timematch_minus_source_f1'
+    ])
+    for class_name in all_classes:
+        source = source_rows.get(class_name, {})
+        timematch = timematch_rows.get(class_name, {})
+        source_f1 = source.get('f1')
+        timematch_f1 = timematch.get('f1')
+        writer.writerow([
+            class_name,
+            source.get('precision', ''),
+            source.get('recall', ''),
+            source_f1 if source_f1 is not None else '',
+            source.get('support', ''),
+            timematch.get('precision', ''),
+            timematch.get('recall', ''),
+            timematch_f1 if timematch_f1 is not None else '',
+            timematch.get('support', ''),
+            '' if timematch_f1 is None or source_f1 is None else timematch_f1 - source_f1,
+        ])
+"
+
+    copy_artifact_if_exists "$source_report_path" "$result_dir/${source_exp}_class_report_$(target_file_name "$target_path").txt"
+    copy_artifact_if_exists "$timematch_report_path" "$result_dir/${timematch_exp}_class_report_$(target_file_name "$target_path").txt"
+
+    echo "[INFO] Class-wise comparison CSV saved to: $csv_path"
+}
+
+run_experiment() {
+    local source_path="$1"
+    local target_path="$2"
+    local seed="$3"
+    local source_tag
+    local target_tag
+    local source_exp
+    local timematch_exp
+    local source_metrics_path
+    local timematch_metrics_path
+    local timestamp
+    local result_dir
+
+    echo "--------------------------------------------------"
+    echo "[INFO] Starting full baseline rerun: source=$source_path, target=$target_path, seed=$seed"
+    echo "[INFO] RUN_SOURCE_ONLY=$RUN_SOURCE_ONLY RUN_TIMEMATCH_BASELINE=$RUN_TIMEMATCH_BASELINE"
+    echo "[INFO] SKIP_EXISTING_RUNS=$SKIP_EXISTING_RUNS OVERWRITE_EXISTING=$OVERWRITE_EXISTING"
+    echo "[INFO] CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
+    echo "--------------------------------------------------"
+
+    source_tag="$(match "$source_path")"
+    target_tag="$(match "$target_path")"
+    source_exp="pseltae_${source_tag}_baseline"
+    timematch_exp="timematch_${source_tag}_to_${target_tag}_baseline"
+
+    source_metrics_path="$(metrics_path_for_exp "$source_exp" "$target_path")"
+    timematch_metrics_path="$(metrics_path_for_exp "$timematch_exp" "$target_path")"
+
+    run_or_skip_experiment \
+        "$RUN_SOURCE_ONLY" \
+        "$source_exp" \
+        "$source_metrics_path" \
+        -e "$source_exp" \
+        --source "$source_path" \
+        --target "$target_path" \
+        --seed "$seed" \
+        $( [[ "$OVERWRITE_EXISTING" == "1" ]] && printf '%s' '--overwrite_existing' )
+
+    run_or_skip_experiment \
+        "$RUN_TIMEMATCH_BASELINE" \
+        "$timematch_exp" \
+        "$timematch_metrics_path" \
+        -e "$timematch_exp" \
+        --source "$source_path" \
+        --target "$target_path" \
+        --seed "$seed" \
+        $( [[ "$OVERWRITE_EXISTING" == "1" ]] && printf '%s' '--overwrite_existing' ) \
+        timematch \
+        --weights "outputs/$source_exp" \
+        --disable_pra
+
+    timestamp="$(date +"%Y%m%d_%H%M%S")_baseline"
+    result_dir="$SCRIPT_DIR/result/baseline/$source_tag/$target_tag/$timestamp"
+    mkdir -p "$result_dir"
+
+    write_summary_csv \
+        "$source_path" \
+        "$target_path" \
+        "$seed" \
+        "$source_exp" \
+        "$timematch_exp" \
+        "$result_dir"
+    write_classwise_csv "$target_path" "$source_exp" "$timematch_exp" "$result_dir"
+}
+
+for source in "${SOURCES[@]}"; do
+    for target in "${TARGETS[@]}"; do
+        if [[ "$source" == "$target" ]]; then
+            continue
+        fi
+        for seed in "${SEEDS[@]}"; do
+            run_experiment "$source" "$target" "$seed"
+        done
+    done
+done
+
+echo "[SUCCESS] Finished full multi-source baseline rerun experiments."
