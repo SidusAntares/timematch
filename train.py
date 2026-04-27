@@ -314,6 +314,12 @@ def save_results(metrics, config):
         'pra_contrastive_trade_off': float(getattr(config, 'pra_contrastive_trade_off', 0.0)),
         'pra_contrastive_temperature': float(getattr(config, 'pra_contrastive_temperature', 0.1)),
         'pra_use_memory_invariant_prototypes': bool(getattr(config, 'pra_use_memory_invariant_prototypes', False)),
+        'pra_use_phase_pse_alignment': bool(getattr(config, 'pra_use_phase_pse_alignment', False)),
+        'pra_num_phases': int(getattr(config, 'pra_num_phases', 3)),
+        'pra_phase_trade_off': float(getattr(config, 'pra_phase_trade_off', 0.0)),
+        'pra_phase_contrastive_trade_off': float(getattr(config, 'pra_phase_contrastive_trade_off', 0.0)),
+        'pra_phase_trend_trade_off': float(getattr(config, 'pra_phase_trend_trade_off', 0.0)),
+        'pra_phase_temperature': float(getattr(config, 'pra_phase_temperature', 0.1)),
     }
     metrics_with_metadata = dict(metrics)
     metrics_with_metadata['metadata'] = metadata
@@ -335,6 +341,12 @@ def save_results(metrics, config):
         outfile.write(f"pra_contrastive_trade_off={getattr(config, 'pra_contrastive_trade_off', 0.0)}\n")
         outfile.write(f"pra_contrastive_temperature={getattr(config, 'pra_contrastive_temperature', 0.1)}\n")
         outfile.write(f"pra_use_memory_invariant_prototypes={getattr(config, 'pra_use_memory_invariant_prototypes', False)}\n")
+        outfile.write(f"pra_use_phase_pse_alignment={getattr(config, 'pra_use_phase_pse_alignment', False)}\n")
+        outfile.write(f"pra_num_phases={getattr(config, 'pra_num_phases', 3)}\n")
+        outfile.write(f"pra_phase_trade_off={getattr(config, 'pra_phase_trade_off', 0.0)}\n")
+        outfile.write(f"pra_phase_contrastive_trade_off={getattr(config, 'pra_phase_contrastive_trade_off', 0.0)}\n")
+        outfile.write(f"pra_phase_trend_trade_off={getattr(config, 'pra_phase_trend_trade_off', 0.0)}\n")
+        outfile.write(f"pra_phase_temperature={getattr(config, 'pra_phase_temperature', 0.1)}\n")
         outfile.write(f"experiment_name={config.experiment_name}\n\n")
         outfile.write(str(class_report))
     pkl.dump(conf_mat, open(os.path.join(out_dir, f'conf_mat_{target_name}.pkl'), 'wb'))
@@ -566,6 +578,18 @@ if __name__ == '__main__':
                            help='temperature for prototype contrastive logits')
     timematch.add_argument("--pra_use_memory_invariant_prototypes", type=bool_flag, default=False,
                            help='use EMA memory-bank prototypes as invariant anchors for prototype contrastive adaptation')
+    timematch.add_argument("--pra_use_phase_pse_alignment", type=bool_flag, default=False,
+                           help='enable phase-aware alignment on PSE temporal features')
+    timematch.add_argument("--pra_num_phases", type=int, default=3,
+                           help='number of contiguous temporal phases used by phase-aware PSE alignment')
+    timematch.add_argument("--pra_phase_trade_off", type=float, default=0.0,
+                           help='weight for class-phase prototype alignment loss')
+    timematch.add_argument("--pra_phase_contrastive_trade_off", type=float, default=0.0,
+                           help='weight for class-phase contrastive loss')
+    timematch.add_argument("--pra_phase_trend_trade_off", type=float, default=0.0,
+                           help='weight for phase-trend alignment loss')
+    timematch.add_argument("--pra_phase_temperature", type=float, default=0.1,
+                           help='temperature for class-phase contrastive logits')
 
     cfg = parser.parse_args()
 

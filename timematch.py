@@ -155,7 +155,9 @@ def prototype_relation_alignment_loss(source_prototypes, target_prototypes, norm
     if len(shared_classes) < 2:
         reference = next(iter(source_prototypes.values()), None)
         if reference is None:
-            reference = next(iter(target_prototypes.values()))
+            reference = next(iter(target_prototypes.values()), None)
+        if reference is None:
+            return torch.tensor(0.0), diagnostics
         return reference.new_tensor(0.0), diagnostics
 
     if normalize_geometry:
@@ -177,7 +179,9 @@ def prototype_point_alignment_loss(source_prototypes, target_prototypes, normali
     if len(shared_classes) == 0:
         reference = next(iter(source_prototypes.values()), None)
         if reference is None:
-            reference = next(iter(target_prototypes.values()))
+            reference = next(iter(target_prototypes.values()), None)
+        if reference is None:
+            return torch.tensor(0.0), diagnostics
         return reference.new_tensor(0.0), diagnostics
 
     if normalize_geometry:
@@ -278,6 +282,128 @@ def extract_refined_prototype_features(base_feats, sequence_feats, config):
     }
 
 
+def pool_phase_sequence_features(sequence_feats, num_phases=3):
+    if sequence_feats is None:
+        return None
+    if sequence_feats.dim() != 3:
+        raise ValueError("sequence_feats must have shape (B, T, C)")
+
+    batch_size, seq_len, feat_dim = sequence_feats.shape
+    num_phases = max(1, int(num_phases))
+    phase_feats = []
+    boundaries = torch.linspace(0, seq_len, steps=num_phases + 1, device=sequence_feats.device)
+    boundaries = torch.round(boundaries).long()
+
+    for phase_idx in range(num_phases):
+        start = int(boundaries[phase_idx].item())
+        end = int(boundaries[phase_idx + 1].item())
+        if end <= start:
+            end = min(seq_len, start + 1)
+        pooled = sequence_feats[:, start:end, :].mean(dim=1)
+        phase_feats.append(pooled)
+
+    return torch.stack(phase_feats, dim=1)
+
+
+def compute_phase_class_prototypes(phase_features, labels, ignore_class_id=None, min_samples=1):
+    if phase_features is None:
+        return {}, {}
+
+    prototypes = {}
+    counts = {}
+    num_phases = int(phase_features.shape[1])
+    for class_id in torch.unique(labels):
+        class_id_int = int(class_id.item())
+        if ignore_class_id is not None and class_id_int == int(ignore_class_id):
+            continue
+        class_mask = labels == class_id
+        class_count = int(torch.count_nonzero(class_mask).item())
+        if class_count < min_samples:
+            continue
+        for phase_idx in range(num_phases):
+            key = (class_id_int, phase_idx)
+            prototypes[key] = phase_features[class_mask, phase_idx, :].mean(dim=0)
+            counts[key] = class_count
+    return prototypes, counts
+
+
+def phase_prototype_alignment_loss(source_phase_prototypes, target_phase_prototypes):
+    shared_keys = sorted(set(source_phase_prototypes.keys()) & set(target_phase_prototypes.keys()))
+    diagnostics = {
+        "shared_phase_keys": len(shared_keys),
+        "enabled": int(len(shared_keys) > 0),
+    }
+    if len(shared_keys) == 0:
+        reference = next(iter(source_phase_prototypes.values()), None)
+        if reference is None:
+            reference = next(iter(target_phase_prototypes.values()), None)
+        if reference is None:
+            return torch.tensor(0.0), diagnostics
+        return reference.new_tensor(0.0), diagnostics
+
+    source_stack = torch.stack([source_phase_prototypes[key] for key in shared_keys], dim=0)
+    target_stack = torch.stack([target_phase_prototypes[key] for key in shared_keys], dim=0)
+    source_stack = F.normalize(source_stack, dim=1)
+    target_stack = F.normalize(target_stack, dim=1)
+    loss = 1.0 - F.cosine_similarity(source_stack, target_stack, dim=1).mean()
+    return loss, diagnostics
+
+
+def phase_prototype_contrastive_loss(phase_features, labels, anchor_prototypes, temperature=0.1, ignore_class_id=None):
+    diagnostics = {
+        "enabled": 0,
+        "num_anchor_keys": 0,
+        "num_valid_queries": 0,
+    }
+    if phase_features is None or len(anchor_prototypes) < 2:
+        reference = next(iter(anchor_prototypes.values()), None)
+        if reference is None:
+            return labels.new_tensor(0.0, dtype=torch.float32), diagnostics
+        return reference.new_tensor(0.0), diagnostics
+
+    phase_keys = sorted(anchor_prototypes.keys())
+    diagnostics["enabled"] = 1
+    diagnostics["num_anchor_keys"] = len(phase_keys)
+    key_to_index = {key: idx for idx, key in enumerate(phase_keys)}
+
+    query_feats = []
+    target_indices = []
+    batch_size, num_phases, _ = phase_features.shape
+    for batch_idx in range(batch_size):
+        class_id = int(labels[batch_idx].item())
+        if ignore_class_id is not None and class_id == int(ignore_class_id):
+            continue
+        for phase_idx in range(num_phases):
+            key = (class_id, phase_idx)
+            if key not in key_to_index:
+                continue
+            query_feats.append(phase_features[batch_idx, phase_idx, :])
+            target_indices.append(key_to_index[key])
+
+    diagnostics["num_valid_queries"] = len(target_indices)
+    if len(target_indices) == 0:
+        reference = next(iter(anchor_prototypes.values()))
+        return reference.new_tensor(0.0), diagnostics
+
+    query_stack = F.normalize(torch.stack(query_feats, dim=0), dim=1)
+    anchor_stack = F.normalize(torch.stack([anchor_prototypes[key] for key in phase_keys], dim=0), dim=1)
+    logits = (query_stack @ anchor_stack.t()) / temperature
+    targets = torch.tensor(target_indices, device=phase_features.device, dtype=torch.long)
+    return F.cross_entropy(logits, targets), diagnostics
+
+
+def compute_trend_prototypes(phase_features, labels, ignore_class_id=None, min_samples=1):
+    if phase_features is None or phase_features.shape[1] < 2:
+        return {}, {}
+    trend_features = phase_features[:, -1, :] - phase_features[:, 0, :]
+    return compute_class_prototypes(
+        trend_features,
+        labels,
+        ignore_class_id=ignore_class_id,
+        min_samples=min_samples,
+    )
+
+
 def get_pseudo_label_mask(teacher_probs, config):
     pseudo_conf, pseudo_targets = torch.max(teacher_probs, dim=1)
     pseudo_mask = pseudo_conf > config.pseudo_threshold
@@ -363,6 +489,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         loss_meter = AverageMeter()
         point_loss_meter = AverageMeter()
         relation_loss_meter = AverageMeter()
+        phase_loss_meter = AverageMeter()
+        phase_contrastive_loss_meter = AverageMeter()
+        trend_loss_meter = AverageMeter()
         pra_batches_enabled = 0
         pra_batches_with_pairs = 0
         pra_batches_with_points = 0
@@ -436,6 +565,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             loss_point = pixels_s.new_tensor(0.0)
             loss_relation = pixels_s.new_tensor(0.0)
             loss_proto_contrastive = pixels_s.new_tensor(0.0)
+            loss_phase = pixels_s.new_tensor(0.0)
+            loss_phase_contrastive = pixels_s.new_tensor(0.0)
+            loss_trend = pixels_s.new_tensor(0.0)
             relation_stats = {
                 'shared_classes': 0,
                 'active_points': 0,
@@ -454,9 +586,18 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 'contrastive_enabled': 0,
                 'contrastive_anchor_classes': 0,
                 'contrastive_valid_queries': 0,
+                'phase_enabled': 0,
+                'phase_shared_keys': 0,
+                'phase_anchor_keys': 0,
+                'phase_valid_queries': 0,
+                'trend_enabled': 0,
+                'trend_shared_classes': 0,
             }
             if config.domain_specific_bn:
-                return_sequence_feats = getattr(config, "pra_use_refined_prototypes", False)
+                return_sequence_feats = bool(
+                    getattr(config, "pra_use_refined_prototypes", False)
+                    or getattr(config, "pra_use_phase_pse_alignment", False)
+                )
                 source_outputs = student.forward(
                     pixels_s,
                     mask_s,
@@ -489,7 +630,10 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 mask = torch.cat([mask_s, mask_t[pseudo_mask]])
                 position = torch.cat([position_s + source_to_target_shift, position_t[pseudo_mask]])
                 extra = torch.cat([extra_s, extra_t[pseudo_mask]])
-                return_sequence_feats = getattr(config, "pra_use_refined_prototypes", False)
+                return_sequence_feats = bool(
+                    getattr(config, "pra_use_refined_prototypes", False)
+                    or getattr(config, "pra_use_phase_pse_alignment", False)
+                )
                 outputs = student.forward(
                     pixels,
                     mask,
@@ -517,10 +661,12 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
                 enable_relation_alignment = bool(getattr(config, "use_prototype_relation_alignment", False))
                 enable_prototype_contrastive = bool(getattr(config, "pra_use_prototype_contrastive", False))
+                enable_phase_pse_alignment = bool(getattr(config, "pra_use_phase_pse_alignment", False))
                 use_pra = (
                     (
                         enable_relation_alignment
                         or enable_prototype_contrastive
+                        or enable_phase_pse_alignment
                     )
                     and epoch >= config.pra_warmup_epochs
                 )
@@ -626,6 +772,75 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     else:
                         source_contrastive_diag = {'num_anchor_classes': 0, 'num_valid_queries': 0}
                         target_contrastive_diag = {'num_anchor_classes': 0, 'num_valid_queries': 0}
+
+                    if enable_phase_pse_alignment and source_sequence_feats is not None and target_sequence_feats is not None:
+                        source_phase_feats = pool_phase_sequence_features(
+                            source_sequence_feats,
+                            num_phases=getattr(config, "pra_num_phases", 3),
+                        )
+                        target_phase_feats = pool_phase_sequence_features(
+                            target_sequence_feats,
+                            num_phases=getattr(config, "pra_num_phases", 3),
+                        )
+
+                        source_phase_prototypes, _ = compute_phase_class_prototypes(
+                            source_phase_feats,
+                            source_labels,
+                            ignore_class_id=getattr(config, "unknown_class_idx", None),
+                            min_samples=config.pra_min_samples_per_class,
+                        )
+                        target_phase_prototypes, _ = compute_phase_class_prototypes(
+                            target_phase_feats,
+                            pseudo_targets[pseudo_mask],
+                            ignore_class_id=getattr(config, "unknown_class_idx", None),
+                            min_samples=config.pra_min_samples_per_class,
+                        )
+                        loss_phase, phase_diag = phase_prototype_alignment_loss(
+                            source_phase_prototypes,
+                            target_phase_prototypes,
+                        )
+                        phase_anchor_prototypes = build_domain_invariant_prototypes(
+                            source_phase_prototypes,
+                            target_phase_prototypes,
+                        )
+                        source_phase_contrastive_loss, source_phase_contrastive_diag = phase_prototype_contrastive_loss(
+                            source_phase_feats,
+                            source_labels,
+                            phase_anchor_prototypes,
+                            temperature=getattr(config, "pra_phase_temperature", 0.1),
+                            ignore_class_id=getattr(config, "unknown_class_idx", None),
+                        )
+                        target_phase_contrastive_loss, target_phase_contrastive_diag = phase_prototype_contrastive_loss(
+                            target_phase_feats,
+                            pseudo_targets[pseudo_mask],
+                            phase_anchor_prototypes,
+                            temperature=getattr(config, "pra_phase_temperature", 0.1),
+                            ignore_class_id=getattr(config, "unknown_class_idx", None),
+                        )
+                        loss_phase_contrastive = source_phase_contrastive_loss + target_phase_contrastive_loss
+
+                        source_trend_prototypes, _ = compute_trend_prototypes(
+                            source_phase_feats,
+                            source_labels,
+                            ignore_class_id=getattr(config, "unknown_class_idx", None),
+                            min_samples=config.pra_min_samples_per_class,
+                        )
+                        target_trend_prototypes, _ = compute_trend_prototypes(
+                            target_phase_feats,
+                            pseudo_targets[pseudo_mask],
+                            ignore_class_id=getattr(config, "unknown_class_idx", None),
+                            min_samples=config.pra_min_samples_per_class,
+                        )
+                        loss_trend, trend_diag = prototype_point_alignment_loss(
+                            source_trend_prototypes,
+                            target_trend_prototypes,
+                            normalize_geometry=False,
+                        )
+                    else:
+                        phase_diag = {'shared_phase_keys': 0, 'enabled': 0}
+                        source_phase_contrastive_diag = {'num_anchor_keys': 0, 'num_valid_queries': 0}
+                        target_phase_contrastive_diag = {'num_anchor_keys': 0, 'num_valid_queries': 0}
+                        trend_diag = {'shared_classes': 0, 'enabled': 0}
                     relation_stats = {
                         'shared_classes': max(relation_diag['shared_classes'], point_diag['shared_classes']),
                         'active_points': point_diag['active_points'],
@@ -654,6 +869,22 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                                 source_contrastive_diag['num_valid_queries'] + target_contrastive_diag['num_valid_queries']
                             ) if enable_prototype_contrastive else 0
                         ),
+                        'phase_enabled': int(enable_phase_pse_alignment),
+                        'phase_shared_keys': int(phase_diag['shared_phase_keys'] if enable_phase_pse_alignment else 0),
+                        'phase_anchor_keys': int(
+                            max(
+                                source_phase_contrastive_diag['num_anchor_keys'] if enable_phase_pse_alignment else 0,
+                                target_phase_contrastive_diag['num_anchor_keys'] if enable_phase_pse_alignment else 0,
+                            )
+                        ),
+                        'phase_valid_queries': int(
+                            (
+                                source_phase_contrastive_diag['num_valid_queries']
+                                + target_phase_contrastive_diag['num_valid_queries']
+                            ) if enable_phase_pse_alignment else 0
+                        ),
+                        'trend_enabled': int(trend_diag['enabled'] if enable_phase_pse_alignment else 0),
+                        'trend_shared_classes': int(trend_diag['shared_classes'] if enable_phase_pse_alignment else 0),
                     }
             loss = (
                 loss_source
@@ -661,6 +892,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 + config.pra_point_trade_off * loss_point
                 + config.pra_trade_off * loss_relation
                 + getattr(config, "pra_contrastive_trade_off", 0.0) * loss_proto_contrastive
+                + getattr(config, "pra_phase_trade_off", 0.0) * loss_phase
+                + getattr(config, "pra_phase_contrastive_trade_off", 0.0) * loss_phase_contrastive
+                + getattr(config, "pra_phase_trend_trade_off", 0.0) * loss_trend
             )
 
             # compute loss and backprop
@@ -673,6 +907,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
             # Metrics
             loss_meter.update(loss.item())
+            phase_loss_meter.update(float(loss_phase.item()))
+            phase_contrastive_loss_meter.update(float(loss_phase_contrastive.item()))
+            trend_loss_meter.update(float(loss_trend.item()))
             if relation_stats['enabled']:
                 point_loss_meter.update(float(loss_point.item()))
                 relation_loss_meter.update(float(loss_relation.item()))
@@ -698,13 +935,18 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         f"loss={loss_meter.avg:.3f}, source={float(loss_source.item()):.3f}, "
                         f"target={float(loss_target) if isinstance(loss_target, float) else float(loss_target.item()):.3f}, "
                         f"point={float(loss_point.item()):.5f}, edge={float(loss_relation.item()):.5f}, "
-                        f"proto_con={float(loss_proto_contrastive.item()):.5f}"
+                        f"proto_con={float(loss_proto_contrastive.item()):.5f}, "
+                        f"phase={float(loss_phase.item()):.5f}, "
+                        f"phase_con={float(loss_phase_contrastive.item()):.5f}, "
+                        f"trend={float(loss_trend.item()):.5f}"
                     )
             else:
                 progress_bar.set_postfix(
                     loss=f"{loss_meter.avg:.3f}",
                     point=f"{point_loss_meter.avg:.5f}" if point_loss_meter.count > 0 else "0.00000",
                     rel=f"{relation_loss_meter.avg:.5f}" if relation_loss_meter.count > 0 else "0.00000",
+                    phase=f"{phase_loss_meter.avg:.5f}",
+                    trend=f"{trend_loss_meter.avg:.5f}",
                 )
             all_labels.extend(sample_target_weak['label'].tolist())
             all_pseudo_labels.extend(pseudo_targets.tolist())
@@ -717,6 +959,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 writer.add_scalar("train/loss_point", float(loss_point.item()), global_step)
                 writer.add_scalar("train/loss_relation", float(loss_relation.item()), global_step)
                 writer.add_scalar("train/loss_proto_contrastive", float(loss_proto_contrastive.item()), global_step)
+                writer.add_scalar("train/loss_phase_proto", float(loss_phase.item()), global_step)
+                writer.add_scalar("train/loss_phase_contrastive", float(loss_phase_contrastive.item()), global_step)
+                writer.add_scalar("train/loss_phase_trend", float(loss_trend.item()), global_step)
                 writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
                 writer.add_scalar("train/target_updates", len(torch.nonzero(pseudo_mask)), global_step)
                 writer.add_scalar("train/pseudo_confidence", float(pseudo_diag["confidence"].mean().item()), global_step)
@@ -728,6 +973,10 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 writer.add_scalar("train/target_avg_stable_ratio", relation_stats["target_avg_stable_ratio"], global_step)
                 writer.add_scalar("train/contrastive_anchor_classes", relation_stats["contrastive_anchor_classes"], global_step)
                 writer.add_scalar("train/contrastive_valid_queries", relation_stats["contrastive_valid_queries"], global_step)
+                writer.add_scalar("train/phase_shared_keys", relation_stats["phase_shared_keys"], global_step)
+                writer.add_scalar("train/phase_anchor_keys", relation_stats["phase_anchor_keys"], global_step)
+                writer.add_scalar("train/phase_valid_queries", relation_stats["phase_valid_queries"], global_step)
+                writer.add_scalar("train/trend_shared_classes", relation_stats["trend_shared_classes"], global_step)
 
             global_step += 1
 
