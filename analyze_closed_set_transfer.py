@@ -92,6 +92,12 @@ def parse_args():
         type=int,
         help="Half window size around the estimated peak when building phenology-style segments.",
     )
+    parser.add_argument(
+        "--max_shift_steps",
+        default=5,
+        type=int,
+        help="Maximum temporal grid steps used for shift-aligned curve comparison.",
+    )
     return parser.parse_args()
 
 
@@ -345,6 +351,115 @@ def compute_phenology_curve_distance(source_curves, target_curves, source_peaks,
     return float(np.mean(distances)), float(np.mean(peak_shifts)), len(shared_classes)
 
 
+def compute_curve_activity_quantile_range(curves, q_low=0.1, q_high=0.9):
+    if not curves:
+        return float("nan")
+
+    activity_values = []
+    for curve_info in curves.values():
+        curve = curve_info["curve"]
+        activity_values.extend(np.linalg.norm(curve, axis=1).tolist())
+
+    if not activity_values:
+        return float("nan")
+
+    low = float(np.quantile(activity_values, q_low))
+    high = float(np.quantile(activity_values, q_high))
+    return high - low
+
+
+def compute_peak_dispersion(class_peak_index):
+    if not class_peak_index:
+        return float("nan")
+    peak_values = np.array(list(class_peak_index.values()), dtype=np.float32)
+    if peak_values.size < 2:
+        return 0.0
+    return float(np.std(peak_values))
+
+
+def compute_curve_roughness(curves):
+    if not curves:
+        return float("nan")
+
+    roughness_values = []
+    for curve_info in curves.values():
+        curve = curve_info["curve"]
+        if curve.shape[0] < 3:
+            continue
+        second_diff = curve[2:] - 2.0 * curve[1:-1] + curve[:-2]
+        roughness_values.append(float(np.linalg.norm(second_diff, axis=1).mean()))
+
+    if not roughness_values:
+        return float("nan")
+    return float(np.mean(roughness_values))
+
+
+def compute_intra_domain_curve_spread(curves):
+    class_ids = sorted(curves.keys())
+    if len(class_ids) < 2:
+        return float("nan"), 0
+
+    distances = []
+    for i, class_i in enumerate(class_ids):
+        for class_j in class_ids[i + 1:]:
+            dist = mean_curve_distance(curves[class_i]["curve"], curves[class_j]["curve"])
+            if dist is not None:
+                distances.append(dist)
+
+    if not distances:
+        return float("nan"), len(class_ids)
+    return float(np.mean(distances)), len(class_ids)
+
+
+def compute_shift_aligned_curve_distance(source_curves, target_curves, max_shift_steps):
+    shared_classes = sorted(set(source_curves.keys()) & set(target_curves.keys()))
+    if not shared_classes:
+        return float("nan"), float("nan"), 0
+
+    best_distances = []
+    shift_gains = []
+    best_shifts = []
+
+    for class_id in shared_classes:
+        curve_a = source_curves[class_id]["curve"]
+        curve_b = target_curves[class_id]["curve"]
+        grid_size = min(curve_a.shape[0], curve_b.shape[0])
+        if grid_size < 2:
+            continue
+
+        base_dist = mean_curve_distance(curve_a[:grid_size], curve_b[:grid_size])
+        best_dist = base_dist
+        best_shift = 0
+
+        for shift in range(-max_shift_steps, max_shift_steps + 1):
+            if shift == 0:
+                continue
+            if shift > 0:
+                left = curve_a[: grid_size - shift]
+                right = curve_b[shift:grid_size]
+            else:
+                left = curve_a[-shift:grid_size]
+                right = curve_b[: grid_size + shift]
+
+            if left.shape[0] < 2 or right.shape[0] < 2:
+                continue
+
+            dist = mean_curve_distance(left, right)
+            if dist is not None and (best_dist is None or dist < best_dist):
+                best_dist = dist
+                best_shift = shift
+
+        if best_dist is not None and base_dist is not None:
+            best_distances.append(best_dist)
+            shift_gains.append(base_dist - best_dist)
+            best_shifts.append(abs(best_shift))
+
+    if not best_distances:
+        return float("nan"), float("nan"), 0
+
+    return float(np.mean(best_distances)), float(np.mean(shift_gains)), int(len(best_distances))
+
+
 @torch.no_grad()
 def extract_domain_statistics(model, loader, device, max_acf_lag):
     feature_batches = []
@@ -483,6 +598,69 @@ def compute_acf_distance(source_acf, target_acf):
     return float(torch.mean(torch.abs(source_acf - target_acf)).item())
 
 
+def compute_intra_domain_prototype_spread(features, labels):
+    class_ids = sorted(set(labels.tolist()))
+    if len(class_ids) < 2:
+        return float("nan"), 0
+
+    prototypes = []
+    for class_id in class_ids:
+        prototypes.append(features[labels == class_id].mean(dim=0))
+    proto = torch.stack(prototypes, dim=0)
+
+    distances = []
+    for i in range(proto.shape[0]):
+        for j in range(i + 1, proto.shape[0]):
+            distances.append(torch.norm(proto[i] - proto[j], p=2))
+
+    if not distances:
+        return float("nan"), len(class_ids)
+    return float(torch.stack(distances).mean().item()), len(class_ids)
+
+
+def compute_within_class_feature_variance(features, labels):
+    class_ids = sorted(set(labels.tolist()))
+    if not class_ids:
+        return float("nan"), 0
+
+    class_vars = []
+    for class_id in class_ids:
+        class_feats = features[labels == class_id]
+        if class_feats.shape[0] < 2:
+            continue
+        proto = class_feats.mean(dim=0, keepdim=True)
+        class_vars.append(((class_feats - proto) ** 2).sum(dim=1).mean())
+
+    if not class_vars:
+        return float("nan"), len(class_ids)
+    return float(torch.stack(class_vars).mean().item()), len(class_ids)
+
+
+def compute_feature_fisher_ratio(features, labels, eps=1e-6):
+    class_ids = sorted(set(labels.tolist()))
+    if len(class_ids) < 2:
+        return float("nan"), 0
+
+    global_mean = features.mean(dim=0, keepdim=True)
+    between_terms = []
+    within_terms = []
+
+    for class_id in class_ids:
+        class_feats = features[labels == class_id]
+        if class_feats.shape[0] == 0:
+            continue
+        class_mean = class_feats.mean(dim=0, keepdim=True)
+        between_terms.append((class_mean - global_mean).pow(2).sum())
+        within_terms.append((class_feats - class_mean).pow(2).sum(dim=1).mean())
+
+    if not between_terms or not within_terms:
+        return float("nan"), len(class_ids)
+
+    between = torch.stack(between_terms).mean()
+    within = torch.stack(within_terms).mean()
+    return float((between / (within + eps)).item()), len(class_ids)
+
+
 def find_latest_result_dirs(result_root):
     latest = {}
     for source_dir in sorted(p for p in result_root.iterdir() if p.is_dir()):
@@ -588,6 +766,38 @@ def main():
             target_peak_index,
             peak_window=args.phenology_peak_window,
         )
+        shift_aligned_curve_dist, shift_alignment_gain, shift_curve_classes = compute_shift_aligned_curve_distance(
+            source_interpolated_curves,
+            target_interpolated_curves,
+            max_shift_steps=args.max_shift_steps,
+        )
+
+        source_curve_activity_range = compute_curve_activity_quantile_range(source_interpolated_curves)
+        target_curve_activity_range = compute_curve_activity_quantile_range(target_interpolated_curves)
+        source_peak_dispersion = compute_peak_dispersion(source_peak_index)
+        target_peak_dispersion = compute_peak_dispersion(target_peak_index)
+        source_curve_roughness = compute_curve_roughness(source_interpolated_curves)
+        target_curve_roughness = compute_curve_roughness(target_interpolated_curves)
+        source_curve_spread, source_curve_classes = compute_intra_domain_curve_spread(source_interpolated_curves)
+        target_curve_spread, target_curve_classes = compute_intra_domain_curve_spread(target_interpolated_curves)
+        source_proto_spread, source_proto_classes = compute_intra_domain_prototype_spread(
+            source_stats["features"], source_stats["labels"]
+        )
+        target_proto_spread, target_proto_classes = compute_intra_domain_prototype_spread(
+            target_stats["features"], target_stats["labels"]
+        )
+        source_within_var, source_var_classes = compute_within_class_feature_variance(
+            source_stats["features"], source_stats["labels"]
+        )
+        target_within_var, target_var_classes = compute_within_class_feature_variance(
+            target_stats["features"], target_stats["labels"]
+        )
+        source_fisher_ratio, source_fisher_classes = compute_feature_fisher_ratio(
+            source_stats["features"], source_stats["labels"]
+        )
+        target_fisher_ratio, target_fisher_classes = compute_feature_fisher_ratio(
+            target_stats["features"], target_stats["labels"]
+        )
 
         rows.append(
             {
@@ -609,9 +819,34 @@ def main():
                 "seasonal_curve_distance": seasonal_curve_dist,
                 "phenology_curve_distance": phenology_curve_dist,
                 "phenology_peak_shift": peak_shift,
+                "shift_aligned_curve_distance": shift_aligned_curve_dist,
+                "shift_alignment_gain": shift_alignment_gain,
+                "source_curve_activity_range": source_curve_activity_range,
+                "target_curve_activity_range": target_curve_activity_range,
+                "source_peak_dispersion": source_peak_dispersion,
+                "target_peak_dispersion": target_peak_dispersion,
+                "source_curve_roughness": source_curve_roughness,
+                "target_curve_roughness": target_curve_roughness,
+                "source_curve_spread": source_curve_spread,
+                "target_curve_spread": target_curve_spread,
+                "source_prototype_spread": source_proto_spread,
+                "target_prototype_spread": target_proto_spread,
+                "source_within_class_variance": source_within_var,
+                "target_within_class_variance": target_within_var,
+                "source_fisher_ratio": source_fisher_ratio,
+                "target_fisher_ratio": target_fisher_ratio,
                 "shared_classes_for_temporal_curve": temporal_shared_classes,
                 "shared_classes_for_seasonal_curve": seasonal_shared_classes,
                 "shared_classes_for_phenology_curve": phenology_shared_classes,
+                "shared_classes_for_shift_curve": shift_curve_classes,
+                "source_curve_class_count": source_curve_classes,
+                "target_curve_class_count": target_curve_classes,
+                "source_proto_class_count": source_proto_classes,
+                "target_proto_class_count": target_proto_classes,
+                "source_var_class_count": source_var_classes,
+                "target_var_class_count": target_var_classes,
+                "source_fisher_class_count": source_fisher_classes,
+                "target_fisher_class_count": target_fisher_classes,
                 "source_samples": len(source_dataset_obj),
                 "target_samples": len(target_dataset_obj),
                 "result_dir": str(run_dir),
@@ -638,9 +873,34 @@ def main():
         "seasonal_curve_distance",
         "phenology_curve_distance",
         "phenology_peak_shift",
+        "shift_aligned_curve_distance",
+        "shift_alignment_gain",
+        "source_curve_activity_range",
+        "target_curve_activity_range",
+        "source_peak_dispersion",
+        "target_peak_dispersion",
+        "source_curve_roughness",
+        "target_curve_roughness",
+        "source_curve_spread",
+        "target_curve_spread",
+        "source_prototype_spread",
+        "target_prototype_spread",
+        "source_within_class_variance",
+        "target_within_class_variance",
+        "source_fisher_ratio",
+        "target_fisher_ratio",
         "shared_classes_for_temporal_curve",
         "shared_classes_for_seasonal_curve",
         "shared_classes_for_phenology_curve",
+        "shared_classes_for_shift_curve",
+        "source_curve_class_count",
+        "target_curve_class_count",
+        "source_proto_class_count",
+        "target_proto_class_count",
+        "source_var_class_count",
+        "target_var_class_count",
+        "source_fisher_class_count",
+        "target_fisher_class_count",
         "source_samples",
         "target_samples",
         "result_dir",
