@@ -1,9 +1,7 @@
 import argparse
 import csv
-import json
-import math
-import os
 import random
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -81,6 +79,18 @@ def parse_args():
         default=10,
         type=int,
         help="Maximum lag used to compute ACF distance.",
+    )
+    parser.add_argument(
+        "--temporal_grid_size",
+        default=30,
+        type=int,
+        help="Number of normalized temporal anchors used for interpolated curve analysis.",
+    )
+    parser.add_argument(
+        "--phenology_peak_window",
+        default=5,
+        type=int,
+        help="Half window size around the estimated peak when building phenology-style segments.",
     )
     return parser.parse_args()
 
@@ -165,6 +175,174 @@ def compute_batch_acf(parcel_series, max_lag, eps=1e-6):
 
     acf_matrix = torch.stack(acf_values, dim=1)
     return acf_matrix, batch_size
+
+
+def collect_class_doy_curves(loader):
+    data_dict = defaultdict(lambda: defaultdict(list))
+
+    for sample in tqdm(loader, desc="Curves", leave=False):
+        pixels = sample["pixels"]
+        valid_pixels = sample["valid_pixels"]
+        positions = sample["positions"]
+        labels = sample["label"]
+
+        batch_size, num_steps = pixels.shape[:2]
+        for i in range(batch_size):
+            class_id = labels[i].item()
+            for t in range(num_steps):
+                doy = int(positions[i, t].item())
+                if doy <= 0:
+                    continue
+
+                valid_mask = valid_pixels[i, t] > 0.5
+                if valid_mask.sum().item() == 0:
+                    continue
+
+                parcel_mean = pixels[i, t, :, valid_mask].mean(dim=1).cpu().numpy()
+                data_dict[class_id][doy].append(parcel_mean)
+
+    class_doy_means = {}
+    for class_id, doy_dict in data_dict.items():
+        class_doy_means[class_id] = {}
+        for doy, values in doy_dict.items():
+            if values:
+                class_doy_means[class_id][doy] = np.mean(np.stack(values, axis=0), axis=0)
+    return class_doy_means
+
+
+def interpolate_class_curve(doy_to_vec, grid_positions):
+    sorted_doys = np.array(sorted(doy_to_vec.keys()), dtype=np.float32)
+    curve = np.stack([doy_to_vec[d] for d in sorted(doy_to_vec.keys())], axis=0).astype(np.float32)
+    num_channels = curve.shape[1]
+    interpolated = np.zeros((len(grid_positions), num_channels), dtype=np.float32)
+
+    for c in range(num_channels):
+        interpolated[:, c] = np.interp(
+            grid_positions,
+            sorted_doys,
+            curve[:, c],
+            left=curve[0, c],
+            right=curve[-1, c],
+        )
+    return interpolated
+
+
+def build_interpolated_class_curves(class_doy_means, grid_size):
+    interpolated = {}
+    class_peak_index = {}
+
+    for class_id, doy_to_vec in class_doy_means.items():
+        if len(doy_to_vec) < 2:
+            continue
+        sorted_doys = np.array(sorted(doy_to_vec.keys()), dtype=np.float32)
+        grid_positions = np.linspace(sorted_doys.min(), sorted_doys.max(), num=grid_size, dtype=np.float32)
+        curve = interpolate_class_curve(doy_to_vec, grid_positions)
+        interpolated[class_id] = {
+            "grid_positions": grid_positions,
+            "curve": curve,
+        }
+        activity = np.linalg.norm(curve, axis=1)
+        class_peak_index[class_id] = int(np.argmax(activity))
+
+    return interpolated, class_peak_index
+
+
+def mean_curve_distance(curve_a, curve_b, indices=None):
+    if indices is None:
+        indices = np.arange(curve_a.shape[0])
+    if len(indices) == 0:
+        return None
+    diff = curve_a[indices] - curve_b[indices]
+    step_l2 = np.linalg.norm(diff, axis=1)
+    return float(step_l2.mean())
+
+
+def compute_temporal_curve_distance(source_curves, target_curves):
+    shared_classes = sorted(set(source_curves.keys()) & set(target_curves.keys()))
+    if not shared_classes:
+        return float("nan"), 0
+
+    distances = []
+    for class_id in shared_classes:
+        dist = mean_curve_distance(source_curves[class_id]["curve"], target_curves[class_id]["curve"])
+        if dist is not None:
+            distances.append(dist)
+
+    if not distances:
+        return float("nan"), len(shared_classes)
+    return float(np.mean(distances)), len(shared_classes)
+
+
+def compute_seasonal_curve_distance(source_curves, target_curves):
+    shared_classes = sorted(set(source_curves.keys()) & set(target_curves.keys()))
+    if not shared_classes:
+        return float("nan"), 0
+
+    distances = []
+    for class_id in shared_classes:
+        curve_a = source_curves[class_id]["curve"]
+        curve_b = target_curves[class_id]["curve"]
+        grid_size = curve_a.shape[0]
+        boundaries = np.linspace(0, grid_size, num=4, dtype=int)
+
+        class_segment_dists = []
+        for seg_idx in range(3):
+            start = boundaries[seg_idx]
+            end = boundaries[seg_idx + 1]
+            indices = np.arange(start, end)
+            dist = mean_curve_distance(curve_a, curve_b, indices)
+            if dist is not None:
+                class_segment_dists.append(dist)
+
+        if class_segment_dists:
+            distances.append(float(np.mean(class_segment_dists)))
+
+    if not distances:
+        return float("nan"), len(shared_classes)
+    return float(np.mean(distances)), len(shared_classes)
+
+
+def compute_phenology_curve_distance(source_curves, target_curves, source_peaks, target_peaks, peak_window):
+    shared_classes = sorted(set(source_curves.keys()) & set(target_curves.keys()))
+    if not shared_classes:
+        return float("nan"), float("nan"), 0
+
+    distances = []
+    peak_shifts = []
+
+    for class_id in shared_classes:
+        curve_a = source_curves[class_id]["curve"]
+        curve_b = target_curves[class_id]["curve"]
+        grid_size = curve_a.shape[0]
+
+        source_peak = source_peaks[class_id]
+        target_peak = target_peaks[class_id]
+        center_peak = int(round((source_peak + target_peak) / 2.0))
+        center_peak = int(np.clip(center_peak, 0, grid_size - 1))
+        peak_shifts.append(abs(source_peak - target_peak))
+
+        peak_start = max(0, center_peak - peak_window)
+        peak_end = min(grid_size, center_peak + peak_window + 1)
+
+        segments = [
+            np.arange(0, peak_start),
+            np.arange(peak_start, peak_end),
+            np.arange(peak_end, grid_size),
+        ]
+
+        class_segment_dists = []
+        for indices in segments:
+            dist = mean_curve_distance(curve_a, curve_b, indices)
+            if dist is not None:
+                class_segment_dists.append(dist)
+
+        if class_segment_dists:
+            distances.append(float(np.mean(class_segment_dists)))
+
+    if not distances:
+        return float("nan"), float("nan"), len(shared_classes)
+
+    return float(np.mean(distances)), float(np.mean(peak_shifts)), len(shared_classes)
 
 
 @torch.no_grad()
@@ -366,6 +544,14 @@ def main():
         print(f"\n[INFO] Computing metrics for {source_tag} -> {target_tag}")
         source_stats = extract_domain_statistics(model, source_loader, device, args.max_acf_lag)
         target_stats = extract_domain_statistics(model, target_loader, device, args.max_acf_lag)
+        source_class_doy_curves = collect_class_doy_curves(source_loader)
+        target_class_doy_curves = collect_class_doy_curves(target_loader)
+        source_interpolated_curves, source_peak_index = build_interpolated_class_curves(
+            source_class_doy_curves, args.temporal_grid_size
+        )
+        target_interpolated_curves, target_peak_index = build_interpolated_class_curves(
+            target_class_doy_curves, args.temporal_grid_size
+        )
 
         source_feats_for_global, source_labels_for_global = maybe_subsample(
             source_stats["features"], source_stats["labels"], args.max_mmd_samples, args.seed
@@ -389,6 +575,19 @@ def main():
             target_stats["labels"],
         )
         acf_dist = compute_acf_distance(source_stats["acf"], target_stats["acf"])
+        temporal_curve_dist, temporal_shared_classes = compute_temporal_curve_distance(
+            source_interpolated_curves, target_interpolated_curves
+        )
+        seasonal_curve_dist, seasonal_shared_classes = compute_seasonal_curve_distance(
+            source_interpolated_curves, target_interpolated_curves
+        )
+        phenology_curve_dist, peak_shift, phenology_shared_classes = compute_phenology_curve_distance(
+            source_interpolated_curves,
+            target_interpolated_curves,
+            source_peak_index,
+            target_peak_index,
+            peak_window=args.phenology_peak_window,
+        )
 
         rows.append(
             {
@@ -406,6 +605,13 @@ def main():
                 "prototype_distance": proto_dist,
                 "relation_structure_distance": relation_dist,
                 "acf_distance": acf_dist,
+                "temporal_curve_distance": temporal_curve_dist,
+                "seasonal_curve_distance": seasonal_curve_dist,
+                "phenology_curve_distance": phenology_curve_dist,
+                "phenology_peak_shift": peak_shift,
+                "shared_classes_for_temporal_curve": temporal_shared_classes,
+                "shared_classes_for_seasonal_curve": seasonal_shared_classes,
+                "shared_classes_for_phenology_curve": phenology_shared_classes,
                 "source_samples": len(source_dataset_obj),
                 "target_samples": len(target_dataset_obj),
                 "result_dir": str(run_dir),
@@ -428,6 +634,13 @@ def main():
         "prototype_distance",
         "relation_structure_distance",
         "acf_distance",
+        "temporal_curve_distance",
+        "seasonal_curve_distance",
+        "phenology_curve_distance",
+        "phenology_peak_shift",
+        "shared_classes_for_temporal_curve",
+        "shared_classes_for_seasonal_curve",
+        "shared_classes_for_phenology_curve",
         "source_samples",
         "target_samples",
         "result_dir",
