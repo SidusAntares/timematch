@@ -281,3 +281,61 @@
 
 > The project should not continue treating “structure” as a generic relation matrix problem.  
 > The most promising next methods are the ones that treat **prototype construction quality** as the first problem, and only then perform prototype-level semantic alignment, relation modeling, or transport.
+---
+
+## Update After v3 Temporal Analysis
+
+The `v3` analysis changes the next-method ranking in an important way.
+
+Strongest newly observed correlations with `target_f1` are now:
+
+- `pse_trend_curve_distance`: `-0.6997`
+- `pse_early_curve_distance`: `-0.6855`
+- `pse_mid_curve_distance`: `-0.6845`
+- `pse_temporal_curve_distance`: `-0.6573`
+- `prototype_distance`: `-0.6518`
+
+This means:
+
+1. encoded temporal structure is more informative than raw curve geometry
+2. early / mid season encoded structure matters more than late-season structure
+3. the next structural unit should likely become:
+   - `class x phase`
+   rather than only:
+   - one static class prototype
+
+So the most promising immediate mainline is now:
+
+- **Phase-Aware PSE Structure Alignment**
+
+This does not overturn the earlier prototype conclusion.
+
+It refines it:
+
+> prototypes still matter,  
+> but the most useful prototype may be a **phase-specific encoded semantic state**  
+> rather than only a single pooled class center
+
+### Updated ranking for the next implementation
+
+1. **Phase-Aware PSE Structure Alignment**
+2. **Refinement-Guided Prototype Adaptation**
+3. **Prototype Contrastive Adaptation**
+4. **Memory-Based Invariant Prototype Adaptation**
+5. **Soft Prototype Transport / Assignment**
+
+### Why the ranking changed
+
+- `Phase-Aware PSE Structure Alignment` is now first because:
+  - it is directly supported by the newest analysis
+  - it explains why prototype-only variants plateaued
+  - it gives a more precise structural carrier than static prototype alignment
+
+- `Refinement-Guided Prototype Adaptation` remains valuable, but should now be reframed around:
+  - phase boundaries
+  - encoded temporal segments
+  - or phase-confidence filtering
+
+- the earlier prototype lines still matter:
+  - but more as components inside a phase-aware design
+  - than as the full next method by themselves

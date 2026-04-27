@@ -146,23 +146,124 @@
   - a comparison baseline
   - or a first-stage grouping method before semantic refinement
 
+## What the latest prototype variants changed
+- Three recent prototype-centered variants on `FR1 -> DK1` now give almost the same result:
+  - `RGPA-v1`: `0.5999`
+  - `ProtoCon-pure-v1`: `0.5996`
+  - `MemProto-v1`: `0.5989`
+- The closed-set baseline remains:
+  - `0.6391047`
+- This means:
+  - prototype structure is still the strongest **explanatory** signal
+  - but current prototype-side losses are **not yet** the right optimization mechanism
+
+## What the v3 temporal analysis changed
+- The new `v3` analysis compared:
+  - raw temporal curves
+  - phase/window variants
+  - trend / detrended / frequency descriptors
+  - and the same family of metrics on **PSE temporal feature curves**
+- The strongest new correlations with `target_f1` are now:
+  - `pse_trend_curve_distance`: `-0.6997`
+  - `pse_early_curve_distance`: `-0.6855`
+  - `pse_mid_curve_distance`: `-0.6845`
+  - `pse_temporal_curve_distance`: `-0.6573`
+  - `prototype_distance`: `-0.6518`
+  - `pse_frequency_magnitude_distance`: `-0.6393`
+- This is the first time a new metric family slightly exceeds `prototype_distance`.
+- The main conclusion is:
+
+> encoded temporal structure is more informative than raw temporal curve geometry
+
+## What this means structurally
+- Raw-curve whole-season distances remain weak or unstable.
+- Simple seasonal three-way splitting did not add much signal.
+- Approximate phenology splitting based only on curve peak was also weak.
+- In contrast, **PSE feature trajectories** show:
+  - stronger signal than raw curves
+  - stronger signal than naive whole-curve comparison
+  - and clear evidence that **early / mid season** matter more than late season
+
+## Updated judgment on phase structure
+- The project should now treat **phase-aware encoded temporal structure** as a top-priority mainline.
+- The key unit is no longer just:
+  - one sample
+  - one pooled feature
+  - one class prototype
+- A better unit is now likely:
+  - `class x phase`
+  - or `sample phase -> class phase structure`
+
+## Updated judgment on decomposition
+- Trend-level structure is now strongly supported:
+  - `pse_trend_curve_distance` is the strongest metric in `v3`
+- Frequency structure is also useful on the encoded side:
+  - `pse_frequency_magnitude_distance` remains competitive
+- So future temporal structure design should not rely only on:
+  - raw pointwise curve distance
+- It should explicitly consider:
+  - encoded trend
+  - encoded local seasonal windows
+  - encoded phase-specific semantics
+
+## Updated judgment on clustering
+- Clustering may still help, but it should **not** be assumed to be the next primary solution.
+- Current evidence suggests:
+  - if clustering is used, it should probably serve as a **supporting structure discovery mechanism**
+  - rather than fully replacing semantic pseudo labels as the main supervision source
+- The main risk of a clustering-first route is:
+  - it may improve geometric compactness
+  - while drifting away from the semantic categories that actually define evaluation performance
+
+## Updated judgment on temporal structure
+- Compared with purely spatial/category prototype structure, **encoded temporal structure is now a stronger next candidate than more prototype-loss tweaking**.
+- Reason:
+  - current prototype-distance analysis says category-level alignment matters
+  - but the existing prototype methods still plateau around `0.599`
+  - `v3` now suggests the missing transferable signal lies in **how category identity is expressed over encoded time structure**, not only in static feature geometry
+- In other words:
+
+> the model may already know "which class center to approach",  
+> but still not represent "how that class evolves across the season" well enough across domains
+
+## More precise next-step priority
+- The next method-design priority should now be:
+  1. preserve semantic supervision through pseudo labels
+  2. enrich structure definition with **phase-aware PSE temporal signals**
+  3. use clustering only as an auxiliary view of target organization
+
+## Candidate temporal-structure directions
+- Phase-aware PSE alignment:
+  - align early / mid / late encoded trajectories rather than only pooled sample features
+- Class-phase prototype modeling:
+  - treat each class as a sequence of phase prototypes instead of a single static point
+- Encoded trend alignment:
+  - compare low-frequency semantic evolution across domains
+- Encoded frequency alignment:
+  - compare temporal spectrum magnitude after PSE encoding
+- Teacher-consistency-over-phase:
+  - prefer target samples whose phase-wise semantics remain stable under shift/augmentation
+
 ## Files added for analysis
 - Closed-set transfer analysis script:
   - [analyze_closed_set_transfer.py](/C:/Code/dev/PythonProject/timematch/analyze_closed_set_transfer.py)
 - Current analysis result table:
   - [closed_set_transfer_metrics.csv](/C:/Code/dev/PythonProject/timematch/result/baseline_analysis/closed_set_transfer_metrics.csv)
+  - [closed_set_transfer_metrics_v2.csv](/C:/Code/dev/PythonProject/timematch/result/baseline_analysis/closed_set_transfer_metrics_v2.csv)
+  - [closed_set_transfer_metrics_v3.csv](/C:/Code/dev/PythonProject/timematch/result/baseline_analysis/closed_set_transfer_metrics_v3.csv)
 
 ## Next steps
-1. Read and summarize prototype-alignment / structure-alignment papers with emphasis on:
-   - how target prototypes are constructed
-   - whether they use pseudo labels, clustering, memory banks, or hybrid strategies
-   - how relation structure is modeled beyond simple MSE
-2. Decide whether the next analysis should add:
-   - clustering-based prototype distance
-   - class-wise MMD
-   - more explicit temporal/frequency structure measures
-3. Only after the structure definition becomes clearer, design the next training method.
+1. Use the `v3` result as the new decision point:
+   - encoded temporal structure has enough signal to justify a training method
+2. Design and implement a first **Phase-Aware PSE Structure Alignment** method:
+   - phase-wise encoded features
+   - class-phase prototypes
+   - trend-sensitive structure loss
+3. Keep clustering as a comparison or support track, including:
+   - clustering-based phase discovery
+   - clustering vs pseudo-label phase agreement
+4. Only after the first phase-aware encoded method is tested, decide whether to add stronger decomposition or joint completion modules.
 
 ## Current mainline conclusion
 
-> At the current stage, the most promising direction is not to keep expanding PRA variants or source-only complexity analysis, but to study **category-level transferable structure**, especially target prototype construction and source-target prototype stability.
+> At the current stage, the most promising direction is not to keep expanding PRA variants or source-only complexity analysis, but to study **phase-aware encoded temporal structure**, especially how source and target classes align through PSE feature trajectories and class-phase semantics rather than only as static prototype points.

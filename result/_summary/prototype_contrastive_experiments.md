@@ -258,6 +258,223 @@ So the correct interpretation is:
 
 - the prototype-contrastive branch is implemented and active
 - its loss term enters training after warmup as intended
+
+---
+
+## Experiment ProtoCon-pure-v1
+
+### Purpose
+
+After `ProtoCon-v1`, the next step was to isolate whether **prototype contrastive alone** helps when the point and relation alignment losses are fully removed from optimization.
+
+The key question became:
+
+> If prototype-centered discrimination is the right structural bias,  
+> can a pure sample-to-prototype contrastive objective recover the gap to the closed-set baseline?
+
+### Effective configuration
+
+This run disabled the PRA point/relation loss contributions:
+
+- `pra_trade_off = 0.0`
+- `pra_point_trade_off = 0.0`
+
+while keeping:
+
+- pseudo-label supervision
+- prototype contrastive learning
+
+### Important interpretation note
+
+The training log still printed non-zero `point` and `edge` values in later epochs, but they were diagnostic-only and did **not** contribute to the total loss.
+
+This can be verified directly from the logged scalar composition, where:
+
+- `loss ≈ source + 2 * target + 0.05 * proto_con`
+
+matches the reported total loss closely.
+
+So this run should be interpreted as a valid **pure prototype-contrastive ablation**.
+
+### Final result
+
+- `FR1 -> DK1`
+- test accuracy: `0.9183`
+- test macro-F1: `0.5996`
+
+### Comparison
+
+Compared with the closed-set baseline:
+
+\[
+0.5996 - 0.6391 \approx -0.0395
+\]
+
+Compared with `RGPA-v1`:
+
+\[
+0.5996 - 0.5999 \approx -0.0003
+\]
+
+Compared with mixed `ProtoCon-v1`:
+
+\[
+0.5996 - 0.5934 \approx +0.0062
+\]
+
+### Interpretation
+
+This result showed three things clearly:
+
+1. the earlier negative result was **not only** caused by point/relation-loss interference
+2. removing the mixed PRA terms makes the method slightly cleaner and slightly better
+3. pure prototype contrastive still does **not** recover the closed-set baseline
+
+So the correct conclusion is:
+
+> simple sample-to-prototype contrastive pressure, by itself, is not sufficient to close the transfer gap on `FR1 -> DK1`
+
+---
+
+## Experiment MemProto-v1
+
+### Purpose
+
+After the pure prototype-contrastive ablation, the next question was whether the bottleneck came from **prototype instability** rather than from the contrastive objective itself.
+
+This led to a memory-based variant:
+
+- use EMA source/target prototype banks
+- build invariant anchors from memory instead of relying only on current-batch prototype estimates
+
+The working hypothesis was:
+
+> If current prototypes are too noisy, then more stable memory-based anchors may make prototype contrastive learning more effective.
+
+### Effective configuration
+
+This run enabled:
+
+- `pra_use_prototype_contrastive = true`
+- `pra_use_memory_invariant_prototypes = true`
+
+and kept:
+
+- `pra_trade_off = 0.0`
+- `pra_point_trade_off = 0.0`
+
+So the intended objective was:
+
+- source supervised loss
+- target pseudo-label loss
+- memory-based prototype contrastive loss
+
+without point or relation alignment loss contributions.
+
+### Log behavior
+
+This run is cleaner than `ProtoCon-pure-v1` from a diagnostic perspective.
+
+- before warmup:
+  - `point=0`
+  - `edge=0`
+  - `proto_con=0`
+- after warmup:
+  - `point=0`
+  - `edge=0`
+  - `proto_con>0`
+
+So this can be treated as a clean **memory-based prototype-contrastive** experiment.
+
+### Final result
+
+- `FR1 -> DK1`
+- test accuracy: `0.9174`
+- test macro-F1: `0.5989`
+
+### Comparison
+
+Compared with the closed-set baseline:
+
+\[
+0.5989 - 0.6391 \approx -0.0402
+\]
+
+Compared with `RGPA-v1`:
+
+\[
+0.5989 - 0.5999 \approx -0.0010
+\]
+
+Compared with `ProtoCon-pure-v1`:
+
+\[
+0.5989 - 0.5996 \approx -0.0007
+\]
+
+### Interpretation
+
+This result suggests that simply replacing current-batch anchors with memory-based invariant anchors is **not enough** to change the overall outcome.
+
+In other words:
+
+- prototype stability was a reasonable hypothesis
+- but the current memory-bank realization still lands at essentially the same performance level
+
+So the main conclusion becomes stronger:
+
+> three prototype-enhancement variants now cluster near `0.599`,  
+> while the closed-set baseline remains `0.6391`
+
+This means the problem likely sits deeper than a small loss-design detail.
+
+---
+
+## Cross-Experiment Conclusion
+
+For `FR1 -> DK1`, the current prototype-centered structural variants are:
+
+- `RGPA-v1`: `0.5999`
+- `ProtoCon-v1` mixed: `0.5934`
+- `ProtoCon-pure-v1`: `0.5996`
+- `MemProto-v1`: `0.5989`
+
+Reference closed-set baseline:
+
+- `0.6391047`
+
+### What this pattern means
+
+The consistent pattern is that:
+
+- prototype-based structure is still the strongest **analysis signal**
+- but current prototype-side training objectives do **not** convert that signal into a performance gain
+
+So a careful interpretation is:
+
+> "prototype distance matters" is not equivalent to  
+> "adding a prototype loss will improve adaptation"
+
+There is likely a gap between:
+
+- explanatory structure metrics
+- and the form of optimization target that the model can actually benefit from
+
+### Practical implication
+
+At this stage, it is probably not efficient to keep making small local edits to:
+
+- contrastive temperature
+- contrastive weight
+- bank momentum
+
+Those may change the score slightly, but the current evidence does not suggest they will recover a meaningful gap of about `4` macro-F1 points.
+
+The next stronger candidates should shift attention toward:
+
+1. better target semantic assignment mechanisms
+2. better temporal-structure definitions
+3. or a new structure carrier beyond the current prototype-loss family
 - the combined optimization remains stable
 
 ### Not yet answered
