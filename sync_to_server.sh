@@ -23,8 +23,14 @@ tar \
     --exclude="${PROJECT_NAME}/**/__pycache__" \
     --exclude="${PROJECT_NAME}/outputs" \
     --exclude="${PROJECT_NAME}/runs" \
+    --exclude="${PROJECT_NAME}/logs" \
     --exclude="${PROJECT_NAME}/result" \
+    --exclude="${PROJECT_NAME}/server_artifacts" \
+    --exclude="${PROJECT_NAME}/**/*.pdf" \
     --exclude="${PROJECT_NAME}/*.log" \
+    --exclude="${PROJECT_NAME}/*.out" \
+    --exclude="${PROJECT_NAME}/*.err" \
+    --exclude="${PROJECT_NAME}/*.tmp" \
     -czf "$ARCHIVE_PATH" \
     "$PROJECT_NAME"
 

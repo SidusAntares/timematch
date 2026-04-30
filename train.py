@@ -38,7 +38,9 @@ def main(config):
 
     # Select classes that appear at least 200 times source
     source_classes = label_utils.get_classes(cfg.source.split('/')[0], combine_spring_and_winter=cfg.combine_spring_and_winter)
-    source_data = PixelSetData(cfg.data_root, cfg.source, source_classes)
+    if config.closed_set:
+        source_classes = [cls for cls in source_classes if cls != 'unknown']
+    source_data = PixelSetData(cfg.data_root, cfg.source, source_classes, closed_set=config.closed_set)
     labels, counts = np.unique(source_data.get_labels(), return_counts=True)
     source_classes = [source_classes[i] for i in labels[counts >= 200]]
     print('Using classes:', source_classes)
@@ -46,7 +48,10 @@ def main(config):
     cfg.num_classes = len(source_classes)
 
     # Randomly assign parcels to train/val/test
-    indices = {config.source: len(source_data), config.target: len(PixelSetData(config.data_root, config.target, source_classes))}
+    indices = {
+        config.source: len(source_data),
+        config.target: len(PixelSetData(config.data_root, config.target, source_classes, closed_set=config.closed_set))
+    }
     folds = create_train_val_test_folds([config.source, config.target], config.num_folds, indices, config.val_ratio, config.test_ratio)
 
     if config.overall:
@@ -141,7 +146,14 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
     if config.train_on_target:
         dataset_name = config.target
 
-    dataset = PixelSetData(config.data_root, dataset_name, config.classes, train_transform, splits[dataset_name]['train'])
+    dataset = PixelSetData(
+        config.data_root,
+        dataset_name,
+        config.classes,
+        train_transform,
+        splits[dataset_name]['train'],
+        closed_set=config.closed_set,
+    )
     data_loader = create_train_loader(dataset, config.batch_size, config.num_workers)
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
 
@@ -280,6 +292,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval', action='store_true', help='run only evaluation')
     parser.add_argument('--overall', action='store_true', help='print overall results, if exists')
     parser.add_argument('--combine_spring_and_winter', default=False, type=bool_flag)
+    parser.add_argument('--closed_set', default=False, type=bool_flag, help='exclude unknown / out-of-class parcels')
 
     # Training configuration
     parser.add_argument('--epochs', default=100, type=int, help='Number of epochs per fold')

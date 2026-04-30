@@ -30,6 +30,7 @@ class PixelSetData(data.Dataset):
         transform=None,
         indices=None,
         with_extra=False,
+        closed_set=False,
     ):
         super(PixelSetData, self).__init__()
 
@@ -41,6 +42,7 @@ class PixelSetData(data.Dataset):
         self.meta_folder = os.path.join(self.folder, "meta")
         self.transform = transform
         self.with_extra = with_extra
+        self.closed_set = closed_set
 
         self.classes = classes
         self.class_to_idx = {cls: idx for idx, cls in enumerate(classes)}
@@ -94,6 +96,7 @@ class PixelSetData(data.Dataset):
         code_to_class_name = label_utils.get_code_to_class(country)
 
         unknown_crop_codes = set()
+        excluded_class_counts = defaultdict(int)
 
         for parcel_idx, parcel in enumerate(metadata["parcels"]):
             if indices is not None:
@@ -106,7 +109,14 @@ class PixelSetData(data.Dataset):
             if crop_code not in code_to_class_name:
                 unknown_crop_codes.add(crop_code)
             class_name = code_to_class_name.get(crop_code, "unknown")
-            class_index = class_to_idx.get(class_name, class_to_idx["unknown"])
+            if self.closed_set and class_name not in class_to_idx:
+                excluded_class_counts[class_name] += 1
+                continue
+
+            if class_name in class_to_idx:
+                class_index = class_to_idx[class_name]
+            else:
+                class_index = class_to_idx["unknown"]
             extra = parcel['geometric_features']
 
             item = (parcel_path, parcel_idx, class_index, extra)
@@ -116,6 +126,10 @@ class PixelSetData(data.Dataset):
         for crop_code in unknown_crop_codes:
             print(
                 f"Parcels with crop code {crop_code} was not found in .yml class mapping and was assigned to unknown."
+            )
+        for class_name, count in sorted(excluded_class_counts.items()):
+            print(
+                f"Excluded {count} parcels from closed-set loading because class '{class_name}' is not kept."
             )
 
         metadata["parcels"] = new_parcel_metadata
@@ -219,6 +233,7 @@ def create_evaluation_loaders(dataset_name, splits, config, sample_pixels_val=Fa
         config.classes,
         val_transform,
         indices=splits[dataset_name]["val"],
+        closed_set=getattr(config, "closed_set", False),
     )
     val_loader = data.DataLoader(
         val_dataset,
@@ -242,6 +257,7 @@ def create_evaluation_loaders(dataset_name, splits, config, sample_pixels_val=Fa
         config.classes,
         test_transform,
         indices=splits[dataset_name]["test"],
+        closed_set=getattr(config, "closed_set", False),
     )
     test_loader = data.DataLoader(
         test_dataset,
