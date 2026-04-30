@@ -1,0 +1,434 @@
+================================================================================
+TUCKETA tensor time series data structure for efficient and accurate factor analysis over time ranges.pdf
+TUCKET: A Tensor Time Series Data Structure for Efficient and
+Accurate Factor Analysis over Time Ranges
+Ruizhong Qiu∗
+University of Illinois
+Urbana–Champaign
+rq5@illinois.edu
+Jun-Gi Jang∗
+University of Illinois
+Urbana–Champaign
+jungi@illinois.edu
+Xiao Lin
+University of Illinois
+Urbana–Champaign
+xiaol13@illinois.edu
+Lihui Liu
+University of Illinois
+Urbana–Champaign
+lihuil2@illinois.edu
+Hanghang Tong
+University of Illinois
+Urbana–Champaign
+htong@illinois.edu
+ABSTRACT
+Given an evolving tensor time series and multiple time ranges, how
+can we compute Tucker decomposition for each time range effi-
+ciently and accurately? Tucker decomposition has been widely used
+in a variety of applications to obtain latent factors of tensor data.
+For example, Tucker decomposition on air pollution data allows us
+to analyze and compare air pollution patterns between different
+locations during different periods of time. In these applications,
+a common need is to compute Tucker decomposition for a given
+time range. Furthermore, real-world tensor time series are typically
+evolving in the time dimension. Such needs call for a data struc-
+ture that can efficiently and accurately support range queries of
+Tucker decomposition and stream updates. Unfortunately, existing
+methods do not support either range queries or stream updates. For
+methods that do not support range queries, they have to re-compute
+from scratch for each query. Not until 2021 has a data structure
+called Zoom-Tucker been proposed to support range queries via
+block-wise preprocessing. However, Zoom-Tucker does not sup-
+port stream updates and, more critically, suffers from a reluctant
+efficiency–accuracy tradeoff — a large block size causes inaccuracy,
+while a small block size leads to inefficiency. This challenging prob-
+lem has remained open for years prior to our work. To solve this
+challenging problem, we propose TUCKET, a data structure that
+can efficiently and accurately handle both range queries and stream
+updates. Our key idea is to design a new data structure that we
+call a stream segment tree by generalizing the segment tree, a data
+structure that was originally invented for computational geometry.
+For a range query of length𝐿, our TUCKET can find𝑂 (log 𝐿) nodes
+(called the hit set) from the tree and efficiently stitch their prepro-
+cessed decompositions to answer the range query. We also propose
+an algorithm to optimally prune the hit set via an approximation of
+subtensor decomposition. For the𝑇 -th stream update, our TUCKET
+modifies only amortized𝑂 (1) nodes and only𝑂 (log𝑇 ) nodes in the
+worst case. Extensive evaluation demonstrates that our TUCKET
+consistently achieves the highest efficiency and accuracy across
+four large-scale datasets. Our TUCKET achieves at least 3 times
+lower latency and at least 1.4 times smaller reconstruction error
+than Zoom-Tucker on all datasets. The full version can be found at
+https://github.com/q-rz/TUCKET/blob/main/TUCKET-Full.pdf.
+PVLDB Reference Format:
+Ruizhong Qiu, Jun-Gi Jang, Xiao Lin, Lihui Liu, and Hanghang Tong.
+TUCKET: A Tensor Time Series Data Structure for Efficient and Accurate
+Factor Analysis over Time Ranges. PVLDB, 17(13): 4746 - 4759, 2024.
+doi:10.14778/3704965.3704980
+∗Equal contribution.
+This work is licensed under the Creative Commons BY-NC-ND 4.0 International
+License. Visit https://creativecommons.org/licenses/by-nc-nd/4.0/ to view a copy of
+(A)
+(B)
+(D)
+(C) (E)
+(F)
+(a) March 2015
+(A)
+(B)
+(D)
+(C) (E)
+(F) (b) March 2016
+(A)
+(B)
+(D)
+(C) (E)
+(F) (c) March 2017
+Figure 1: Case study on Air Quality data (see Section 8.6)
+PVLDB Artifact Availability:
+The source code, data, and/or other artifacts have been made available at
+https://github.com/q-rz/TUCKET.
+1 INTRODUCTION
+Tensor time series are ubiquitous in the real world, ranging from
+multimedia data such as videos and music to time series data such
+as stock prices, traffic volumes, climate, agriculture, environmental
+monitoring, and physical systems. Tensor decomposition, such as
+CANDECOMP [13] / PARAFAC [24] (CP), PARAFAC2 [36], and
+Tucker [62] decompositions, is a fundamental approach to tensor
+data analysis and performs an essential role in various applica-
+tions including clustering [12, 26, 71], dimension reduction [37, 65],
+anomaly detection [19, 39], concept discovery [4, 32, 33], and so
+on [17, 40, 59, 69]. As a generalization of singular value decomposi-
+tion, Tucker decomposition [62] seeks to approximately factorize
+a tensor into factor matrices for each mode of the tensor and a
+small core tensor characterizing the relations of the factor matri-
+ces. Factor matrices and the core tensor can serve as the input for
+downstream data mining algorithms such as clustering [ 71] and
+anomaly detection [39].
+In the analysis of tensor time series, a common situation is to
+discover latent patterns in given time ranges [ 28]. For example,
+given air quality data (a 3-way tensor time series X where X𝑡,𝑖,𝑗
+represents the concentration value of air pollutant 𝑗 in location 𝑖
+at time 𝑡), environmental scientists can find out which locations
+share similarity pollution patterns in March of each year by an-
+alyzing the Tucker decomposition of each month. (See Figure 1
+for illustration and the case study in Section 8.6 for detail.) Range
+queries are necessary here because Tucker decompositions vary
+across different time ranges due to the evolving nature of tensor
+time series, as shown in Figure 1. Such needs give rise to an inter-
+esting research question: given an evolving tensor time series and
+this license. For any use beyond those covered by this license, obtain permission by
+emailing info@vldb.org. Copyright is held by the owner/author(s). Publication rights
+licensed to the VLDB Endowment.
+Proceedings of the VLDB Endowment, Vol. 17, No. 13 ISSN 2150-8097.
+doi:10.14778/3704965.3704980
+arXiv:2501.06647v1  [cs.DS]  11 Jan 2025
+Table 1: Comparison in functionalities, time complexities per query, and overall space complexities. See Table 2 for the
+definitions of 𝐿, 𝐷, 𝑇 , 𝑟, 𝑝. Empirically, our TUCKET is faster than all other methods on a GPU because it is more parallelizable.
+Zoom-Tucker cannot use a large block size 𝑏, or otherwise it would incur high error.
+Method Range Query Stream Update Time Complexity per Query Space Complexity
+Tucker-ALS [62] ✗ ✗ 𝑂 (𝑟 𝐷𝑝 −1𝐿) 𝑂 (𝐷𝑝 −1𝑇 )
+D-Tucker [29] ✗ ✓ 𝑂 (𝑟 2𝐷𝑝 −2𝐿) 𝑂 (( 𝐷𝑝 −1 + 𝑟 𝐷𝑝 −2)𝑇 )
+Zoom-Tucker [30] ✓ ✗ 𝑂 (︁𝑟 2𝐷 𝐿
+𝑏 + 𝑟 2𝐿 + 𝑟 𝑝+1 𝐿
+𝑏
+)︁ 𝑂 (︁(𝑟 𝐷 + 𝑟 𝑝 ) 𝑇
+𝑏 + 𝑟𝑇 )︁
+TUCKET (ours) ✓ ✓ 𝑂 (𝑟 𝑝 𝐷 log 𝐿 + 𝑟 2𝑝 −2 (𝐷 + 𝐿) + log𝑇 ) 𝑂 ((𝑟 𝐷 + 𝑟 𝑝 )𝑇 + 𝑟𝑇 log𝑇 )
+multiple time range queries, how can we design a data structure
+that can efficiently and accurately compute Tucker decomposition
+for each time range?
+Unfortunately, existing Tucker decomposition methods do not
+support either range queries or stream updates (see Table 1). For
+methods that do not support range queries, they have to re-compute
+from scratch for each range query. For example, D-Tucker [29] han-
+dles stream updates via slice-w
+================================================================================
+ditzen-et-al-2025-testing-and-estimating-structural-breaks-in-time-series-and-panel-data-in-stata.pdf
+The Stata Journal (2025)
+25, Number 3, pp. 526–560 DOI: 10.1177/1536867X251365449
+Testing and estimating structural breaks in time
+series and panel data in Stata
+Jan Ditzen
+Free University of Bozen-Bolzano
+Bozen, Italy
+jan.ditzen@unibz.it
+Yiannis Karavias
+Brunel University of London
+London, UK
+yiannis.karavias@brunel.ac.uk
+Joakim Westerlund
+Lund University
+Lund, Sweden
+joakim.westerlund@nek.lu.se
+and
+Deakin University
+Melbourne, Australia
+j.westerlund@deakin.edu.au
+Abstract. Identifying structural change is a crucial step when analyzing time
+series and panel data. The longer the time span, the higher the likelihood that
+the model parameters have changed because of major disruptive events such as
+the 2007–2008 financial crisis and the 2020 COVID-19 outbreak. Detecting the
+existence of breaks and dating them is therefore necessary for not only estima-
+tion but also understanding drivers of change and their effect on relationships. In
+this article, we introduce a new community-contributed command called xtbreak,
+which provides researchers with a complete toolbox for analyzing multiple struc-
+tural breaks in time series and panel data. xtbreak can detect the existence of
+breaks, determine their number and location, and provide break-date confidence
+intervals. We use xtbreak in examples to explore changes in the relationship be-
+tween COVID-19 cases and deaths in the US using both aggregate and state-level
+data and in the relationship between approval ratings and consumer confidence
+using a panel of eight countries.
+Keywords: st0781, xtbreak, structural breaks, change points, time-series data,
+panel data, interactive fixed effects, cross-sectional dependence
+1 Introduction
+In economics and elsewhere, linear relationships between dependent and explanatory
+variables are at the core of interest. To investigate such relationships, researchers collect
+observations over time for one or more cross-sectional units such as firms, individuals, or
+countries and subsequently use them in estimating the coefficients of regression models.
+A key assumption here is that the coefficients do not change over time. This assumption
+is unlikely to hold, especially for longer periods of time, because of major disruptive
+events such as financial crises. Parameter instability can have a detrimental impact on
+© 2025 StataCorp LLC st0781
+
+J. Ditzen, Y. Karavias, and J. Westerlund 527
+estimation and inference and can lead to costly errors in decision making. The times in
+which the parameters change are called “change points” in the statistics literature and
+“structural breaks” in economics. Because both terms are synonymous to each other,
+we will use the latter term or just “breaks” .
+In this article, we propose a new community-contributed command called xtbreak.1
+The package implements the methods developed by Bai and Perron (1998) for pure time
+series and Ditzen, Karavias, and Westerlund (2025) for panel data. 2
+xtbreak provides researchers with a complete toolbox for analyzing multiple struc-
+tural breaks in time series and panel data. It can detect and date an unknown number
+of breaks at unknown break dates. The toolbox is based on asymptotically valid tests
+for the presence of breaks, a consistent break-date estimator, and a break date confi-
+dence interval with correct asymptotic coverage. In fact, xtbreak includes three tests:
+1) a test of no structural breaks against the alternative of a specific number of breaks,
+2) a test of the null hypothesis of no structural breaks against the alternative of an
+unknown number of structural breaks, and 3) a test of the null of s breaks against the
+alternative of s + 1 breaks. The package also includes an algorithm that uses the last
+test consecutively to estimate the true number of breaks. The tested break dates can
+be unknown or user defined, as when researchers have additional information and wish
+to examine whether there was a break in a specific point in time. Once the presence
+of breaks has been tested and confirmed, xtbreak estimates the locations of the breaks
+and provides the associated confidence intervals.
+Having many breaks does not translate into heavy computational burden: xtbreak
+implements an efficient dynamic programming method described in Bai and Perron
+(2003) that ensures that there are O(T 2) computations even with more than two breaks,
+where T is the number of time-series observations.
+xtbreak can deal with models of “pure” or “partial” structural breaks. In a pure
+structural-breaks model, the coefficients of all explanatory variables change, while in a
+partial structural-breaks model, only a subset of the coefficients changes.
+xtbreak is applicable under very general error conditions. For time-series data,
+the only requirement is that there are no unit roots in the errors. For panel data,
+units can be independent or cross-sectionally dependent, where cross-sectional depen-
+dence takes an “interactive fixed effects” or “common factor” structure. Regressors
+can load on the same set of factors as the errors, which means that regressors may be
+endogenous—although no instrumental variables are necessary. The errors can also be
+serially correlated and heteroskedastic but not nonstationary.
+The works of Bai and Perron (1998) and Ditzen, Karavias, and Westerlund (2025)
+draw on the economics literature. However, structural breaks also happen in other fields
+of research, including engineering, epidemiology, climatology, and medicine. xtbreak is
+1. Updates will be continuously provided on our GitHub page: https://janditzen.github.io/xtbreak/.
+2. The Ditzen, Karavias, and Westerlund (2025) study develops the methods and asymptotic theory
+for the analysis of panel data with multiple structural breaks and interactive fixed effects. For one
+break, the results coincide with the earlier work by Karavias, Narayan, and Westerlund (2023).
+528 Structural breaks in Stata
+therefore widely applicable. To showcase this width, we consider two examples drawn
+from the areas of epidemiology and political economy. First, we consider the epidemio-
+logical relationship between COVID-19 cases and deaths. Using both aggregate country
+and disaggregated state-level US data, we find evidence of multiple breaks. In particu-
+lar, we find that an increase in the number of COVID-19 cases led to more deaths in the
+beginning of the pandemic than in later waves. Second, we examine if there are breaks
+in the relationship between consumer confidence and the approval ratings of country
+leaders. Using a panel of eight countries observed over a long period of time, we find
+that there is great cross-country heterogeneity in terms of the number and locations of
+breaks.
+The remainder of the article is organized as follows: Section 2 presents the model
+that we will be considering. We focus on the panel case, which in most regards includes
+the pure time series setup as a special case. Important differences are brought up and
+discussed. Sections 3, 4, and 5 present the hypothesis tests, t
+================================================================================
+Causal-aware time series regression for IoT energy consumption using structured attention and LSTM networks.pdf
+Article Not peer-reviewed version
+Causal-Aware Tim e Series Regression
+for IoT Energy Consum ption U sing
+Structured Attention and L STM
+Networks
+Chang L iu * , Qi W ang , L itong Song , Xin Hu
+Posted Date: 15 Septem ber 2025
+doi: 10.20944/preprints202509.1134.v1
+Keywords: Causal m odeling; L STM  network; energy consum ption prediction; tim e series regression
+Preprints.org is a free m ultidisciplinary platform  providing preprint service
+that is dedicated to m aking early versions of research outputs perm anently
+available and citable. Preprints posted at Preprints.org appear in W eb of
+Science, Crossref, Google Scholar, Scilit, Europe PM C.
+Copyright: This open access article is published under a Creative Com m ons CC BY 4.0
+license, which perm it the free download, distribution, and reuse, provided that the author
+and preprint are cited in any reuse.
+ 
+ 
+Article 
+Causal-Aware Time Series Regression for IoT Energy 
+Consumption Using Structured Attention and LSTM 
+Networks 
+Chang Liu 1,*, Qi Wang 2, Litong Song 3 and Xin Hu 4 
+1 Washington University in St. Louis, St. Louis, USA 
+2 Purdue University, West Lafayette, USA 
+3 University of Texas at Austin, Austin, USA 
+4 Hofstra University, Hempstead, USA 
+* Correspondence: chang.liu1@wustl.edu 
+Abstract 
+This study focuses on energy consumption modeling for IoT devices and proposes a regression 
+prediction method that integrates causal features with Long Short-Term Memory (LSTM) networks. 
+The method introduces a structured causal attention mechanism to mode l the influence of external 
+factors on energy consumption. It combines this with LSTM to dynamically learn temporal 
+dependencies, forming a structure -enhanced prediction framework. At the input layer, the model 
+integrates multiple features such as device o perating states, transmission parameters, and task 
+identifiers. A causal mask guides the computation of attention weights to enhance the model’s 
+sensitivity to key variables. At the prediction layer, a fusion mechanism combines the LSTM outputs 
+with the we ighted causal features as input to the regression module, producing the final energy 
+consumption predictions. The experiments are conducted on a real industrial IoT dataset. 
+Performance is evaluated under different network depths, training data proportions , and 
+environmental fluctuations through sensitivity analysis. Results show that the proposed model 
+outperforms traditional baseline models on metrics including RMSE, MAE, and MAPE. It 
+demonstrates higher accuracy and robustness. The study also shows that the causal modeling 
+mechanism plays a key role in improving model stability and enhancing the ability to capture 
+complex dependencies. The method is suitable for predicting energy consumption patterns across 
+diverse devices and nonlinear usage behaviors. 
+Keywords: causal modeling; LSTM network; energy consumption prediction; time series regression 
+ 
+I. Introduction 
+The rapid development of Internet of Things (IoT) technologies is reshaping operational 
+paradigms across various industries. From smart manufacturing and smart cities to home automation, 
+billions of intelligent devices are interconnected through sensing, c ommunication, and computing 
+capabilities. As the number of devices continues to grow, managing and predicting their energy 
+consumption has become an urgent challenge[1]. Effective energy management not only relates to 
+economic efficiency and environmental sustainability but also directly impacts the scalability and 
+long-term viability of IoT systems. In resource-constrained edge environments in particular, accurate 
+energy consumption forecasting supports system design, task scheduling, and power allocation. It is 
+a fundamental step toward realizing the vision of “green IoT.” 
+Traditional energy modeling approaches mainly rely on physical models or empirical 
+formulas[2]. While these methods are effective in specific domains, they often fail to adapt to the 
+complexity and variability of IoT applications. Energy consumption in IoT  devices is influenced by 
+multiple factors, including task load, operating status, transmission frequency, external 
+Preprints.org (www.preprints.org)  |  NOT PEER-REVIEWED  |  Posted: 15 September 2025 doi:10.20944/preprints202509.1134.v1
+Disclaimer/Publisher’s Note: The statements, opinions, and data contained in all publications are solely those of the individual author(s) and
+contributor(s) and not of MDPI and/or the editor(s). MDPI and/or the editor(s) disclaim responsibility for any injury to people or property resulting
+from any ideas, methods, instructions, or products referred to in the content.
+© 2025 by the author(s). Distributed under a Creative Commons CC BY license.
+ 2 of 8 
+ 
+environmental conditions, and inter -device coordination. These factors often exhibit nonlinear and 
+temporal dependencies, making modeling highly challenging. Additionally, the heterogeneous and 
+distributed nature of IoT systems results in data that is multimodal, high-dimensional, and time -
+dependent. These characteristics significantly increase the difficulty of predictive model design. 
+Modeling from a single perspective cannot effectively capture the dynamic interactions among these 
+complex features[3]. 
+In recent years, data-driven methods have shown growing advantages in energy consumption 
+modeling. Among them, Long Short -Term Memory (LSTM) networks, a type of recurrent neural 
+network (RNN), have demonstrated strong performance in handling time series da ta, making them 
+a popular tool for IoT energy modeling. LSTM networks can capture long -term dependencies in 
+historical states, enabling dynamic modeling of device energy use[4,5]. However, most existing 
+LSTM-based methods primarily focus on intrinsic tempo ral patterns, often overlooking the 
+integration and modeling of external causal features[6]. In IoT scenarios, many variables affecting 
+energy use have explicit causal structures. For example, task type directly influences CPU load, and 
+network conditions affect transmission power. Failure to extract and model these causal factors can 
+limit a model’s generalization ability and interpretability, reducing its practical value in deployment. 
+Incorporating causal features into modeling can enhance the model ’s structural understanding 
+of input variables and improve the robustness and controllability of energy forecasting. In complex 
+systems, causal relationships provide reasoning paths that help models maintain effectiveness under 
+anomalies, interventions, or deployment shifts. For IoT energy forecasting, causal features act as a 
+structural enhancement mechanism. They help reduce data redundancy, improve sensitivity to key 
+variables, and mitigate issues such as overfitting or excessive reliance on historical data. Additionally, 
+causal modeling improves the interpretability of predictions. This allows system developers to better 
+understand the model’s decision -making process and d
+================================================================================
+ModernTCN A Modern Pure Convolution Structure for General Time Series Analysis..pdf
+Published as a conference paper at ICLR 2024
+MODERN TCN:
+A M ODERN PURE CONVOLUTION STRUCTURE FOR
+GENERAL TIME SERIES ANALYSIS
+Donghao Luo, Xue Wang
+Department of Precision Instrument, Tsinghua University, Beijing 100084, China
+ldh21@mails.tsinghua.edu.cn, wangxue@mail.tsinghua.edu.cn
+ABSTRACT
+Recently, Transformer-based and MLP-based models have emerged rapidly and
+won dominance in time series analysis. In contrast, convolution is losing steam
+in time series tasks nowadays for inferior performance. This paper studies the
+open question of how to better use convolution in time series analysis and makes
+efforts to bring convolution back to the arena of time series analysis. To this end,
+we modernize the traditional TCN and conduct time series related modiﬁcations
+to make it more suitable for time series tasks. As the outcome, we propose
+ModernTCN and successfully solve this open question through a seldom-explored
+way in time series community. As a pure convolution structure, ModernTCN still
+achieves the consistent state-of-the-art performance on ﬁve mainstream time series
+analysis tasks while maintaining the efﬁciency advantage of convolution-based
+models, therefore providing a better balance of efﬁciency and performance than
+state-of-the-art Transformer-based and MLP-based models. Our study further
+reveals that, compared with previous convolution-based models, our ModernTCN
+has much larger effective receptive ﬁelds (ERFs), therefore can better unleash the
+potential of convolution in time series analysis. Code is available at this repository:
+https://github.com/luodhhh/ModernTCN.
+1 I NTRODUCTION
+Time series analysis is widely used in extensive applications, such as industrial forecasting (Zhou
+et al., 2021), missing value imputation (Friedman, 1962), action recognition (Ye & Keogh, 2009),
+and anomaly detection (Xu et al., 2021). Because of the immense practical value, the past few years
+have witnessed the rapid development in time series analysis(Wen et al., 2022; Lim & Zohren, 2021).
+Among them, the rise of Transformer-based methods and MLP-based models is especially compelling
+(Nie et al., 2023; Zhang & Yan, 2023; Zhou et al., 2022; Cirstea et al., 2022; Wu et al., 2021; Liu
+et al., 2021a; Li et al., 2019b; Kitaev et al., 2020; Vaswani et al., 2017) (Li et al., 2023b; Zhang et al.,
+2022; Zeng et al., 2022). But around the same time, convolution-based models have received less
+attention for a long time.
+It’s non-trivial to use convolution in time series analysis for it provides a better balance of
+efﬁciency and performance. Date back to the 2010s, TCN and its variants (Bai et al., 2018; Sen et al.,
+2019) are widely-used in many time series tasks. But things have changed in 2020s. Transformer-
+based models and MLP-based models have emerged rapidly and achieved impressive performance
+in recent years. Thanks to their global effective receptive ﬁelds (ERFs), they can better capture the
+long-term temporal (cross-time) dependency and thus outperform traditional TCNs by a signiﬁcant
+margin. As a result, convolution-based models are losing steam nowadays due to their limited ERFs.
+Some previous convolution-based models (Wang et al., 2023; Liu et al., 2022a) try to bring convolution
+back to the arena of time series analysis. But they mainly focus on designing extra sophisticated struc-
+tures to work with the traditional convolution, ignoring the importance of updating the convolution
+itself. And they still cannot achieve comparable performance to the state-of-the-art Transformer-based
+and MLP-based models. The reason behind can be explained by Figure 1. Increasing the ERF is the
+key to bringing convolution back to time series analysis. But previous convolution-based models
+1
+Published as a conference paper at ICLR 2024
+Figure 1: The Effective Receptive Field (ERF) of ModernTCN and previous convolution-based
+methods. A more widely distributed light area indicates a larger ERF. Our ModernTCN can obtain a
+much larger ERF than previous convolution-based methods. Meanwhile, enlarging the kernel size is
+a more effective way to obtain large ERF than stacking more small kernels.
+still have limited ERFs, which prevents their further performance improvements. How to better use
+convolution in time series analysis is still a non-trivial and open question.
+As another area where convolution is widely used, computer vision (CV) took a very different path to
+explore the convolution. Unlike recent studies in time series community, lastest studies in CV focus
+on optimizing the convolution itself and propose modern convolution (Liu et al., 2022d; Ding et al.,
+2022; Liu et al., 2022b). Modern convolution is a new convolution paradigm inspired by Transformer.
+Concretely, modern convolution block incorporates some architectural designs in Transformer and
+therefore has a similar structure to Transformer block (Figure 2 (a) and (b)). Meanwhile, to catch
+up with the gloabal ERF in Transformer, modern convolution usually adopat a large kernel as it can
+effectively increase the ERF (Figure 1). Although the effectiveness of modern convolution has been
+demonstrated in CV , it has still received little attention from the time series community. Based on
+above ﬁndings, we intend to ﬁrst modernize the convolution in time series analysis to see whether it
+can increase the ERF and bring performance improvement.
+Besides, convolution is also a potentially efﬁcient way to capture cross-variable dependency. Cross-
+variable dependency is another critical dependency in time series in addition to the cross-time one.
+It refers to the dependency among variables in multivariate time series. And early study(Lai et al.,
+2018b) has already tried to use convolution in variable dimension to capture the cross-variable
+dependency. Although its performance is not that competitive nowadays, it still demonstrates the
+feasibility of convolution in capturing cross-variable dependency. Therefore, it’s reasonable to believe
+that convolution can become an efﬁcient and effective way to capture cross-variable dependency after
+proper modiﬁcations and optimizations.
+Based on above motivations, we take a seldom-explored way in time series community to successfully
+bring convolution-based models back to time series analysis. Concretely, we modernize the traditional
+TCN and conduct some time series related modiﬁcations to make it more suitable for time series tasks.
+As the outcome, we propose a modern pure convolution structure, namelyModernTCN, to efﬁciently
+utilize cross-time and cross-variable dependency for general time series analysis. We evaluate
+ModernTCN on ﬁve mainstream analysis tasks, including long-term and short-term forecasting,
+imputation, classiﬁcation and anomaly detection. Surprisingly, as a pure convolution-based model,
+ModernTCN still achieves the consistent state-of-the-art performance on these tasks. Meanwhile,
+ModernTCN also maintains the efﬁciency advantage of convolution-based models, therefore providing
+a better balan

@@ -1,0 +1,1366 @@
+TUCKET: A Tensor Time Series Data Structure for Efficient and
+Accurate Factor Analysis over Time Ranges
+Ruizhong Qiu∗
+University of Illinois
+Urbana–Champaign
+rq5@illinois.edu
+Jun-Gi Jang∗
+University of Illinois
+Urbana–Champaign
+jungi@illinois.edu
+Xiao Lin
+University of Illinois
+Urbana–Champaign
+xiaol13@illinois.edu
+Lihui Liu
+University of Illinois
+Urbana–Champaign
+lihuil2@illinois.edu
+Hanghang Tong
+University of Illinois
+Urbana–Champaign
+htong@illinois.edu
+ABSTRACT
+Given an evolving tensor time series and multiple time ranges, how
+can we compute Tucker decomposition for each time range effi-
+ciently and accurately? Tucker decomposition has been widely used
+in a variety of applications to obtain latent factors of tensor data.
+For example, Tucker decomposition on air pollution data allows us
+to analyze and compare air pollution patterns between different
+locations during different periods of time. In these applications,
+a common need is to compute Tucker decomposition for a given
+time range. Furthermore, real-world tensor time series are typically
+evolving in the time dimension. Such needs call for a data struc-
+ture that can efficiently and accurately support range queries of
+Tucker decomposition and stream updates. Unfortunately, existing
+methods do not support either range queries or stream updates. For
+methods that do not support range queries, they have to re-compute
+from scratch for each query. Not until 2021 has a data structure
+called Zoom-Tucker been proposed to support range queries via
+block-wise preprocessing. However, Zoom-Tucker does not sup-
+port stream updates and, more critically, suffers from a reluctant
+efficiency–accuracy tradeoff — a large block size causes inaccuracy,
+while a small block size leads to inefficiency. This challenging prob-
+lem has remained open for years prior to our work. To solve this
+challenging problem, we propose TUCKET, a data structure that
+can efficiently and accurately handle both range queries and stream
+updates. Our key idea is to design a new data structure that we
+call a stream segment tree by generalizing the segment tree, a data
+structure that was originally invented for computational geometry.
+For a range query of length𝐿, our TUCKET can find𝑂 (log 𝐿) nodes
+(called the hit set) from the tree and efficiently stitch their prepro-
+cessed decompositions to answer the range query. We also propose
+an algorithm to optimally prune the hit set via an approximation of
+subtensor decomposition. For the𝑇 -th stream update, our TUCKET
+modifies only amortized𝑂 (1) nodes and only𝑂 (log𝑇 ) nodes in the
+worst case. Extensive evaluation demonstrates that our TUCKET
+consistently achieves the highest efficiency and accuracy across
+four large-scale datasets. Our TUCKET achieves at least 3 times
+lower latency and at least 1.4 times smaller reconstruction error
+than Zoom-Tucker on all datasets. The full version can be found at
+https://github.com/q-rz/TUCKET/blob/main/TUCKET-Full.pdf.
+PVLDB Reference Format:
+Ruizhong Qiu, Jun-Gi Jang, Xiao Lin, Lihui Liu, and Hanghang Tong.
+TUCKET: A Tensor Time Series Data Structure for Efficient and Accurate
+Factor Analysis over Time Ranges. PVLDB, 17(13): 4746 - 4759, 2024.
+doi:10.14778/3704965.3704980
+∗Equal contribution.
+This work is licensed under the Creative Commons BY-NC-ND 4.0 International
+License. Visit https://creativecommons.org/licenses/by-nc-nd/4.0/ to view a copy of
+(A)
+(B)
+(D)
+(C) (E)
+(F)
+(a) March 2015
+(A)
+(B)
+(D)
+(C) (E)
+(F) (b) March 2016
+(A)
+(B)
+(D)
+(C) (E)
+(F) (c) March 2017
+Figure 1: Case study on Air Quality data (see Section 8.6)
+PVLDB Artifact Availability:
+The source code, data, and/or other artifacts have been made available at
+https://github.com/q-rz/TUCKET.
+1 INTRODUCTION
+Tensor time series are ubiquitous in the real world, ranging from
+multimedia data such as videos and music to time series data such
+as stock prices, traffic volumes, climate, agriculture, environmental
+monitoring, and physical systems. Tensor decomposition, such as
+CANDECOMP [13] / PARAFAC [24] (CP), PARAFAC2 [36], and
+Tucker [62] decompositions, is a fundamental approach to tensor
+data analysis and performs an essential role in various applica-
+tions including clustering [12, 26, 71], dimension reduction [37, 65],
+anomaly detection [19, 39], concept discovery [4, 32, 33], and so
+on [17, 40, 59, 69]. As a generalization of singular value decomposi-
+tion, Tucker decomposition [62] seeks to approximately factorize
+a tensor into factor matrices for each mode of the tensor and a
+small core tensor characterizing the relations of the factor matri-
+ces. Factor matrices and the core tensor can serve as the input for
+downstream data mining algorithms such as clustering [ 71] and
+anomaly detection [39].
+In the analysis of tensor time series, a common situation is to
+discover latent patterns in given time ranges [ 28]. For example,
+given air quality data (a 3-way tensor time series X where X𝑡,𝑖,𝑗
+represents the concentration value of air pollutant 𝑗 in location 𝑖
+at time 𝑡), environmental scientists can find out which locations
+share similarity pollution patterns in March of each year by an-
+alyzing the Tucker decomposition of each month. (See Figure 1
+for illustration and the case study in Section 8.6 for detail.) Range
+queries are necessary here because Tucker decompositions vary
+across different time ranges due to the evolving nature of tensor
+time series, as shown in Figure 1. Such needs give rise to an inter-
+esting research question: given an evolving tensor time series and
+this license. For any use beyond those covered by this license, obtain permission by
+emailing info@vldb.org. Copyright is held by the owner/author(s). Publication rights
+licensed to the VLDB Endowment.
+Proceedings of the VLDB Endowment, Vol. 17, No. 13 ISSN 2150-8097.
+doi:10.14778/3704965.3704980
+arXiv:2501.06647v1  [cs.DS]  11 Jan 2025
+Table 1: Comparison in functionalities, time complexities per query, and overall space complexities. See Table 2 for the
+definitions of 𝐿, 𝐷, 𝑇 , 𝑟, 𝑝. Empirically, our TUCKET is faster than all other methods on a GPU because it is more parallelizable.
+Zoom-Tucker cannot use a large block size 𝑏, or otherwise it would incur high error.
+Method Range Query Stream Update Time Complexity per Query Space Complexity
+Tucker-ALS [62] ✗ ✗ 𝑂 (𝑟 𝐷𝑝 −1𝐿) 𝑂 (𝐷𝑝 −1𝑇 )
+D-Tucker [29] ✗ ✓ 𝑂 (𝑟 2𝐷𝑝 −2𝐿) 𝑂 (( 𝐷𝑝 −1 + 𝑟 𝐷𝑝 −2)𝑇 )
+Zoom-Tucker [30] ✓ ✗ 𝑂 (︁𝑟 2𝐷 𝐿
+𝑏 + 𝑟 2𝐿 + 𝑟 𝑝+1 𝐿
+𝑏
+)︁ 𝑂 (︁(𝑟 𝐷 + 𝑟 𝑝 ) 𝑇
+𝑏 + 𝑟𝑇 )︁
+TUCKET (ours) ✓ ✓ 𝑂 (𝑟 𝑝 𝐷 log 𝐿 + 𝑟 2𝑝 −2 (𝐷 + 𝐿) + log𝑇 ) 𝑂 ((𝑟 𝐷 + 𝑟 𝑝 )𝑇 + 𝑟𝑇 log𝑇 )
+multiple time range queries, how can we design a data structure
+that can efficiently and accurately compute Tucker decomposition
+for each time range?
+Unfortunately, existing Tucker decomposition methods do not
+support either range queries or stream updates (see Table 1). For
+methods that do not support range queries, they have to re-compute
+from scratch for each range query. For example, D-Tucker [29] han-
+dles stream updates via slice-wise preprocessing, but it supports
+only full Tucker decomposition and cannot answer range queries
+efficiently. Not until 2021 has a method called Zoom-Tucker [30]
+been proposed to support range queries. Zoom-Tucker consists of
+two phases: a preprocessing phase and a query phase. First, the
+preprocessing phase divides the timespan into blocks and prepro-
+cesses the Tucker decomposition of each block. Next, the query
+phase answers time range queries by stitching the preprocessed
+blocks included in the query range. However, Zoom-Tucker does
+not support efficient stream updates (i.e., appending a new tensor
+slice) due to its block structure.
+Moreover, Zoom-Tucker suffers from a critical limitation: a large
+block size causes low accuracy for short ranges due to a high ap-
+proximation error, while a small block size leads to inefficiency
+for long ranges that require to stitch many blocks. It means that
+Zoom-Tucker suffers from a reluctant tradeoff between accuracy
+and efficiency. How to avoid this tradeoff has been an open prob-
+lem for years. Prior to our work, no existing method achieves both
+efficiency and accuracy for Tucker decomposition range queries. A
+crucial challenge here is how to design a more sophisticated data
+structure and organize preprocessed results to avoid the efficiency–
+accuracy tradeoff. What makes it even more challenging is that the
+data structure needs to efficiently support stream updates to the
+tensor time series.
+To solve this challenging problem, we propose a new data struc-
+ture called Tucker Tree (TUCKET) that can efficiently and accurately
+handle both range queries of Tucker decomposition and stream
+updates. The key idea of our TUCKET is to design a new data struc-
+ture that we call a stream segment tree by generalizing the segment
+tree [10], a data structure that was originally invented for com-
+putational geometry. For a range query of length 𝐿, our TUCKET
+can find 𝑂 (log 𝐿) nodes (called the hit set ) from the tree via our
+optimal pruning algorithm and efficiently stitch their preprocessed
+decompositions to answer the range query. Besides that, for the
+𝑇 -th stream update, our TUCKET modifies only amortized 𝑂 (1)
+nodes and only 𝑂 (log𝑇 ) nodes in the worst case.
+The main contributions of this paper are summarized as follows:
+• Data structure. We design a new data structure stream
+segment tree to efficiently handle stream updates. It is much
+faster here than the interval tree [54] and the R-tree [23].
+Table 2: Nomenclature.
+Symbol Description
+vec vectorization
+mat𝑛 mode-𝑛 matricization
+×𝑛 mode-𝑛 tensor-matrix product
+∥ · ∥ F Frobenius norm
+⊗ matrix Kronecker product
+T matrix transpose
+X a tensor time series
+𝑝 number of modes of X
+𝑇 size of the temporal mode of X
+𝐷2, . . . , 𝐷𝑝 sizes of non-temporal modes of X
+𝐷 := max{𝐷2, . . . , 𝐷𝑝 } maximum size of non-temporal modes
+𝑟1, . . . , 𝑟𝑝 target sizes of Tucker decomposition
+𝑟 := max{𝑟1, . . . , 𝑟𝑝 } maximum target size
+G core tensor in Tucker decomposition
+𝑼 (1) , . . . , 𝑼 (𝑝 ) factor matrices in Tucker decomposition
+[𝑇s, 𝑇e ) time range of a query
+𝐿 := 𝑇e − 𝑇s length of the query range
+𝜃 threshold for hit set pruning
+⊔ disjoint union
+• Hit set pruning algorithm. We derive an efficient scheme
+to approximate subtensor decompositions and employ it to
+further reduce the size of the hit set for each query com-
+pared with the standard segment tree.
+• Stitching algorithm. We propose a new algorithm for
+stitching subtensor decompositions. Our stitching algo-
+rithm is more GPU-parallelizable and more numerically
+stable than Zoom-Tucker’s stitching algorithm.
+• Theoretical guarantees. We provide detailed theoretical
+guarantees for our proposed method in terms of time com-
+plexity, space complexity, and error analysis.
+• Empirical evaluation. We conduct extensive experiments
+to evaluate our TUCKET against state-of-the-art methods
+for Tucker decomposition on large-scale real-world tensor
+time series datasets. Our TUCKET consistently achieves
+both the highest efficiency and the highest accuracy across
+all datasets. For example, our TUCKET achieves at least 3
+times lower latency and at least 1.4 times smaller recon-
+struction error on all datasets.
+2 PRELIMINARIES
+In this section, we present the preliminaries on Tucker decom-
+position and Tucker-ALS. Main symbols used in this paper are
+summarized in Table 2. Due to the space limit, preliminaries on
+basic tensor operations are deferred to the full version.
+Given a 𝑝-way tensor X ∈ R𝐷1 ×···×𝐷𝑝 and target sizes𝑟1, . . . , 𝑟𝑝,
+Tucker decomposition [62] aims to find a core tensor G ∈ R𝑟1 ×···×𝑟𝑝
+and column-orthonormal factor matrices 𝑼 (𝑛) ∈ R𝐷𝑛 ×𝑟𝑛 (𝑛 =
+1, . . . , 𝑝) that minimize
+∥G ×1 𝑼 (1) · · · ×𝑝 𝑼 (𝑝 ) − X∥2
+F. (1)
+Tucker decomposition is a generalization of the singular value
+decomposition (SVD) of matrices. Similarly with SVD, a real-world
+tensor X typically has X ≈ G ×1 𝑼 (1) · · · ×𝑝 𝑼 (𝑝 ) even for small
+target sizes 𝑟1, . . . , 𝑟𝑝 [44]. Hence, Tucker decomposition can serve
+as a compressed representation of a large tensor. Factor matrices
+and the core tensor can serve as the input for downstream data
+mining algorithms. For example, we can apply clustering [71] or
+anomaly detection [39] to the row vectors of the factor matrices
+𝑼 (𝑛) to discover similarity and dissimilarity patterns in the data.
+A classic approach to Tucker decomposition is Tucker’s alter-
+nating least squares method (Tucker-ALS) [62]. At each iteration,
+Tucker-ALS optimizes the factor matrix of only one mode while
+fixing all other factor matrices. Tucker [62] shows that the optimal
+factor matrix 𝑼 (𝑛) for each mode 𝑛 is the 𝑟𝑛 leading left singular
+vectors of the matrix
+mat𝑛 (X ×1 𝑼 (1)T · · · ×𝑛−1 𝑼 (𝑛−1)T ×𝑛+1 𝑼 (𝑛+1)T · · · ×𝑝 𝑼 (𝑝 )T),
+(2)
+and that the optimal core tensor G is
+X ×1 𝑼 (1)T · · · ×𝑝 𝑼 (𝑝 )T. (3)
+3 PROBLEM DEFINITION
+In this section, we first introduce the problem definition and then
+present the design goals of TUCKET.
+A tensor time series is a tensor where one of the modes represents
+time. Without loss of generality, let the first mode be the temporal
+mode. Let X ∈ R𝑇 ×𝐷2 ×···×𝐷𝑝 be a 𝑝-way tensor time series, where
+the size of the temporal mode is 𝐷1 := 𝑇 , the sizes of non-temporal
+modes are 𝐷2, . . . , 𝐷𝑝, and the number of modes is 𝑝 ≥ 2. We call
+𝑇 the timespan. For tensors Y1, . . . , Y𝑠 of the same shape except
+for the temporal mode, let
+⎡⎢⎢⎢⎢⎣
+Y1
+...
+Y𝑠
+⎤⎥⎥⎥⎥⎦
+denote concatenation along the
+temporal mode. A tensor stream X ∈ R∗×𝐷2 ×···×𝐷𝑝 is a tensor time
+series with a growing temporal mode: at each time 𝑇 , a tensor slice
+X𝑇 ∈ R𝐷2 ×···×𝐷𝑝 is observed and appended to the tensor stream.
+Given a tensor stream X ∈ R∗×𝐷2 ×···×𝐷𝑝 and the target sizes
+(𝑟1, . . . , 𝑟𝑝 ) for Tucker decomposition, we aim to design a data
+structure that supports the following two operations.𝑇 denotes the
+timespan before the operation.
+• Range query of Tucker decomposition: Given a time
+range [𝑇s, 𝑇e) ⊆ [ 0, 𝑇), we need to efficiently compute the
+Tucker decomposition of the subtensor X[𝑇s,𝑇e ) using the
+data structure. The output is a core tensor G ∈ R𝑟1 ×···×𝑟𝑝
+and factor matrices 𝑼 (1) ∈ R(𝑇e −𝑇s ) ×𝑟1, 𝑼 (2) ∈ R𝐷2 ×𝑟2, . . . ,
+𝑼 (𝑝 ) ∈ R𝐷𝑝 ×𝑟𝑝 .
+• Stream update: Given a tensor slice X𝑇 ∈ R𝐷2 ×···×𝐷𝑝 , we
+need to append the tensor slice to the tensor stream and
+update the data structure accordingly.
+The problem definition is illustrated in Figure 2 with Air Quality
+data as an example. Air Quality data is a 3-way tensor time series
+X ∈ R𝑇 ×𝐷2 ×𝐷3 where X𝑡,𝑖,𝑗 represents the concentration value of
+QueryQ⋯Location𝒊Pollutant𝒋 Time𝒕
+Query1
+Tensor Time Series:AirQuality𝒳!,#,$
+DataStructureTUCKET(ours)
+Query1𝑇!: 03/01/2015𝑇": 04/01/2015(1 month)⋯
+Range Query Answering
+QueryQ𝑇!: 05/18/2017𝑇": 05/25/2017(1week)
+Tucker Decomposition:𝓖×#𝑼#×$𝑼$×%𝑼%
+Range Query:𝑇!,𝑇"
+⋯
+05/24/201701/01/2015
+Tuc ke r-ALS
+CoreTensor𝓖TemporalFactors𝑼!
+LocationFactors𝑼"
+PollutantFactors𝑼#
+Figure 2: Illustration of range queries of Tucker decomposi-
+tion. It is inefficient to directly apply Tucker-ALS for each
+range query from scratch. Instead, we aim to design a data
+structure that can efficiently and accurately answer range
+queries of Tucker decomposition without re-computing from
+scratch for each query.
+air pollutant 𝑗 in location𝑖 at time𝑡. Consider a case study where we
+want to analyze air pollution patterns in March of each year. Here,
+each range query is a month (March 2015, March 2016, or March
+2017; see Figure 1). With the help of Tucker decomposition range
+queries, we can find out which locations share similarity pollution
+patterns in each month by clustering the row vectors of the location
+factor matrix 𝑼 (2) of Tucker decomposition of each month. Results
+of the case study are shown in Figure 1. See Section 8.6 for detail.
+We design our TUCKET with the following three design goals
+for a tensor time series data structure.
+G1: Frequent arbitrary range queries. We focus on the situation
+where queries are frequent, and we only consider online algorithms
+(i.e., the algorithm has to process each operation sequentially as
+soon as it arrives). Thus, we need to optimize the worst-case com-
+plexity of answering each single range query. Besides that, we do
+not assume any extra prior knowledge about the distribution of
+possible range queries. Hence, we focus on the worst-case com-
+plexity parameterized by: (i) the maximum size of non-temporal
+modes, 𝐷 := max{𝐷2, . . . , 𝐷𝑝 }; (ii) the timespan, 𝑇 ; (iii) the max-
+imum target size, 𝑟 := max{𝑟1, . . . , 𝑟𝑝 }; and (iv) the length of the
+query range, 𝐿 := 𝑇e − 𝑇s.
+G2: Periodic stream updates. In real-world use cases, stream
+updates to the tensor stream are typically periodic but may not be
+as frequent as range queries. For instance, in the stock example
+in Figure 2, the tensor stream is updated in a daily basis. Hence,
+we allow the stream update operation to be a little more expensive
+than range queries. Nonetheless, we still aim to optimize the time
+complexity of stream updates so that it scales at most sublinearly
+w.r.t. the total size𝑇 𝐷2 · · ·𝐷𝑝 of the current tensor time series.
+G3: Nearly linear space.Every preprocessing-based data structure
+is essentially a space–time tradeoff [16, 25] in that more preprocess-
+ing leads to higher efficiency. On the one hand, if no preprocessing
+were allowed, it would be impossible to outperform the naïve al-
+gorithm that simply computes from scratch for each query. On
+the other hand, if unlimited preprocessing were allowed, then a
+trivial algorithm would be to preprocess the answers for all possible
+𝑂 (𝑇 2) query ranges. To rule out such trivial algorithms, we require
+that the space used by the preprocessing phase should be nearly
+〈1〉[0, 1)
+〈10〉[4, 6)
+〈3〉[1, 2)
+〈2〉[0, 2)
+〈6〉[2, 3)〈7〉[3, 4)
+〈5〉[2, 4)
+〈9〉[4, 8)〈4〉[0, 4)
+〈11〉[4, 5)〈12〉[5, 6)〈14〉[6, 7)〈15〉[7, 8)
+〈13〉[6, 8)
+〈8〉[0, 8)
+〈16〉[0, 16)
+〈17〉[8, 16)
+〈18〉[8, 12)
+〈19〉[8, 10)
+〈20〉[8, 9)
+Intermediate nodes ℳLeaf nodes ℒPlaceholder nodes 𝒫
+Entire hitPartial hit
+Time range of node 𝑣Node number〈𝑣〉𝜎!,𝜏!
+Figure 3: Illustration of our TUCKET over timespan [0, 9). It
+has height 5 = ⌈log2 9⌉ + 1. When answering a range query
+[𝑇s, 𝑇e) = [1, 6) with pruning threshold 𝜃 = 0.7, node ⟨4⟩ is a
+partial hit because | [1, 6) ∩ [ 0, 4)| = | [1, 4)| ≥ 0.7| [0, 4)| , and
+node ⟨10⟩ is an entire hit because [4, 6) ⊆ [ 1, 6).
+linear w.r.t. the timespan𝑇 , i.e., ˜︁𝑂 (𝑇 ). As a remark, we assume that
+𝑝 = 𝑂 (1) and 𝑟 = 𝑜 (𝐷) in our complexity analysis.
+4 TUCKET: DATA STRUCTURE DESIGN
+In this section, we detail the design of our proposed data structure
+Tucker Tree (TUCKET). We first introduce the challenges of the
+problem and our key ideas in Section 4.1 and then present the
+design of our stream segment tree in Section 4.2. Due to the space
+limit, detailed proofs are deferred to the full version.
+4.1 Challenges & Key Ideas
+Our TUCKET is designed for efficient Tucker decomposition over
+time ranges. An essential challenge of this problem is that the
+Tucker decomposition operation does not form either an Abelian
+group or a semigroup w.r.t. tensor concatenation. This means that
+we cannot use classic data structures such as prefix sum tables, Fen-
+wick trees [20], or Cartesian trees [9] to compute Tucker decomposi-
+tion over time ranges. The state-of-the-art idea (proposed in [30]) is
+to divide the time range [0, 𝑇) into disjoint blocks [0, 𝑏), [𝑏, 2𝑏), . . .
+of equal size 𝑏 and preprocess the Tucker decomposition for each
+block. However, this idea suffers from an inevitable tradeoff be-
+tween efficiency and accuracy: a small block size 𝑏 leads to ineffi-
+ciency for long time ranges; a large block size causes inaccuracy
+for time ranges shorter than 𝑏. This is because a larger block size
+𝑏 corresponds to a coarser-grained preprocessing, which may fail
+to preserve finer-grained patterns that exist temporarily in time
+ranges shorter than 𝑏. For instance, if the block size 𝑏 corresponds
+to a month, then Zoom-Tucker will be likely to yield inaccurate
+results when querying for a week. To the best of our knowledge,
+our work is the first data structure that addresses this challenge
+without the efficiency–accuracy tradeoff.
+Our first key idea, aiming to address this challenge, is to divide
+the time range [0, 𝑇) into carefully designed uneven, overlapping
+blocks such that every range query can be expressed as a disjoint
+union of a small number of “blocks. ” Our idea leads us to the segment
+tree [10], a data structure from computational geometry. Crucially,
+in a segment tree over a timespan[0, 𝑇), we can associate each node
+𝑣 with a subrange [𝜎𝑣, 𝜏𝑣 ) such that every range [𝑇s, 𝑇e) ⊆ [ 0, 𝑇)
+can be expressed as a disjoint union of at most 𝑂 (log𝑇 ) nodes. We
+call these nodes the hit set of [𝑇s, 𝑇e). Then, we can answer each
+range query efficiently by stitching the preprocessed subtensor
+decompositions of the hit set.
+However, the original segment tree has a static structure and
+thus does not support stream data. Hence, we cannot simply apply
+the segment tree. As our second key idea, we propose a new data
+structure called the stream segment tree to support stream updates
+in our setting. Our key insight regarding why segment trees are
+static is that it is required to be a full binary tree in order to maintain
+a depth of 𝑂 (log𝑇 ). Instead, we propose to relax this requirement
+and allow our stream segment tree to be incomplete. To maintain a
+depth of 𝑂 (log𝑇 ), we propose extending the root instead of only
+extending leaf nodes like typical balanced search trees [ 22]. Fur-
+thermore, each stream update operation only involves amortized
+𝑂 (1) nodes to be updated. We will describe the detailed design of
+our stream segment tree in Section 4.2.
+4.2 Stream Segment Tree
+The basic structure of our TUCKET is a stream segment tree, which
+is a generalization of the segment tree [ 10] from computational
+geometry. Here, we detail the design of our stream segment tree.
+As we have discussed, the original segment tree does not support
+stream updates. To enable stream updates, our key idea is to em-
+ploy an expanded segment tree with an incomplete structure that
+reserves the position of future nodes to support efficient updates
+but does not construct them explicitly.
+Specifically, a stream segment tree is a binary tree where each
+node 𝑣 is associated with a time range [𝜎𝑣, 𝜏𝑣 ). There are three
+types of nodes in a stream segment tree:leaf nodes L, intermediate
+nodes M, and placeholder nodes P.
+Leaf nodes. Each leaf node 𝑣 ∈ L represents a tensor slice X𝑡 , so
+we let the leaf range be [𝜎𝑣, 𝜏𝑣 ) := [𝑡, 𝑡 + 1). After 𝑇 updates, we
+require time ranges of leaf nodes to be contiguous, i.e., the whole
+range [0, 𝑇) is a disjoint union of the time ranges of leaf nodes:⨆︂
+𝑣 ∈ L
+[𝜎𝑣, 𝜏𝑣 ) = [0, 𝑇). (4)
+Besides that, we preprocess the Tucker decomposition of X[𝑡,𝑡 +1)
+and store it as Y𝑣 := H𝑣 ×1 𝑽 (1)
+𝑣 · · · ×𝑝 𝑽 (𝑝 )
+𝑣 . Note that we only
+compute the core tensor H𝑣 and factor matrices 𝑽 (1)
+𝑣 , . . . , 𝑽 (𝑝 )
+𝑣 but
+never actually compute Y𝑣, i.e., Y𝑣 is only a symbol to refer to the
+product.
+Intermediate nodes. For each intermediate node𝑣 ∈ M with time
+range [𝜎𝑣, 𝜏𝑣 ), it represents a subtensor X[𝜎𝑣 ,𝜏𝑣 ). An intermediate
+node has exactly two children nodes 𝑢1, 𝑢2 ∈ L ∪ M that have
+adjoint time ranges:
+[𝜎𝑣, 𝜏𝑣 ) := [𝜎𝑢1, 𝜏𝑢1 ) ⊔ [ 𝜎𝑢2, 𝜏𝑢2 ). (5)
+Besides that, similarly with leaf nodes, we preprocess the Tucker
+decomposition of X[𝜎𝑣 ,𝜏𝑣 ) and store it as Y𝑣 := H𝑣 ×1 𝑽 (1)
+𝑣 · · · ×𝑝
+𝑽 (𝑝 )
+𝑣 . Here, Y𝑣 is still only a symbol to refer to the product.
+Placeholder nodes. A placeholder node 𝑣 ∈ P represents a future
+subtensor where some of its slices have not been observed yet.
+Formally, if the current observed timespan is [0, 𝑇). then the time
+range [𝜎𝑣, 𝜏𝑣 ) of the placeholder node has 𝜎𝑣 < 𝑇 and 𝜏𝑣 ≥ 𝑇 . A
+placeholder node has either one or two children. If 𝑣 has only one
+child, then it has a left child 𝑢1 ∈ L ∪ M ∪ P ; otherwise, 𝑣 has
+a left child 𝑢1 ∈ L ∪ M and a right child 𝑢2 ∈ P . Similarly with
+intermediate nodes, we require its children to have adjoint time
+ranges, i.e., [𝜎𝑣, 𝜏𝑣 ) := [𝜎𝑢1, 𝜏𝑢1 ) ⊔ [ 𝜎𝑢2, 𝜏𝑢2 ). Meanwhile, unlike
+leaf and intermediate nodes, since the subtensor of the time range
+[𝜎𝑣, 𝜏𝑣 ) has not been completely observed yet, we do not preprocess
+the Tucker decomposition of a placeholder node and do not allow
+placeholder nodes to be in the hit set.
+Logarithmic height. To efficiently answer range queries, we want
+that every range query[𝑇s, 𝑇e) ⊆ [ 0, 𝑇) can be divided into a disjoint
+union of a small number of nodes (called the hit set) in the stream
+segment tree. We make a key observation on the relation between
+the size of the hit set and the height of the stream segment tree, as
+formally stated in Lemma 4.1.
+Lemma 4.1 (Hit set v.s. height). Given a stream segment tree
+of height ℎ ≥ 1, for every range query, there exists a hit set of size
+≤ max{2(ℎ − 1), 1}.
+Proof sketch. First, if the query range [𝑇s, 𝑇e) is a prefix or
+a suffix of the time range [𝜎𝑣, 𝜏𝑣 ) of a node 𝑣 (i.e., 𝑇s = 𝜎𝑣 or
+𝑇e = 𝜏𝑣), then an induction shows that there exists a hit set of size
+≤ ℎ. Next, if the query range is neither a prefix nor a suffix of
+the time range of any node, then we can show that there exists
+two non-root nodes 𝑣1, 𝑣2 such that 𝜏𝑣1 = 𝜎𝑣2 and that [𝑇s, 𝑇e) =
+[𝜎𝑣1, 𝜏𝑣1 ) ⊔ [ 𝜎𝑣2, 𝜏𝑣2 ). In this case, [𝑇s, 𝑇e) ∩ [ 𝜎𝑣1, 𝜏𝑣1 ) is a suffix of
+[𝜎𝑣1, 𝜏𝑣1 ), and [𝑇s, 𝑇e) ∩ [𝜎𝑣2, 𝜏𝑣2 ) is a prefix of [𝜎𝑣2, 𝜏𝑣2 ). Since 𝑣1, 𝑣2
+are not the root, then[𝑇s, 𝑇e) has a hit set of size≤ 2(ℎ−1). Together,
+the size of the hit set is ≤ max{2(ℎ − 1), ℎ} = max{2(ℎ − 1), 1}. □
+Lemma 4.1 motivates us to require the stream segment tree to
+have a small height. We show that the stream segment tree can
+indeed have a logarithmic height w.r.t. the time range𝑇 , as formally
+stated in Theorem 4.2.
+Theorem 4.2 (Logarithmic height). There exists a stream seg-
+ment tree structure over range [0, 𝑇) of height ≤ ⌈ log2 𝑇 ⌉ + 1.
+Proof sketch. Using the algorithm in Section 6.2 to append
+the tensor slices X0, . . . , X𝑇 −1 one by one, we can build a stream
+segment tree over [0, 𝑇). By Theorem 6.2, this stream segment tree
+has height ⌈log2 𝑇 ⌉ + 1. □
+The tree structure in Theorem 4.2 not only exists in theory but
+can also be maintained efficiently. We will present an efficient
+algorithm to maintain the logarithmic height in a stream update
+in Section 6.2. From now on, we will refer to the tree structure in
+Theorem 4.2 simply as the “stream segment tree. ”
+Proposition 4.3 (Space complexity). The space complexity of a
+stream segment tree over range [0, 𝑇) is 𝑂 ((𝑟 𝐷 + 𝑟 𝑝 )𝑇 + 𝑟𝑇 log𝑇 ).
+Proof sketch. In a stream segment tree over the range [0, 𝑇),
+there are 𝑂 (𝑇 ) nodes each of which has 𝑝 − 1 non temporal factor
+matrices of the size 𝑂 (𝑟 𝐷) and a core tensor of the size 𝑂 (𝑟 𝑝 ). In
+addition, at each level of the tree, the sum of the sizes of temporal
+factor matrices is 𝑂 (𝑟𝑇 ). Therefore, the space complexity of the
+stream segment tree is 𝑂 (( 𝑝𝑟 𝐷 + 𝑟 𝑝 )𝑇 + 𝑟𝑇 log𝑇 ). □
+Example. An example of our stream segment tree over timespan
+[0, 9) is illustrated in Figure 3. It has height 5 = ⌈log2 9⌉ + 1. Leaf
+nodes ⟨1⟩, ⟨3⟩, ⟨6⟩, ⟨7⟩, ⟨11⟩, ⟨12⟩, ⟨14⟩, ⟨15⟩, ⟨20⟩ represent tensor
+slices X0, . . . , X8, respectively. Intermediate nodes store prepro-
+cessed results. We will also use this example in the subsequent
+sections to illustrate other operations.
+5 TUCKET: CORE ALGORITHMS
+In this section, we present two core algorithms that will be used
+in the operations of TUCKET in Section 6. We describe how to
+optimally prune the hit set in Section 5.1 and how to stitch subtensor
+decompositions in the hit set in Section 5.2.
+5.1 Optimally Pruning the Hit Set
+The first core algorithm of TUCKET is finding a small hit set for each
+range query. By Lemma 4.1 & Theorem 4.2, we have shown that
+the hit set has a small size 𝑂 (log𝑇 ). Although this size cannot be
+improved for general operations, here we present a key observation
+about the Tucker decomposition of a subtensor and leverage this
+observation to further prune the hit set.
+Approximating a subtensor decomposition. Here we present
+our key observation about the Tucker decomposition of a sub-
+tensor. Suppose that a tensor X[𝜎𝑣 ,𝜏𝑣 ) has Tucker decomposition
+H𝑣 ×1 𝑽 (1)
+𝑣 · · · ×𝑝 𝑽 (𝑝 )
+𝑣 . Due to the low-rank nature of real-world
+tensors [44], they can typically be well approximated by Tucker
+decomposition:
+X[𝜎𝑣 ,𝜏𝑣 ) ≈ H𝑣 ×1 𝑽 (1)
+𝑣 · · · ×𝑝 𝑽 (𝑝 )
+𝑣 . (6)
+We observe that for real-world tensors, there typically exists a
+threshold 0 < 𝜃 < 1 (see Section 8.5) such that for a sub-range
+[𝑇 ′s , 𝑇′e ) ⊆ [ 𝜎𝑣, 𝜏𝑣 ) with
+|︁|︁[𝑇 ′s , 𝑇′e )
+|︁|︁≥ 𝜃
+|︁|︁[𝜎𝑣, 𝜏𝑣 )
+|︁|︁(i.e., the sub-range
+[𝑇 ′s , 𝑇′e ) is not too small compared with [𝜎𝑣, 𝜏𝑣 )), the subtensor
+X[𝑇 ′s ,𝑇 ′e ) can be well approximated by
+X[𝑇 ′s ,𝑇 ′e ) = (X[𝜎𝑣 ,𝜏𝑣 ) )[𝑇 ′s −𝜎𝑣 ,𝑇 ′e −𝜎𝑣 ) (7)
+≈ ( H𝑣 ×1 𝑽 (1)
+𝑣 ×2 𝑽 (2)
+𝑣 · · · ×𝑝 𝑽 (𝑝 )
+𝑣 )[𝑇 ′s −𝜎𝑣 ,𝑇 ′e −𝜎𝑣 ) (8)
+= H𝑣 ×1 (𝑽 (1)
+𝑣 )[𝑇 ′s −𝜎𝑣 ,𝑇 ′e −𝜎𝑣 ) ×2 𝑽 (2)
+𝑣 · · · ×𝑝 𝑽 (𝑝 )
+𝑣 . (9)
+This almost yields an approximate Tucker decomposition ofX[𝑇 ′s ,𝑇 ′e ),
+except that the temporal factor matrix (𝑽 (1)
+𝑣 )[𝑇 ′s −𝜎𝑣 ,𝑇 ′e −𝜎𝑣 ) is not
+necessarily column-orthonormal. To make it column-orthonormal,
+we can first compute a QR decomposition [21] (𝑽 (1)
+𝑣 )[𝑇 ′s −𝜎𝑣 ,𝑇 ′e −𝜎𝑣 ) =:
+˜︁𝑸˜︁𝑹 (where ˜︁𝑸 is column-orthonormal) and then use the reverse as-
+sociativity1 [38] of ×1 to give a Tucker decomposition:
+X[𝑇 ′s ,𝑇 ′e ) ≈ H𝑣 ×1 (𝑽 (1)
+𝑣 )[𝑇 ′s −𝜎𝑣 ,𝑇 ′e −𝜎𝑣 ) ×2 𝑽 (2)
+𝑣 · · · ×𝑝 𝑽 (𝑝 )
+𝑣 (10)
+= H𝑣 ×1 (˜︁𝑸˜︁𝑹) ×2 𝑽 (2)
+𝑣 · · · ×𝑝 𝑽 (𝑝 )
+𝑣 (11)
+= (H𝑣 ×1 ˜︁𝑹) ×1 ˜︁𝑸 ×2 𝑽 (2)
+𝑣 · · · ×𝑝 𝑽 (𝑝 )
+𝑣 , (12)
+where the core tensor is H𝑣 ×1 ˜︁𝑹, and the temporal factor matrix is
+˜︁𝑸. In this way, we can efficiently compute an approximate Tucker
+decomposition of a subtensor X[𝑇 ′s ,𝑇 ′e ) using only a QR decomposi-
+tion and a mode-1 product and do not need to further divide[𝑇 ′s , 𝑇′e )
+into smaller sub-ranges. This helps to reduce the size of the hit set.
+Formulation of hit set pruning. This key observation motivates
+us to consider partial hits . Let 0 < 𝜃 < 1 denote the threshold
+above. We call a node𝑣 ∈ M a partial hit of a range query [𝑇s, 𝑇e) if|︁|︁[𝑇s, 𝑇e) ∩ [𝜎𝑣, 𝜏𝑣 )
+|︁|︁≥ 𝜃
+|︁|︁[𝜎𝑣, 𝜏𝑣 )
+|︁|︁and [𝜎𝑣, 𝜏𝑣 ) ⊈ [𝑇s, 𝑇e); we call it an
+1The reverse associativity means that Z ×𝑛 𝑨 ×𝑛 𝑩 = Z ×𝑛 (𝑩𝑨).
+Algorithm 1 (Recall): Finding a pruned hit set
+Input: current node 𝑣; query range [𝑇s, 𝑇e)
+Output: a pruned hit set of [𝑇s, 𝑇e) in the subtree rooted at 𝑣
+1: if 𝑣 ∈ L ∪ M and
+|︁|︁[𝑇s, 𝑇e) ∩ [ 𝜎𝑣, 𝜏𝑣 )
+|︁|︁≥ 𝜃
+|︁|︁[𝜎𝑣, 𝜏𝑣 )
+|︁|︁then
+2: return {𝑣 }
+3: end if
+4: let 𝑢1, 𝑢2 be the left and right children of 𝑣, respectively
+5: if 𝑇e ≤ 𝜏𝑢1 then
+6: return Recall(𝑢1, [𝑇s, 𝑇e))
+7: else if 𝑇s ≥ 𝜎𝑢2 then
+8: return Recall(𝑢2, [𝑇s, 𝑇e))
+9: else
+10: return Recall(𝑢1, [𝑇s, 𝑇e)) ∪ Recall(𝑢2, [𝑇s, 𝑇e))
+11: end if
+entire hit of [𝑇s, 𝑇e) if [𝜎𝑣, 𝜏𝑣 ) ⊆ [ 𝑇s, 𝑇e). Using Eq. (12), we can effi-
+ciently approximate the Tucker decomposition of X[𝑇s,𝑇e )∩[ 𝜎𝑣 ,𝜏𝑣 ).
+Hence, we can reduce the size of the hit set by allowing partial hits
+in the hit set. Formally, minimizing the size of the hit set S can be
+formulated as the following optimization problem:
+min
+S ⊆ L∪M
+|S| , (13)
+s.t. [𝑇s, 𝑇e) = ⨆︁
+𝑣 ∈ S
+[𝑇s, 𝑇e) ∩ [ 𝜎𝑣, 𝜏𝑣 ), (14)
+|︁|︁[𝑇s, 𝑇e) ∩ [ 𝜎𝑣, 𝜏𝑣 )
+|︁|︁≥ 𝜃
+|︁|︁[𝜎𝑣, 𝜏𝑣 )
+|︁|︁, ∀𝑣 ∈ S . (15)
+An optimal algorithm for pruning. To solve the formulation
+above for hit set pruning, we propose an efficient recursive algo-
+rithm that runs in 𝑂 (log𝑇 ) time. The basic idea is as follows. We
+start from the root node. If the root node is a partial hit, then we stop
+and return the root node as the hit set. Otherwise, we consider its
+two children and repeat the procedure above. The overall procedure
+is presented in Algorithm 1. Since the height of the stream segment
+tree is 𝑂 (log𝑇 ), and Algorithm 1 visits at most two nodes at each
+height, then the total running time of Algorithm 1 is 𝑂 (log𝑇 ).
+Furthermore, our Theorem 5.1 shows that our Algorithm 1 is
+indeed optimal — it can find the smallest hit set that satisfies the
+constraints Eqs. (14) & (15).
+Theorem 5.1 (Optimality & complexity of Algorithm 1).
+Given a range query [𝑇s, 𝑇e), Algorithm 1 minimizes the formulation
+in Eq. (13) within 𝑂 (log𝑇 ) running time and finds a hit set with 𝑂 (1)
+partial hits and 𝑂 (log 𝐿) entire hits, where 𝐿 := 𝑇e − 𝑇s.
+Proof sketch. Optimality. Note that if the two children of a
+node 𝑣 are both in the hit set, then replacing the two children with
+the node 𝑣 gives a smaller, valid hit set. Using this fact, it can be
+shown that every node in the optimal hit set should not have a
+parent node that is also a valid hit. Finally, by analyzing the top-
+down procedure of Algorithm 1, we can show that Algorithm 1 can
+indeed find such a hit set, and that the hit set cannot be replaced
+with a smaller hit set.
+Complexity. An induction similar with the proof of Lemma 4.1
+shows that the hit set found by Algorithm 1 has 𝑂 (1) partial hits
+and 𝑂 (log 𝐿) entire hits. Since the height of the stream segment
+tree is 𝑂 (log𝑇 ), the number of nodes traversed in the process of
+finding the hit set is at most 𝑂 (log𝑇 + log 𝐿) = 𝑂 (log𝑇 ). Finally,
+as Algorithm 1 performs 𝑂 (1) operations per node traversed, its
+time complexity is 𝑂 (log𝑇 ). □
+Example. Algorithm 1 is exemplified in Figure 3. When answering a
+range query [1, 6) with 𝜃 = 0.7, [0, 4) is a partial hit because| [1, 6) ∩
+[0, 4)| ≥ 0.7| [0, 4)| , and [4, 6) is an entire hit because [4, 6) ⊆ [ 1, 6).
+For the partial hit [0, 4), we use Eq. (12) to approximate the Tucker
+decomposition of the sub-range [1, 6) ∩ [ 0, 4) = [1, 4).
+5.2 Stitching Subtensor Decompositions
+Another core algorithm of TUCKET is stitching subtensor decom-
+positions in the hit set. Given a range query [𝑇s, 𝑇e), suppose that
+the (pruned) hit set is S = {𝑣1, . . . , 𝑣𝑠 }, where 𝑠 := |S| denotes
+the size of the hit set. For each partial hit, we use Eq. (12) to com-
+pute its approximate Tucker decomposition ˜︁Y𝑖 of the subtensor
+X[𝑇s,𝑇e )∩[ 𝜎𝑣𝑖 ,𝜏𝑣𝑖 ); for each entire hit𝑣𝑖, we retrieve its preprocessed
+Tucker decomposition ˜︁Y𝑖 := Y𝑣𝑖 . Same as before, here ˜︁Y1, . . . , ˜︁Y𝑠
+are just symbols to refer to the Tucker decomposition products.
+We aim to efficiently compute an approximate Tucker decomposi-
+tion of X[𝑇s,𝑇e ) using these preprocessed subtensor decompositions
+˜︁Y1, . . . , ˜︁Y𝑠.
+A key observation is that X[𝑇s,𝑇e )∩[ 𝜎𝑣𝑖 ,𝜏𝑣𝑖 ) ≈ ˜︁Y𝑖 due to the low-
+rank nature of real-world tensors [44]. This motivates us to express
+X[𝑇s,𝑇e ) as a concatenation of the hit set along the temporal mode:
+X[𝑇s,𝑇e ) =
+⎡⎢⎢⎢⎢⎣
+X[𝑇s,𝑇e ) ∩[𝜎𝑣1 ,𝜏𝑣1 )
+...
+X[𝑇s,𝑇e ) ∩[𝜎𝑣𝑠 ,𝜏𝑣𝑠 )
+⎤⎥⎥⎥⎥⎦
+≈
+⎡⎢⎢⎢⎢⎣
+˜︁Y1
+...
+˜︁Y𝑠
+⎤⎥⎥⎥⎥⎦
+. (16)
+Next, we design an efficient algorithm to compute the Tucker de-
+composition of X[𝑇s,𝑇e ) by stitching the subtensor decompositions
+˜︁Y1, . . . , ˜︁Y𝑠. The key idea here is to leverage the concatenation form
+of ˜︁Y :=
+⎡⎢⎢⎢⎢⎣
+˜︁Y1
+...
+˜︁Y𝑠
+⎤⎥⎥⎥⎥⎦
+and again utilize the reverse associativity1 [38] of the
+tensor–matrix product so as to efficiently compute the matriciza-
+tions in Tucker-ALS.
+Let ˜︁H𝑖 and ˜︁𝑽 (1)
+𝑖 , . . . , ˜︁𝑽 (𝑝 )
+𝑖 denote the core tensor and the factor
+matrices in ˜︁Y𝑖, respectively, and let G and 𝑼 (1), . . . , 𝑼 (𝑝 ) denote
+the core tensor and the factor matrices of X[𝑇s,𝑇e ) to be computed,
+respectively. Since the optimal update of the factor matrix 𝑼 (𝑛) is
+the 𝑟𝑛 leading left singular vectors of the matricization in Eq. (2),
+we need to compute this matricization efficiently. Since the con-
+catenation is along the temporal mode, we will describe how to
+efficiently compute the matricization for the temporal mode and the
+non-temporal modes separately. The overall procedure of stitching
+subtensor decompositions is presented in Algorithm 2.
+Matricization of the temporal mode. Our goal is to compute
+the matricization in Eq. (2) without explicitly computing the large
+tensor ˜︁Y. First, we rewrite the matricizations of ˜︁Y𝑖 via the matrix
+Kronecker product ⊗:
+mat1 (˜︁Y𝑖 ) = mat1 ( ˜︁H𝑖 ×1 ˜︁𝑽 (1)
+𝑖 · · · ×𝑝 ˜︁𝑽 (𝑝 )
+𝑖 ) (17)
+= ˜︁𝑽 (1)
+𝑖 mat1 ( ˜︁H𝑖 )
+𝑝⨂︂
+𝑚=2
+˜︁𝑽 (𝑚)T
+𝑖 . (18)
+Similarly, we can rewrite the matricization in Eq. (2) as
+mat1 (˜︁Y ×1 𝑼 (2)T · · · · · · ×𝑝 𝑼 (𝑝 )T) = mat1 (˜︁Y)
+𝑝⨂︂
+𝑚=2
+𝑼 (𝑚) . (19)
+Algorithm 2 (Stitch): Stitching subtensor decompositions
+Input: subtensor decompositions ˜︁Y𝑖 := ˜︁H𝑖 ×1 ˜︁𝑽 (1)
+𝑖 · · · ×𝑝 ˜︁𝑽 (𝑝 )
+𝑖
+of the hit set {𝑣1, . . . , 𝑣𝑠 }
+Output: stitched Tucker decomposition of
+⎡⎢⎢⎢⎢⎣
+˜︁Y1
+...
+˜︁Y𝑠
+⎤⎥⎥⎥⎥⎦
+1: randomly initialize 𝑼 (2), . . . , 𝑼 (𝑝 )
+2: repeat
+3: obtain 𝒁 (1) using Eq. (22)
+4: let 𝑼 (1) be the 𝑟1 leading left singular vectors of 𝒁 (1)
+5: 𝑡0 ← 0
+6: for 𝑖 ← 1, . . . , 𝑠 do
+7: 𝑡𝑖 ← 𝑡𝑖 −1 + (𝜏𝑣𝑖 − 𝜎𝑣𝑖 )
+8: end for
+9: for 𝑛 ← 2, . . . , 𝑝 do
+10: obtain 𝒁 (𝑛) using Eq. (27)
+11: let 𝑼 (𝑛) be the 𝑟𝑛 leading left singular vectors of 𝒁 (𝑛)
+12: end for
+13: reshape 𝒁 (𝑝 ) into a tensor Z(𝑝 ) ∈ R𝑟1 ×···×𝑟𝑝 −1 ×𝐷𝑝
+14: G ← Z(𝑝 ) ×𝑝 𝑼 (𝑝 )T
+15: until converged
+16: return (G, 𝑼 (1), . . . , 𝑼 (𝑝 ) )
+Since the matricization of the concatenation ˜︁Y is equal to the con-
+catenation of mat1 (˜︁Y𝑖 )’s, then by the mixed-product property2 [11]
+of the Kronecker product, Eq. (19) can be further rewritten as:
+⎡⎢⎢⎢⎢⎢⎣
+˜︁𝑽
+(1)
+1 mat1 ( ˜︂H1 ) (⨂︁𝑝
+𝑚=2 ˜︁𝑽
+(𝑚)T
+1 ) (⨂︁𝑝
+𝑚=2 𝑼 (𝑚) )
+...
+˜︁𝑽
+(1)
+𝑠 mat1 ( ˜︂H𝑠 ) (⨂︁𝑝
+𝑚=2 ˜︁𝑽
+(𝑚) T
+𝑠 ) (⨂︁𝑝
+𝑚=2 𝑼 (𝑚) )
+⎤⎥⎥⎥⎥⎥⎦
+(20)
+=
+⎡⎢⎢⎢⎢⎢⎣
+˜︁𝑽
+(1)
+1 mat1 ( ˜︂H1 ) ⨂︁𝑝
+𝑚=2 ( ˜︁𝑽
+(𝑚)T
+1 𝑼 (𝑚) )
+...
+˜︁𝑽
+(1)
+𝑠 mat1 ( ˜︂H𝑠 ) ⨂︁𝑝
+𝑚=2 ( ˜︁𝑽
+(𝑚) T
+𝑠 𝑼 (𝑚) )
+⎤⎥⎥⎥⎥⎥⎦
+(21)
+=
+⎡⎢⎢⎢⎢⎢⎣
+mat1 ( ˜︂H1 ×1 ˜︁𝑽
+(1)
+1 ×2 (𝑼 (2) T ˜︁𝑽
+(2)
+1 ) ···×𝑝 (𝑼 (𝑝 ) T ˜︁𝑽
+(𝑝 )
+1 ) )
+...
+mat1 ( ˜︂H𝑠 ×1 ˜︁𝑽
+(1)
+𝑠 ×2 (𝑼 (2)T ˜︁𝑽
+(2)
+𝑠 ) ···×𝑝 (𝑼 (𝑝 ) T ˜︁𝑽
+(𝑝 )
+𝑠 ) )
+⎤⎥⎥⎥⎥⎥⎦
+. (22)
+Computintg Eq. (22) only involves small matrices for non-temporal
+modes and avoids explicitly computing the large tensor ˜︁Y which
+requires 𝑂 (𝑟 𝐷𝑝 −1 (𝑇𝑒 − 𝑇𝑠 )).
+Lemma 5.2 (Time complexity of the temporal mode). Com-
+puting the matricization of the temporal mode in Eq. (22) takes
+𝑂 ((𝑟 2𝐷 + 𝑟 𝑝+1)𝑠 + 𝑟 𝑝𝐿) time where 𝐿 = 𝑇e − 𝑇s.
+Proof sketch. Eq. (22) consists of three computations whose
+costs are as follows: for 𝑛 = 2, ..., 𝑝 and 𝑖 = 1, ..., 𝑠, (1) matrix multi-
+plications 𝑼 (𝑛)T˜︁𝑽 (𝑛)
+𝑖 , (2) tensor-matrix products between ˜︁H𝑖 and
+the preceding results 𝑼 (𝑛)T˜︁𝑽 (𝑛)
+𝑖 , and (3) tensor-matrix products
+between the preceding results and matrices ˜︁𝑽 (1)
+𝑖 take 𝑂 (𝑟 2𝐷𝑠 ),
+𝑂 (𝑟 𝑝+1𝑠), and 𝑂 (𝑟 𝑝𝐿) time, respectively. Therefore, the complexity
+for computing Eq. (22) is 𝑂 ((𝑟 2𝐷 + 𝑟 𝑝+1)𝑠 + 𝑟 𝑝𝐿). □
+2The mixed-product property means that (𝑨 ⊗ 𝑩) (𝑪 ⊗ 𝑫 ) = (𝑨𝑪 ) ⊗ ( 𝑩𝑫 ).
+Matricization of the non-temporal modes. For a non-temporal
+mode 𝑛 = 2, . . . , 𝑝, the matricization is different from Eq. (22) be-
+cause the concatenation is along the temporal mode. Nevertheless,
+we can still consider using the Kronecker product to rewrite the
+matricization in Eq. (2) as:
+mat𝑛 (˜︁Y)
+⨂︂
+𝑚≠𝑛
+𝑼 (𝑚) = [mat𝑛 (˜︁Y1), . . . , mat𝑛 (˜︁Y𝑠 )]
+⨂︂
+𝑚≠𝑛
+𝑼 (𝑚) . (23)
+Let 𝑡0 := 0, and 𝑡𝑖 := 𝑡𝑖 −1 + (𝜏𝑣𝑖 − 𝜎𝑣𝑖 ) for 𝑖 = 1, . . . , 𝑠. Then, each
+hit node 𝑣𝑖 corresponds to the subtensor ˜︁Y[𝑡𝑖 −1,𝑡𝑖 ). By splitting the
+temporal factor matrix as 𝑼 (1) =
+⎡⎢⎢⎢⎢⎢⎣
+𝑼 (1)
+[𝑡0,𝑡1 )
+...
+𝑼 (1)
+[𝑡𝑠 −1,𝑡𝑠 )
+⎤⎥⎥⎥⎥⎥⎦
+and using the mixed-
+product property of the Kronecker product again, we can further
+rewrite Eq. (23) as
+𝑠∑︂
+𝑖=1
+mat𝑛 (˜︁Y𝑖 )
+(︃
+𝑼 (𝑛)
+[𝑡𝑖 −1,𝑡𝑖 ) ⊗
+⨂︂
+𝑚≠1,𝑛
+𝑼 (𝑚)
+)︃
+(24)
+=
+𝑠∑︂
+𝑖=1
+˜︁𝑽 (𝑛)
+𝑖 mat𝑛 ( ˜︁H𝑖 )
+(︃⨂︂
+𝑚≠𝑛
+˜︁𝑽 (𝑚)T
+𝑖
+)︃ (︃
+𝑼 (1)
+[𝑡𝑖 −1,𝑡𝑖 ) ⊗
+⨂︂
+𝑚≠1,𝑛
+𝑼 (𝑚)
+)︃
+(25)
+=
+𝑠∑︂
+𝑖=1
+˜︁𝑽 (𝑛)
+𝑖 mat𝑛 ( ˜︁H𝑖 )
+(︃
+(˜︁𝑽 (1)T
+𝑖 𝑼 (1)
+[𝑡𝑖 −1,𝑡𝑖 ) ) ⊗
+⨂︂
+𝑚≠1,𝑛
+(˜︁𝑽 (𝑚)T
+𝑖 𝑼 (𝑚) )
+)︃
+.
+(26)
+Finally, we rewrite the Kronecker product form in Eq. (26) back to
+the matricization form:𝑠∑︂
+𝑖=1
+mat𝑛 ( ˜︁H𝑖 ×1 (𝑼 (1)T
+[𝑡𝑖 −1,𝑡𝑖 ) ˜︁𝑽 (1)
+𝑖 )
+×2 (𝑼 (2)T˜︁𝑽 (2)
+𝑖 ) · · · ×𝑛−1 (𝑼 (𝑛−1)T˜︁𝑽 (𝑛−1)
+𝑖 ) ×𝑛 ˜︁𝑽 (𝑛)
+𝑖
+×𝑛+1 (𝑼 (𝑛+1)T˜︁𝑽 (𝑛+1)
+𝑖 ) · · · ×𝑝 (𝑼 (𝑝 )T˜︁𝑽 (𝑝 )
+𝑖 )) . (27)
+Computing Eq. (27) only involves small matrices for non-temporal
+modes and avoids explicitly computing the large tensor ˜︁Y.
+Lemma 5.3 (Time complexity of the non-temporal modes).
+Computing the matricization of the non-temporal modes in Eq. (27)
+takes 𝑂 (𝑟 𝑝 𝐷𝑠 + 𝑟 2𝐿) time where 𝐿 := 𝑇e − 𝑇s.
+Proof sketch. Eq. (27) needs four computations: for𝑚 = 2, ..., 𝑛−
+1, 𝑛 + 1, ..., 𝑝 and 𝑖 = 1, ..., 𝑠, (1) matrix multiplications 𝑼 (1)T
+[𝑡𝑖 −1,𝑡𝑖 ) ˜︁𝑽 (1)
+𝑖 ,
+(2) matrix multiplications 𝑼 (𝑚)T˜︁𝑽 (𝑚)
+𝑖 , (3) tensor-matrix products
+between ˜︁H𝑖 and the current results 𝑼 (𝑚)T˜︁𝑽 (𝑚)
+𝑖 , and (4) tensor-
+matrix products between the current results and matrices˜︁𝑽 (𝑛)
+𝑖 take
+𝑂 (𝑟 2𝐿), 𝑂 (𝑟 2𝐷𝑠 ), 𝑂 (𝑟 𝑝+1𝑠), and 𝑂 (𝑟 𝑝 𝐷𝑠 ) time, respectively. Hence,
+the total complexity for computing Eq. (27) is 𝑂 (𝑟 𝑝 𝐷𝑠 + 𝑟 2𝐿). □
+Error analysis. We provide an error analysis of our Stitch algo-
+rithm in the following Proposition 5.4.
+Proposition 5.4 (Error bound). Let X be the concatenation of
+subtensors X(𝑖 ) (𝑖 = 1, . . . , 𝑠), and let Y(𝑖 ) denote the rank-𝑟 Tucker
+decomposition of X(𝑖 ) . Suppose that alternating least squares are
+solved optimally, and that X is approximately low-rank (i.e., X =
+W+E where W has Tucker rank ≤ 𝑟 , and ∥E∥F
+∥X∥F
+≤ 𝜖 for small 𝜖 > 0).
+Then, the stitching algorithm finds a rank- 𝑟 Tucker decomposition Y
+of X with reconstruction error ∥X−Y∥F
+∥X∥F
+≤ 𝑂 (𝜖).
+Proof sketch. Let W(𝑖 ) and E(𝑖 ) denote the part of W and
+E corresponding to the time range of X(𝑖 ), respectively. Then,
+∥X(𝑖 ) − Y(𝑖 ) ∥F ≤ ∥ X(𝑖 ) − W(𝑖 ) ∥F = ∥E(𝑖 ) ∥F for all 𝑖. Let ˜︁Y denote
+the concatenation of Y(𝑖 ). Thus,
+∥X − ˜︁Y∥F ≤
+⌜⎷ 𝑠∑︂
+𝑖=1
+∥E(𝑖 ) ∥2
+F = ∥E∥F ≤ 𝜖 ∥X∥F. (28)
+Since Y is the Tucker decomposition of ˜︁Y, then
+∥X − Y∥F ≤ ∥ X − ˜︁Y∥F + ∥ ˜︁Y − Y∥F ≤ 𝜖 ∥X∥F + ∥ ˜︁Y − W∥F
+≤ 𝜖 ∥X∥F + ∥ ˜︁Y − X∥F + ∥ X − W∥F ≤ 3𝜖 ∥X∥F. □
+Proposition 5.4 implies that the reconstruction error of our
+Stitch algorithm is very close to the error of computing Tucker
+decomposition from scratch via TuckerALS and does not depend
+on the number 𝑠 of subtensors to be stitched.
+6 TUCKET: OPERATIONS
+Having described our design of the data structure in Section 4 and
+two core algorithms in Section 5, we next introduce how to answer
+Tucker decomposition range queries in Section 6.1 and how to
+maintain the tree after appending a tensor slice in Section 6.2.
+6.1 Querying over a Time Range
+A query over time range [𝑇s, 𝑇e) asks to find the Tucker decom-
+position of the subtensor X[𝑇s,𝑇e ). Equipped with the two core
+algorithms in Section 5, we are ready to present the algorithm
+for answering the range query. First, we use Algorithm 1 w.r.t.
+the root of the stream segment tree to find an optimally pruned
+hit set S ⊆ L ∪ M . For each partial hit, we use Eq. (12) to com-
+pute its approximate Tucker decomposition ˜︁Y𝑖 of the subtensor
+X[𝑇s,𝑇e )∩[ 𝜎𝑣𝑖 ,𝜏𝑣𝑖 ); for each entire hit𝑣𝑖, we retrieve its preprocessed
+Tucker decomposition ˜︁Y𝑖 := Y𝑣𝑖 . Same as before, here ˜︁Y1, . . . , ˜︁Y𝑠
+are just symbols to refer to the Tucker decomposition products.
+Finally, we use Algorithm 2 to stitch the subtensor decompositions
+˜︁Y1, . . . , ˜︁Y𝑠 into the Tucker decomposition G ×1 𝑼 (1) · · · ×𝑝 𝑼 (𝑝 ) of
+the queried subtensor X[𝑇s,𝑇e ).
+The overall procedure can be illustrated using the example in
+Figure 3. When answering a range query [𝑇s, 𝑇e) = [1, 6) with
+𝜃 = 0.7, first we use Algorithm 1 to divide [1, 6) into two sub-
+ranges [1, 4) (a partial hit of [0, 4)) and [4, 6) (an entire hit). Since
+[1, 4) is a partial hit of [0, 4), then we use Eq. (12) to approximate
+the Tucker decomposition of [1, 4). Finally, we use Algorithm 2 to
+stitch the decompositions of X[1,4) and X[4,6) into an approximate
+Tucker decomposition of [1, 6).
+Proposition 6.1 (Time complexity). Given a query [𝑇s, 𝑇e),
+TUCKET performs Recall and Stitch operations and takes 𝑂 (𝑟 𝑝 𝐷𝑠 +
+𝑟 2𝑝 −2 (𝐷 +𝐿) +log𝑇 ) time overall, where the query length 𝐿 := 𝑇e −𝑇s,
+and the hit set size 𝑠 = 𝑂 (log 𝐿).
+Proof sketch. For each iteration, there are five computations:
+(1) the Recall algorithm, (2) the matricization of the temporal
+mode, (3) the matricization of 𝑝 − 1 = 𝑂 (1) non-temporal modes,
+(4) Singular value decomposition 𝑝 times, and (5) the computation
+for updating core tensor. Therefore, the overall time complexity is
+𝑂 (𝑟 𝑝 𝐷𝑠 + 𝑟 2𝑝 −2𝐷 + 𝑟 2𝑝 −2𝐿 + log𝑇 ). □
+Algorithm 3 (Insert): Inserting a leaf node
+Input: current node 𝑣; current time 𝑇 ; tensor slice X𝑇
+1: if 𝜎𝑣 = 𝑇 and 𝜏𝑣 = 𝑇 + 1 then
+2: preprocess the Tucker decomposition Y𝑣 of X𝑇
+3: P ← P \ { 𝑣 }
+4: L ← L ∪ { 𝑣 }
+5: else
+6: 𝜇 ←
+⌊︁𝜎𝑣 +𝜏𝑣
+2
+⌋︁
+7: if 𝑇 < 𝜇 then
+8: if 𝑣 does not have a left child 𝑢1 then
+9: create a left child 𝑢1 ∈ P with [𝜎𝑢1, 𝜏𝑢1 ) ← [ 𝜎𝑣, 𝜇)
+10: end if
+11: Insert(𝑢1, 𝑇 ,X𝑇 )
+12: else
+13: if 𝑣 does not have a right child 𝑢2 then
+14: create a right child 𝑢2 ∈ P with [𝜎𝑢2, 𝜏𝑢2 ) ← [ 𝜇, 𝜏𝑣 )
+15: end if
+16: Insert(𝑢2, 𝑇 ,X𝑇 )
+17: if 𝜏𝑣 = 𝑇 + 1 then
+18: Y𝑣 ← Stitch({Y𝑢1, Y𝑢2 }) via Algorithm 2
+19: P ← P \ { 𝑣 }
+20: M ← M ∪ { 𝑣 }
+21: end if
+22: end if
+23: end if
+Algorithm 4 (Append): Appending a tensor slice
+Input: current root node 𝑟; current time 𝑇 ; tensor slice X𝑇
+Output: the root after appending
+1: if 𝑇 = 0 then
+2: create a node 𝑟 ′ ∈ P with [𝜎𝑟 ′, 𝜏𝑟 ′ ) ← [ 0, 1)
+3: 𝑟 ← 𝑟 ′
+4: else if 𝑇 = 𝜏𝑟 then
+5: create a node 𝑟 ′ ∈ P with [𝜎𝑟 ′, 𝜏𝑟 ′ ) ← [ 0, 2𝜏𝑟 )
+6: let 𝑟 be the left child of 𝑟 ′
+7: 𝑟 ← 𝑟 ′
+8: end if
+9: Insert(𝑟, 𝑇 ,X𝑇 ) via Algorithm 3
+10: return 𝑟
+6.2 Appending a Tensor Slice
+Appending a tensor slice X𝑇 extends the timespan from [0, 𝑇) to
+[0, 𝑇 + 1). To process this operation, we need to (i) maintain the
+stream segment tree structure and (ii) update the Tucker decompo-
+sition of nodes in the tree. Due to the special structure of the stream
+segment tree, we cannot maintain a logarithmic height via rotation
+operations like typical balanced search trees [22]. To address this
+issue, we leverage the fact that we have only the appending oper-
+ation but no arbitrary insertion operations. Our key idea here is
+to insert not only a leaf node but also possibly a root node so as
+to maintain the logarithmic height. In the following, we will first
+describe the case where we do not need to insert a root node and
+then discuss the case where we need to insert a root node.
+If the root node𝑟 is a placeholder node, then its time range[0, 𝜏𝑟 )
+includes X𝑇 . Thus, we can insert X𝑇 into the tree. The insertion
+procedure is a recursive algorithm starting from the root𝑟. Suppose
+that we are currently at a node 𝑣. Let 𝑢1, 𝑢2 denote the left and
+right children of 𝑣, respectively. If 𝑇 < 𝜏𝑢1, then we insert X𝑇 into
+the subtree rooted at 𝑢1. Otherwise, we need to insert X𝑇 into the
+subtree rooted at 𝑢2. If either 𝑢1 or 𝑢2 does not exist yet, we create
+that node before insertion. After insertion, we revise the type of
+the node 𝑣. If 𝑇 = 𝜏𝑣 − 1, then the range [𝜎𝑣, 𝜏𝑣 ) has been fully
+observed, so we let the node 𝑣 become an intermediate node. The
+overall insertion procedure is formally presented in Algorithm 3.
+Meanwhile, if the root node 𝑟 is already an intermediate node,
+then its time range [0, 𝜏𝑟 ) has been fully observed. In this case, we
+create a new placeholder node𝑟 ′ with time range[0, 𝜏𝑟 ′ ) := [0, 2𝜏𝑟 ′ ),
+let node 𝑟 be the left child of 𝑟, and let 𝑟 ′ be the new root. Since the
+new root 𝑟 ′ is now a placeholder node, then we use Algorithm 3 to
+insert X𝑇 into the tree. The overall appending procedure is formally
+presented in Algorithm 4.
+The overall procedure can be exemplified using Figure 3. Suppose
+that the current timespan is [0, 8) (i.e., the current root is the node
+⟨8⟩), and that we want to append the slice X8. Since the root node
+⟨8⟩ is an intermediate node, then we create a new root ⟨16⟩ as an
+intermediate node and let ⟨8⟩ be its left child. Then, we insert X8
+into the new root. As 𝑇 = 8, we need to insert X8 into the right
+child of ⟨16⟩. Since ⟨16⟩ does not have a right child yet, we create
+a new intermediate node ⟨17⟩ as its right child and insert X8 into
+⟨17⟩. We repeat this procedure until it reaches the leaf node ⟨20⟩.
+We preprocess the Tucker decomposition of X[8,9) via Tucker-ALS
+and store it at node ⟨20⟩.
+Theorem 6.2 (Logarithmic height). If we use the algorithm
+above for timespan [0, 𝑇), then it can construct a stream segment tree
+of height ⌈log2 𝑇 ⌉ + 1.
+Proof sketch. We can use an induction on 𝑇 to show that at
+time 𝑇 , the number of new leaf nodes that can be inserted into the
+sub-tree rooted at each node 𝑣 is max{𝜏𝑣 − 𝑇 ,0}. This implies that
+the number of leaf nodes in a stream segment tree of height ℎ is
+greater than the number of leaf nodes of a perfect binary tree of
+height ℎ − 1 and at most that of a perfect binary tree of height ℎ. It
+follows that the height of a stream segment tree is⌈log2 𝑇 ⌉ + 1. □
+Proposition 6.3 (Time complexity). When appending a ten-
+sor slice X𝑇 , the amortized and worst-case time complexities are
+𝑂 (𝑟 𝐷𝑝 −1 + 𝑟 2𝑝 −2 (𝐷 + log𝑇 )) and 𝑂 (𝑟 𝐷𝑝 −1 + 𝑟 2𝑝 −2 (𝐷 log𝑇 + 𝑇 )),
+respectively.
+Proof sketch. We analyze the worst-case and amortized com-
+plexities of a stream segment tree. The amortized complexity is the
+time complexity of creating a stream segment tree divided by 𝑇 .
+We preprocess 𝑇 tensor slices of leaf nodes with the complexity
+𝑂 (𝑟 𝐷𝑝 −1𝑇 ). For intermediate nodes, we perform 𝑂 (𝑇 ) stitch op-
+erations with the complexity 𝑂 (𝑟 2𝑝 −2𝐷𝑇 + 𝑟 2𝑝 −2𝑇 log𝑇 ). Hence,
+the amortized complexity is 𝑂 (𝑟 𝐷𝑝 −1 + 𝑟 2𝑝 −2𝐷 + 𝑟 2𝑝 −2 log𝑇 ). Ap-
+pending a tensor slice X𝑇 requires three computations: (1) perform-
+ing Tucker-ALS of the tensor slice, (2) updating the non-temporal
+factor matrices, and (3) updating the temporal factor matrices.
+Hence, the worst-case complexity of appending a tensor slice X𝑇
+is 𝑂 (𝑟 𝐷𝑝 −1 + 𝑟 2𝑝 −2𝐷 log𝑇 + 𝑟 2𝑝 −2𝑇 ) which is the sum of the com-
+plexities of the three computations. □
+Table 3: Summary of real-world tensor time series datasets.
+Dataset #Entries Shape Modes
+Air Quality 47M 21000×376×6 (time, location, air pollutant)
+Traffic 212M 2033×1084×96 (time, frequency, sensor)
+US Stock 739M 2000×4347×85 (time, company, stock feature)
+KR Stock 875M 3000×3432×85 (time, company, stock feature)
+7 IMPLEMENTATION
+Since the bottleneck of Tucker decomposition is the tensor numeri-
+cal operations, we speed up these computations using a graphical
+processing unit (GPU). Though originally designed to accelerate
+computer graphics and image processing, modern GPUs are power-
+ful in parallelizing dense numerical operations in general scientific
+computing. To develop a prototype of our TUCKET that is compat-
+ible across various platforms, we choose the PyTorch [53] CUDA
+[45] library to set up and run GPU operations. Although Python
+execution is relatively slow compared with many other program-
+ming languages, it does not affect the overall performance much
+because the tensor operations are typically much more expensive
+than Python execution.
+8 EXPERIMENTAL EV ALUATION
+In this section, we evaluate our TUCKET by comparing it with
+state-of-the-art methods on four large-scale real-world tensor time
+series datasets. We summarize our evaluation results from our
+experiments as follows:
+(i) TUCKET consistently achieves the lowest latency over all
+query ranges on real-world tensor time series data (Sec-
+tion 8.3).
+(ii) We empirically demonstrate that TUCKET constructs the
+whole tree in nearly linear time and consumes nearly linear
+space in total (Section 8.3).
+(iii) The reconstruction error of TUCKET is much smaller than
+D-Tucker and Zoom-Tucker and is comparable with the
+brute-force method Tucker-ALS (Section 8.4).
+(iv) Our new stitching algorithm is more GPU-parallelizable
+and more numerically stable than that of Zoom-Tucker
+(Section 8.5).
+(v) The pruning threshold 𝜃 = 0.7 can achieve both high effi-
+ciency and accuracy in our experiments (Section 8.5).
+8.1 Experimental Settings
+Datasets. We use four large-scale real-world tensor time series
+datasets, which are summarized in Table 3. (D1) Air Quality data
+is represented as 3-way tensor time series (time, location, air pol-
+lutant). It is collected from the Air Korea 3 website. (D2) Traffic
+data4 [56] is 3-way tensor time series (time, frequency, sensor) rep-
+resenting a collection of traffic volume measurements around Mel-
+bourne. (D3 & D4) We use daily stock features (e.g., prices, volumes,
+and technical indicators) on the U.S. and Korean stock markets, re-
+spectively, to build 3-way tensor time series (time, company, stock
+feature). (D5) To evaluate the scalability w.r.t. the number 𝑝 of
+modes, we generate synthetic tensors with the following sizes: (1)
+3https://www.airkorea.or.kr/web/
+4https://github.com/florinsch/BigTrafficData
+0 5000 10000 15000 20000
+Query Range L
+0.00
+0.02
+0.04
+0.06
+0.08Latency / sec
+ZoomTucker
+TuckerALS
+DTucker
+TUCKET (ours)
+(a) Air Quality
+0 500 1000 1500
+Query Range L
+0.0
+0.1
+0.2
+0.3
+0.4Latency / sec
+DTucker
+TuckerALS
+ZoomTucker
+TUCKET (ours) (b) Traffic
+0 500 1000 1500
+Query Range L
+0.0
+0.2
+0.4
+0.6Latency / sec
+TuckerALS
+DTucker
+ZoomTucker
+TUCKET (ours) (c) US Stock
+0 1000 2000
+Query Range L
+0.0
+0.2
+0.4
+0.6Latency / sec
+TuckerALS
+DTucker
+ZoomTucker
+TUCKET (ours) (d) KR Stock
+Figure 4: Comparison in the latency of range queries. Our TUCKET (green dotted line) consistently achieves the lowest latency
+for all query ranges while the performance of other methods varies drastically across datasets.
+3 4 5 6 7
+Number p of modes
+0.0
+0.1
+0.2
+0.3
+0.4Latency / sec
+DTucker
+TuckerALS
+Zoom-Tucker
+TUCKET
+(a) Latency v.s. 𝑝
+5000 10000 15000 20000
+Timespan T
+0.00
+0.01
+0.02
+0.03
+0.04Latency / sec (b) Latency v.s. 𝑇
+5000 10000 15000 20000
+Timespan T
+0.00
+0.01
+0.02
+0.03
+0.04Latency / sec (c) Latency of Append
+0 5000 10000 15000 20000
+Timespan T
+0
+5
+10Cumulative Space / GB (d) Cumulative space
+Figure 5: Scalability tests
+102103104
+Query Range L
+0.0
+0.4
+0.8
+1.2Relative Error
+DTucker
+ZoomTucker
+TUCKET (ours)
+TuckerALS
+(a) Air Quality
+101102103
+Query Range L
+0.0
+0.4
+0.8
+1.2Relative Error
+DTucker
+ZoomTucker
+TUCKET (ours)
+TuckerALS (b) Traffic
+101102103
+Query Range L
+0.0
+0.4
+0.8Relative Error
+DTucker
+ZoomTucker
+TUCKET (ours)
+TuckerALS (c) US Stock
+101102103
+Query Range L
+0.0
+0.2
+0.4
+0.6
+0.8Relative Error
+DTucker
+ZoomTucker
+TUCKET (ours)
+TuckerALS (d) KR Stock
+Figure 6: Comparison in the relative error of range queries. In contrast to D-Tucker and Zoom-Tucker, our TUCKET (green
+dotted line) consistently achieves comparable error with that of Tucker-ALS for all query ranges.
+50 100 150 200
+Timespan T
+0
+10
+20
+30
+40
+50Cumulative Latency / sec
+Interval tree
+R-tree
+TUCKET (ours)
+(a) Cumulative latency
+50 100 150 200
+Timespan T
+0
+200
+400
+600
+800
+1000
+1200
+1400Cumulative Stitches
+Interval tree
+R-tree
+TUCKET (ours) (b) Cumulative stitches
+Figure 7: Comparison with the interval tree and the R-tree
+in terms of the Append operation.
+5000 10000 15000
+Query Range L
+0.005
+0.010
+0.015
+0.020
+0.025Latency / sec
+Zoom-Tucker's stitching
+TUCKET (ours)
+(a) Latency v.s.
+stitching algorithm
+102103104
+Query Range L
+0.0
+0.1
+0.2Relative Error
+Zoom-Tucker's stitching
+TUCKET (ours)
+(b) Relative error v.s.
+stitching algorithm
+Figure 8: Comparison with Zoom-Tucker’s stitching
+0 5000 10000 15000 20000
+Query Range L
+0.0075
+0.0125
+0.0175
+0.0225Latency / sec
+θ = 0.9
+θ = 0.7
+θ = 0.5
+θ = 0.1
+θ = 0.3
+(a) Latency v.s.
+pruning threshold 𝜃
+102103104
+Query Range L
+0.2
+0.6
+1.0Relative Error
+θ = 0.1
+θ = 0.3
+θ = 0.5
+θ = 0.7
+θ = 0.9
+(b) Relative error v.s.
+pruning threshold 𝜃
+Figure 9: Latency and relative error v.s. pruning threshold
+1000×1000×1000, (2)1000×100×100×100, (3)1000×100×100×10×10,
+(4) 1000 × 100 × 10 × 10 × 10 × 10, (5) 1000 × 10 × 10 × 10 × 10 × 10 × 10.
+Evaluation metrics. Regarding efficiency, since no baseline meth-
+ods support batch operations, we do not report the throughput.
+Instead, we report the latency (in seconds) of each operation.
+Regarding accuracy, for each range query [𝑇s, 𝑇e), we report the
+relative error between each method 𝐴 and Tucker-ALS:
+∥X[𝑇s,𝑇e ) − Y𝐴 ∥F
+∥X[𝑇s,𝑇e ) − YTucker-ALS∥F
+− 1, (29)
+where YTucker-ALS and Y𝐴 denote the reconstructed tensors by
+Tucker-ALS and the method 𝐴, respectively.

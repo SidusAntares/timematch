@@ -9,16 +9,17 @@ REMOTE_HOST="${REMOTE_HOST:-10.150.10.38}"
 REMOTE_BASE_DIR="${REMOTE_BASE_DIR:-/data/user}"
 REMOTE_PROJECT_DIR="${REMOTE_PROJECT_DIR:-${REMOTE_BASE_DIR}/${PROJECT_NAME}}"
 STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)}"
-LOCAL_DEST_DIR="${LOCAL_DEST_DIR:-${PROJECT_DIR}/server_artifacts/${STAMP}}"
+INPLACE_SYNC="${INPLACE_SYNC:-True}"
+LOCAL_DEST_DIR="${LOCAL_DEST_DIR:-${PROJECT_DIR}}"
 REMOTE_ARCHIVE_NAME="${PROJECT_NAME}_artifacts_${STAMP}.tar.gz"
 REMOTE_ARCHIVE_PATH="/tmp/${REMOTE_ARCHIVE_NAME}"
-LOCAL_ARCHIVE_PATH="${LOCAL_DEST_DIR}/${REMOTE_ARCHIVE_NAME}"
+LOCAL_ARCHIVE_PATH="${PROJECT_DIR}/${REMOTE_ARCHIVE_NAME}"
 
-mkdir -p "$LOCAL_DEST_DIR"
+mkdir -p "$PROJECT_DIR"
 
 echo "[INFO] Local project: ${PROJECT_DIR}"
 echo "[INFO] Remote project: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PROJECT_DIR}"
-echo "[INFO] Local artifact destination: ${LOCAL_DEST_DIR}"
+echo "[INFO] Local extract destination: ${LOCAL_DEST_DIR}"
 
 ssh "${REMOTE_USER}@${REMOTE_HOST}" "
     set -euo pipefail
@@ -51,8 +52,10 @@ scp "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_ARCHIVE_PATH}" "${LOCAL_ARCHIVE_PATH
 ssh "${REMOTE_USER}@${REMOTE_HOST}" "rm -f '${REMOTE_ARCHIVE_PATH}'"
 
 tar -xzf "${LOCAL_ARCHIVE_PATH}" -C "${LOCAL_DEST_DIR}"
+rm -f "${LOCAL_ARCHIVE_PATH}"
 
-cat > "${LOCAL_DEST_DIR}/README_pull.txt" <<EOF
+if [[ "${INPLACE_SYNC,,}" != "true" ]]; then
+    cat > "${LOCAL_DEST_DIR}/README_pull.txt" <<EOF
 Pulled from: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PROJECT_DIR}
 Pulled at: ${STAMP}
 Contents:
@@ -62,8 +65,8 @@ Contents:
 - runs/ (excluding tensorboard event files)
 - root-level *.log, *.txt, *.csv, *.json
 EOF
+fi
 
 echo "[SUCCESS] Server artifacts downloaded to:"
 echo "  ${LOCAL_DEST_DIR}"
-echo "[INFO] Archive kept at:"
-echo "  ${LOCAL_ARCHIVE_PATH}"
+echo "[INFO] Local archive removed after extraction."

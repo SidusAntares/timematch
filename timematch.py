@@ -225,7 +225,8 @@ def get_data_loaders(splits, config, balance_source=True):
 
     source_dataset = PixelSetData(config.data_root, config.source,
             config.classes, strong_aug,
-            indices=splits[config.source]['train'],)
+            indices=splits[config.source]['train'],
+            closed_set=getattr(config, 'closed_set', False),)
 
     if balance_source:
         source_labels = source_dataset.get_labels()
@@ -254,7 +255,8 @@ def get_data_loaders(splits, config, balance_source=True):
 
     target_dataset = PixelSetData(config.data_root, config.target,
             config.classes, None,
-            indices=splits[config.target]['train'])
+            indices=splits[config.target]['train'],
+            closed_set=getattr(config, 'closed_set', False))
 
     strong_dataset = deepcopy(target_dataset)
     strong_dataset.transform = strong_aug

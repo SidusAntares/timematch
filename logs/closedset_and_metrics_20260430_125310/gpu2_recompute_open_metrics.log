@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/data/user/timematch/analysis/recompute_transfer_metrics.py", line 669, in <module>
+    main()
+  File "/data/user/timematch/analysis/recompute_transfer_metrics.py", line 497, in main
+    checkpoint_paths = get_fold_checkpoint_paths(outputs_root, experiment_name)
+  File "/data/user/timematch/analysis/recompute_transfer_metrics.py", line 466, in get_fold_checkpoint_paths
+    raise FileNotFoundError(f"Missing checkpoints under {experiment_dir}")
+FileNotFoundError: Missing checkpoints under outputs/timematch_30TXT_to_31TCJ
