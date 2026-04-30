@@ -1,0 +1,674 @@
+3236                                                         IEEE TRANSACTIONS ON INDUSTRIAL INFORMATICS, VOL. 21, NO. 4, APRIL 2025
+
+
+
+
+          A Contrastive Representation Domain
+       Adaptation Method for Industrial Time-Series
+                Cross-Domain Prediction
+          Zidi Jia , Member, IEEE, Lei Ren , Senior Member, IEEE, and Yang Tang , Fellow, IEEE
+
+
+   Abstract—Industrial time-series prediction is crucial for                   artificial intelligence methods continuously analyze the vast
+Industrial Internet of Things. Due to the complexity and                       amount of industrial data collected, and provide valuable guid-
+variation of modern industry, knowledge transfer for vary-                     ance in response [3]. Given that most of the data collected in IIoT
+ing data has been an attractive research area. However,
+conventional methods may overlook the intradomain dis-                         is time-series (sensor signals), the task of time-series prediction
+tribution and the mutual information, leading to incorrect                     has attained paramount importance in numerous IIoT appli-
+semantic alignment and loss of prediction-relevant informa-                    cations, including predictive maintenance, product life-cycle
+tion. To address these issues, a contrastive learning-based                    management, and smart grids.
+domain adaptation method, contrastive temporal prediction
+                                                                                  Recently, industrial time-series prediction methods have
+adaptation, for industrial time-series cross-domain predic-
+tion is proposed. It leverages a contrastive domain general-                   emerged, propelled by the widespread adoption of information
+ization and a contrastive self-supervised alignment method                     technologies, such as Big Data and neural networks [4]. For
+to obtain stable representations and capture the relation-                     instance, a time-series prediction method TR-LR [5] for bearing
+ship between the data distribution and labels, to bring sam-                   health monitoring was proposed by Ren et al. [5], which utilized
+ples with similar labels closer in the feature space. Besides,
+                                                                               multidimensional tensors to model a high-order self-attention
+an instancewise adversarial discrimination is developed to
+leverage the data distribution to mitigates interference from                  for multiscale temporal feature extraction. Similarly, Qin et al.
+irrelevant information. The performance of our method is                       [6] proposed SD-TemCapsNet, a method that simultaneously
+verified through experiments on CMAPSS dataset. The re-                        learns slowly changing kinetics and temporal dynamics from
+sults demonstrate that our method outperforms existing                         measurements. These highlights illustrate the research potential
+methods.
+                                                                               of various innovative methods for time-series prediction.
+  Index Terms—Contrastive learning, contrastive temporal                          Conventional methods require a large amount of high quality
+prediction adaptation (CTPA), domain adaptation (DA), In-                      labeled data, while assuming that the real-world monitoring data
+dustrial Internet of Things (IIoT), time-series prediction.                    follows the same distribution as the historical data [7]. However,
+                          I. INTRODUCTION                                      this assumption does not always hold true in real applications.
+                                                                               On the one hand, industrial data labeling is costly and difficult
+   NDUSTRIAL Internet of Things (IIoT) powered by ad-
+I  vanced information technology is leading a disruptive rev-
+olution in modern industry [1], [2]. Within IIoT, data-driven
+                                                                               due to equipment complexities and the expertise required for
+                                                                               accurate annotation. On the other hand, modern industry trends
+                                                                               toward flexibility and discretization lead to dynamic shifts in the
+                                                                               working environment and operating conditions. As a result, the
+   Received 21 April 2024; revised 28 August 2024 and 13 November
+2024; accepted 18 December 2024. Date of publication 15 January                distribution of monitoring data may differ substantially from
+2025; date of current version 4 April 2025. This work was supported in         historical data in the feature space, which is called distribu-
+part by the National Key Research and Development Program of China             tion shift. This means that the independent and identically dis-
+under Grant 2023YFB3308000, in part by the National Natural Science
+Foundation of China (NSFC) under Grant 62225302, Grant 92167108,               tributed assumption that most methods rely on no longer holds.
+and Grant 62173023, and in part by the State Key Laboratory of In-             These factors highlight the inadequacy of supervised training
+dustrial Control Technology, China, under Grant ICT2024A22. Paper              paradigms for time-series prediction models in industrial con-
+no. TII-24-1851. (Corresponding author: Lei Ren.)
+   Zidi Jia is with the School of Automation Science and Electrical En-        texts. Therefore, novel approaches are imperative to address
+gineering, Beihang University, Beijing 100191, China (e-mail: jiazidi@         issues related to insufficiently labeled data and dynamic working
+buaa.edu.cn).                                                                  conditions, and to promote more accurate and robust predictions
+   Lei Ren is with the School of Automation Science and Electrical Engi-
+neering, Beihang University, Beijing 100191, China, also with Hangzhou         in industrial settings.
+International Innovation Institute, Beihang University, Hangzhou                  Researchers have increasingly directed their attention toward
+311115, China, also with Zhongguancun Laboratory, Beijing 100094,              domain adaptation (DA) for time-series analysis to address dis-
+China, and also with the State Key Laboratory of Intelligent Manu-
+facturing System Technology, Beijing 100854, China (e-mail: renlei@            tribution shift issues. DA, as a self-supervised transfer learning
+buaa.edu.cn).                                                                  technique, seeks to capture domain invariance among various
+   Yang Tang is with the Key Laboratory of Smart Manufacturing in              data domains, thus facilitating the transfer of domain knowledge.
+Energy Chemical Process, East China University of Science and Tech-
+nology, Shanghai 200237, China (e-mail: yangtang@ecust.edu.cn).                These approaches have become prominent due to their capacity
+   Digital Object Identifier 10.1109/TII.2024.3523572                          to facilitate knowledge transfer and adaptation across different
+1941-0050 © 2025 IEEE. All rights reserved, including rights for text and data mining, and training of artificial intelligence and similar technologies.
+   Personal use is permitted, but republication/redistribution requires IEEE permission. See https://www.ieee.org/publications/rights/index.html
+                                                                 for more information.
+
+         Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on April 26,2026 at 12:40:53 UTC from IEEE Xplore. Restrictions apply.
+JIA et al.: CONTRASTIVE REPRESENTATION DA METHOD FOR INDUSTRIAL TIME-SERIES CROSS-DOMAIN PREDICTION                                                 3237
+
+
+
+conditions and scenarios [8], [9], [10]. A notable advantage of                      the pseudocontrastive domain generalization loss, so that
+DA is its capability to function without the need of labeled target                  the correlations between the latent representations and
+data. Instead, they fine-tune pretrained models with unlabeled                       labels learned in the source domain are transferred to the
+data, rendering them applicable for analysis tasks in the target                     target domain, which improves the adaptive performance
+domain.                                                                              of the model in the target domain.
+   Despite the remarkable success of DA in cross-domain time-                     3) An instancewise adversarial discriminant method is pre-
+series analysis, several challenges remain in prediction tasks                       sented to refine the adversarial discrimination module,
+as it is mainly applied to classification tasks. In other words,                     to make the model focus on local information of the
+most existing DA methods target distribution boundaries rather                       regression task.
+than distribution trends. Most DA methods cannot accurately
+represent the changing trend of labels. First, many conventional                                       II. RELATED WORKS
+DA methods simply align the distribution of data from different
+domains in feature space, but do not take into account the                    A. DA Methods
+changing trend of labels. These methods lack constraints on the                  DA methods can be summarized as follows: domain distri-
+latent representation, resulting in label coupling, i.e., samples             bution alignment-based methods, normalized statistics-based
+with large label differences may have similar representations.                methods, ensemble-based methods, and decision boundary-
+This limitation hinders the effectiveness of transferring adaptive            based methods, according to their unique research routes and
+knowledge to the target domain, as it can be seen as an overfitting           modeling concepts. Methods based on domain distribution
+of the source domain. Second, most DA methods for regression                  alignment generally assume that a domain-invariant feature
+tasks focus solely on aligning the representations of the target              can be created in the source and target domains to align the
+and source domains, often ignoring the distribution of data in                distributions of the two domains. This is generally realized with a
+feature space of different domains, neglecting the mutual infor-              feature extractor. If the data follow the same feature distribution,
+mation among latent features of the data. It leads to the inconsis-           its features are domain-invariant, regardless of which domain
+tent semantics before and after transferring. Third, the domain               it comes from. Representative methods for domain distribu-
+alignment in conventional DA is generally focused on the whole                tion alignment include maximum mean discrepancy, correlation
+domain. However, the alignment between irrelevant samples is                  alignment (CORAL) [11], etc. Domain distribution alignment
+often meaningless and may even mislead the regression model                   can also be achieved by adversarial training, and domain ad-
+with loss of prediction accuracy. Addressing these limitations                versarial neural network (DANN) [12] is a classical method.
+is crucial for the continued advancement of DA-based time-                    The proposed method belongs to this type. Methods based on
+series prediction methods, and requires the development of                    normalized statistics are based on the assumption that neural net-
+more sophisticated approaches that take into account the feature              works can learn task knowledge, while batch normalization can
+distribution and mutual information among latent features.                    learn domain knowledge. Based on this assumption, researchers
+   To cope with the above challenges, a novel contrastive                     proposed AdaBN [13] to achieve domain knowledge transfer by
+learning-based DA method, contrastive temporal prediction                     adjusting all batch normalized statistics from the source domain
+adaptation (CTPA), is proposed. It is assumed that the correlation            to the target domain. Ensemble-based methods use ensemble
+between the labels of the data is proportional to the correlation             predictions to guide learning, or use ensembles to measure the
+of the features. The method ensure that samples with similar                  confidence of the predictions of pseudolabels for target data.
+labels are located close to each other in the feature space, while            Decision boundary-based methods move the decision boundary
+samples with significant label differences are positioned far                 to a lower density region to achieve adaptive domain alignment.
+away from each other. Thus, it can effectively transfer knowledge             However, these methods are usually applicable to classification
+between domains. The framework comprises three components:                    problems and are difficult to be effectively applied to regression
+contrastive domain generalization, contrastive self-supervised                tasks.
+alignment, and instancewise adversarial discrimination. The                      DA-based methods are one of the main focuses for indus-
+contributions are illustrated as follows.                                     trial cross-domain time-series prediction. Since DA is a self-
+    1) To constrain the source model to prevent it from cou-                  supervised approach without the requirement of large amounts
+        pling in the label space, a supervised contrastive domain             of labeled data, it is well suited for this task. There have been
+        generalization method is proposed. This method aims to                many related researches. For instance, Ding et al. [14] proposed
+        capture and maximum the mutual information between                    a multisource DA network, aimed at learning domain-invariant
+        the latent representations and labels, ensuring that la-              features and supervision from multiple sources. Miao et al. [15]
+        tent representations are distributed in the feature space             proposed sparse domain adaption network, which copes with
+        in accordance with the order of labels. This constraint               data distribution shift by integrating domain adversarial learning
+        preserves task-specific information and enables a more                and unsupervised sparse domain alignment.
+        stable representation of the source domain.
+    2) A contrastive self-supervised alignment method is pro-
+        posed for DA. The latent representations can be made                  B. Contrastive Learning
+        to obey similar distribution patterns in this way, and                  Recently, contrastive learning has shown superior perfor-
+        the semantics of domains can be aligned. In turn, the                 mance in both self-supervised and semisupervised learning,
+        pseudolabels of the target domain data are used to define             especially when transferring representations to cross-domain
+         Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on April 26,2026 at 12:40:53 UTC from IEEE Xplore. Restrictions apply.
+3238                                                                      IEEE TRANSACTIONS ON INDUSTRIAL INFORMATICS, VOL. 21, NO. 4, APRIL 2025
+
+
+
+
+Fig. 1. Overall framework of CTPA-based industrial time-series prediction method. The blue box in the figure shows the model training and domain
+generalization in the source domain; the yellow box shows the model self-supervised domain alignment in the target domain; the orange box shows
+the completed trained target domain model.
+
+and downstream tasks [16], [17], [18]. Contrastive learning                    the label of XiS , and nS is the number of samples in the original
+obtains implicit representations by comparing samples from                     domain. Similarly, the unlabeled target data are {XjT , yjT }nj=1
+                                                                                                                                              T
+                                                                                                                                                 ,
+multiple views as positive samples with other negative sam-                      T
+                                                                               Xj ∈ R   m×k
+                                                                                             , and nT is the number of samples in the target
+ples [19]. It can also be interpreted as maximizing the mu-                    domain. For DA, our goal is to learn a prediction function
+tual information among latent representations [20]. Contrastive                f : x → ŷ on the source domain DS to obtain the minimum
+learning is a typical discriminant self-supervised paradigm, aims              error on the target domain DT
+to represent similarities and differences among samples [20],                                                               
+                                                                                                 min EX,y∈X T L f (X T ), ŷ T .              (1)
+[21]. It is generally realized through auxiliary tasks.                                             f
+   Currently, methods based on contrastive learning are exten-
+sively applied in industrial time-series prediction with unlabeled             B. Model Overview
+data. However, such efficient unsupervised methods are gener-                     A novel DA method for industrial time-series prediction,
+ally applied in classification tasks. Due to the inability to distin-          CTPA, is proposed. It enables the transfer of knowledge learned
+guish between positive and negative samples, and the inability to              from one condition (labeled source domain) to another (unla-
+evaluate the reliability of pseudolabels, contrastive learning was             beled target domain). This approach permits the discovery of
+rarely applied in regression tasks. How to exploit the mutual in-              correlations and domain-invariant representations between the
+formation between samples in regression tasks is a problem to be               source and target data while preserving the inherent structure
+addressed.                                                                     of each domain. Fig. 1 shows the overall framework of CTPA.
+                                                                               CTPA’s neural network architecture consists of an encoder, a
+                         III. METHODOLOGY                                      predictor, a mapping module, and an adversarial discriminator.
+                                                                               The source model is supervised pretrained using labeled source
+A. Problem Formulation and Notations
+                                                                               domain data. The pretraining loss function includes prediction
+   For clarity, we adopt the basic standard notation of DA.                    loss and contrastive domain generalization loss. Afterward, the
+Denote a data domain as D = {X , P (X)}, where X is the                        pretrained model is transferred to the target domain, and the
+feature space, X ∈ X , and P (X) is the marginal distribution                  target model is first initialized to the source model. The model
+of data in the feature space. Given a labeled source domain                    is fine-tuned using contrastive self-supervised alignment loss,
+DS = {X S , P S (X)} and an unlabeled target domain DT =                       pseudodomain generalization loss, and instancewise adversarial
+{X T , P T (X)}, DS and DT are different distributed but corre-                loss to obtain a model that can ultimately be used for prediction
+lated. The unsupervised DA attempts to transfer the knowledge                  in the target domain.
+learned in DS to DT , so that the prediction in the target domain                  1) Source and Target Encoders With Equivariant Attention:
+obtains good results. We denote the source data as {XiS , yiS }ni=1
+                                                                 S
+                                                                    ,          The self-attention mechanism extracts interfeature correlations
+          S
+where Xi ∈ R    m×k
+                    is the ith sample in the source domain, which              by computing the weighted sum of features among locations
+is the monitoring signal of m sensors with k time steps, yiS is                within a sample. It thus captures the long-term dependencies
+         Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on April 26,2026 at 12:40:53 UTC from IEEE Xplore. Restrictions apply.
+JIA et al.: CONTRASTIVE REPRESENTATION DA METHOD FOR INDUSTRIAL TIME-SERIES CROSS-DOMAIN PREDICTION                                                  3239
+
+
+
+                                                                                  Similar to self-attention, multiheaded attention is also em-
+                                                                               ployed to capture the various relationships between tokens
+                                                                               and improve the network performance. The shared convo-
+                                                                               lutional kernels Mk and Mv are used in our approach to
+                                                                               make all the tokens interact together, which both improves
+                                                                               the final performance and reduces the number of parame-
+                                                                               ters and computations, as shown in Fig. 2 and calculated as
+                                                                               follows:
+                                                                                                                         
+                                                                                        hi = AttnEq Qi , ConvK , ConvV                      (4)
+                                                                                                                                      
+                                                                                      Xout = MultiHeadAttention Q, ConvK , ConvV
+                                                                                            = Concat (h1 , h2 , . . . , hH ) W O            (5)
+Fig. 2. Structure of Equivariant Attention. (a) Equivariant attention. (b)     where hi represents the ith head, H is the number of heads, and
+Multihead equivariant attention.                                               W O is a linear projection. ConvK and ConvV are the shared
+                                                                               convolution kernels.
+within a sample. Its high performance has been demonstrated in                    The encoder utilized for feature extraction is made of mul-
+various tasks. Vanilla self-attention can be formulated as                     tiple layers of equivariant attention and MLP stacked together.
+                                                                             Residual connections are also adopted in our network.
+                     Attn = Norm Q · K T                                           2) Predictor: The features extracted by the encoder stacked
+                      Xout = Attn · V                                   (2)    by equivariant attention are h = E(X). The predictor P
+                                                                               is a multilayer perceptron that maps hidden features to fi-
+where Attn represents the attention matrix, Q = XW Q ,                         nal predicted labels. The predictor and feature extractor are
+K = XW K , and V = XW V are query, key, and value tensor,                      trained simultaneously in an end-to-end fashion while using
+and Norm represents normalization process, usually softmax.                    the mean square error (mse) as the loss function, which can be
+   However, vanilla self-attention has a quadratic complexity,                 expressed as
+which leads to its slow convergence. It is disastrous for com-
+                                                                                                                       1
+                                                                                                                          n
+putational efficiency. Besides, in DA tasks, since the network                              Lmse = arg min EX,y              |ŷj − yj |2   (6)
+is trained by multitask learning, this lower convergence effi-                                           E,R           n j=1
+ciency may lead to a large disparity in the learning progress                  where n is the number of samples, ŷ = R(E(X)) is the predicted
+of different tasks, triggering overfitting or underfitting. Besides,           label, and y is the ground-true label.
+self-attention ignores the potential correlation between different
+samples. This leads to a potential neglect of the distribution of              C. Contrastive Domain Generalization in Source Domain
+samples in the feature space. Meanwhile, in the field of natural
+language processing, where attention mechanisms are proposed,                     In this section, a supervised pretraining method for domain
+the embedded word vectors have their unique semantics and                      generalization in the source domain is proposed. The structure
+require fine-grained analysis of the correlation between each                  of the assembly of the modules of source model is shown in
+pair of elements in the data. While industrial time-series has                 Fig. 1. In regression task, the trend of the labels is correlated
+low information density and the information within the samples                 with that of the features. Therefore, it can be assume that the
+is mostly in the form of local or periodic, it indicates that the              ratio between the prediction distributions p(ŷi |X) and p(ŷk |X)
+time series prediction task may not require a complete attention               is proportional to the similarity between the label distributions
+mapping map.                                                                   p(yi ) and p(yk ). Inspired by Oord et al. [25], we use the density
+   Inspired by some variants of self-attention, such as external at-           ratio to measure the mutual information between the original
+tention [24], we propose equivariant attention for decreasing the              signal and the latent representation. We define the density ratio
+computational complexity and extracting equivariant intersam-                  function as d(yi , X). The density ratio can be used to indirectly
+ple correlation, as shown in Fig. 2(a). Utilize input-independent              model p(y) and p(y|X). p(y|X) is the prediction distribution
+learnable external modules as memory for the entire training                   to be modeled. Inspired by InfoNCE [25], we believe that the
+dataset to extract intersample correlations. The computational                 density ratio is proportional to p(y|X)/p(y), which can preserve
+granularity of attention is further relaxed, and the correlation               the mutual information between y and X. Thus, the prediction
+between each element in the sequence and each part is computed                 distribution can be expressed as
+through 1-D stepwise convolution. Equivariant attention can be                                         p(yi )p(X|yi )         d(yi , X)
+                                                                                       p(yi |X) =                      =                 .   (7)
+expressed as                                                                                           k p(yk )p(X|yk )        k d(yk , X)
+                  AttnEq = Softmax(ConvK (Q))                                     According to the previous assumption, we can obtain
+                                                                                               p(yi |X)      d(yi , X)
+                    Xout = ConvV (AttnEq )                              (3)                              =             = C · simi,j            (8)
+                                                                                               p(yj |X)      d(yj , X)
+              K             V
+where Conv and Conv are convolution operations, AttnEq                         where simi,j represents the similarity of yi and yj , and C is
+is the attention matrix of equivariant attention.                              a constant representing the ratio. Thus, d(yi , X) = C · simi,j ·
+
+          Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on April 26,2026 at 12:40:53 UTC from IEEE Xplore. Restrictions apply.
+3240                                                                      IEEE TRANSACTIONS ON INDUSTRIAL INFORMATICS, VOL. 21, NO. 4, APRIL 2025
+
+
+
+d(yj , X). With all N samples in the batch, we can model the
+prediction distribution as
+                                           
+               1  d(yi , X)                   j simi,j · d(yj , X)
+                                         C
+ p(yi |X) =                         =  N
+                                                                   .
+               N j      k d(yk , X)               k d(yk , X)
+                                                                  (9)
+   Thus, a contrastive domain generalization loss can be defined
+on the latent representation space. Let d(yi , Xk ) = exp(−hi −
+hk 2 ) and simi,k = exp(−|yi − yk |/L), where L is the ap-
+proximate value range of labels. With maximum likelihood
+estimation, the contrastive domain generalization loss LCDG can
+be defined as
+ LCDG = arg min EX,y∈X S
+                E S ,M S
+               ⎡                                                        ⎤
+                    k=i exp (−τ hi − hk 2 ) exp       − |yi −y
+                                                                L
+                                                                   k|
+
+    −       log ⎣                                                       ⎦
+                                             |yi −yk |
+        i                         j=i exp −     L
+                                                                        (10)
+where hi is the latent representation of Xi , i.e., hi = E S (Xi ), yi
+is the label of Xi , and τ is the hyperparameter. It can learn robust          Fig. 3. Model training and gradient backpropagation in target domain
+and invariant representations for prediction tasks, by pulling                 alignment.
+features with similar labels closer together and pushing features
+with large label differences further apart.                                    predict the labels of the target data due to the distribution discrep-
+    In the training process of our source pretraining model, the               ancies of the data. To address this issue, adversarial training is
+contrastive domain generalization and the supervised informa-                  applied to retrain the model. Specifically, the domain adversarial
+tion from the labels are integrated. The loss function of the source           discriminator is utilized to discriminate the source data from the
+pretraining model is                                                           target data. Meanwhile, our target feature extractor is trained
+                     LSource = Lmse + LCDG .                            (11)   to obtain domain invariance so that the domain adversarial
+                                                                               discriminator cannot separate the data across domains. Thus,
+D. Contrastive Self-Supervised Alignment in Target                             the adversarial loss can be defined as
+Domain                                                                                                                            
+                                                                                      Ladv = arg min max EX∈X S log D E S X S
+                                                                                                         ET       D
+   The target model consists of a domain adversarial discrimi-                                                     
+nator, a target mapping module, a transferred predictor and the                                  + EX∈X T log 1 − D E T X T .                      (12)
+target encoder. Initially, the target model is initialized with the               However, the two samples with large differences in labels
+pretrained source model’s weights. The latent representations                  are inherently prone to be classified into different categories.
+from the source and target encoders are then fed into the domain               Therefore, we can minimize the effect of unnecessary clas-
+adversarial discriminator, which computes an instancewise ad-                  sification results by weighting the classification results. The
+versarial loss to minimize domain discrepancies. Meanwhile,                    weights are defined with the difference of the pseudolabels, i.e.,
+the representations output from the source and target mapping                  d = |ŷi − ŷk |. The predicted label ŷ is utilized as pseudolabel.
+modules are adopted to compute the contrastive self-supervised                 To simplify the calculation, we consider the difference between
+alignment loss to retain task-specific information. Finally, the               the samples and the whole data of the other domain. The weight
+output of the target predictor is served as pseudolabels of the                wiS of the ith data in X S , the weight wkT of the kth data in X T , and
+target data and is utilized along with the output of the target                the defined instancewise adversarial loss Liadv can be defined as
+mapping module to compute a pseudodomain generalization
+loss to further capture the mutual information of data and labels                    S        exp (−|ŷi − ŷk |/L)
+                                                                                    wi,k =ϕ·                        + (1 − ϕ)      (13)
+in the target domain. Algorithm 1 shows the parameters updat-                                         nT
+ing and gradient backpropagation flow of our CTPA method.                            T        exp (−|ŷk − ŷi |/L)
+                                                                                   wk,i  =ϕ·                        + (1 − ϕ)      (14)
+Fig. 3 shows the model training and gradient backpropagation                                          nS
+in target domain alignment. The detailed procedure is shown in                                                             
+                                                                                   Liadv = arg min max EX S log wS ∗ D E S X S
+the following paragraphs.                                                                           ET        D
+    1) Instancewise Adversarial Discriminant Loss: Since the                                                      
+                                                                                              + EX T log wT ∗ 1 − D E T X T                        (15)
+pretrained source model is obtained, its parameters can be
+adopted naively to initialize the target model (i.e., the target               where ŷi and ŷk are, respectively, the pseudolabel of the ith data
+encoder E T , predictor RT , and mapping module M T are initial-               in X S and the kth data in X T . L is the approximate value range
+ized to E S , RS , and M S ). Obviously, the model cannot accurately           of labels. ϕ is the hyper-parameter.
+
+        Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on April 26,2026 at 12:40:53 UTC from IEEE Xplore. Restrictions apply.
+JIA et al.: CONTRASTIVE REPRESENTATION DA METHOD FOR INDUSTRIAL TIME-SERIES CROSS-DOMAIN PREDICTION                                                                3241
+
+
+
+
+ Algorithm 1: Contrastive Self-supervised Alignment.                                3) Pseudocontrastive Domain Generalization Loss: Al-
+                                                                                 though the model predictions during the fine-tuning process
+                              S
+Input: Source data D = {XiS , yiS }ni=1
+                                     S
+                                        ,
+               T     S nT                                                        are not accurate enough, there is still information hidden in the
+  Target data D = {Xi }i=1 ,
+                             S                                                   correlation between these predictions. It can still be assumed that
+ Pre-trained source encoder E ,
+                                                                                 the ratio between the prediction distributions is proportional to
+ Pre-trained source mapping module M S ,
+                                                                                 the similarity between the pseudolabel (predicted label) distri-
+ Trained predictor P ,
+                                                                                 butions. Thus, based on the same assumptions as LCDG , we
+Output: Trained target encoder E T
+                                                                                 define a pseudodomain generalization loss LPCDG to model the
+ 1: Initialize target encoder E T with E S parameters
+                                                                                 mutual information of the target data. LPCDG is defined as
+ 2: Initialize target mapping module M T with M S
+      parameters                                                                  LPCDG = arg min EX,y∈X S
+                                                                                                      E S ,M S
+ 3: for number of iterations do                                                                   ⎡                                                                ⎤
+        Sample minibatch data X S ∼ DS and X T ∼ DT                                                                                                − |ŷi −ŷ k|
+                                                                                                           k=i exp (−τ hi − hk 2 ) exp
+ 4:                                                                                                                                                      L
+ 5:     Obtain latent representations: hS = E S (X S ),                               −       log ⎣                 
+                                                                                                                                                                    ⎦
+        hT = E T (X T )                                                                   i                             j=i exp   − |ŷi −ŷ
+                                                                                                                                          L
+                                                                                                                                              k|
+
+
+ 6:     Obtain mapping representations: mS = M S (hS ),                                                                                                            (17)
+        mT = M T (hT )                                                                                 T
+ 7:     Feed hS and hT to domain adversarial discriminator                       where ŷi = R(E           (XiT )) is the pseudolabel, and τ2 is a hyper-
+        D, and compute instancewise adversarial loss Liadv                       parameter.
+        by Eq.(15)                                                                  4) Overall Loss Function: In this work, the above proposed
+ 8:     compute contrastive self-supervised alignment loss                       loss functions are optimized jointly. The overall loss function in
+        LCSA by Eq.(16)                                                          target domain alignment can be summarized as
+ 9:     Feed hT to predictor to obtain pseudo label ŷ T , and                                   LT arget = Liadv + LCSA + LPCDG .                                 (18)
+        compute pseudo contrastive domain generalization
+        loss LPCDG by Eq.(17)                                                                                    IV. EXPERIMENT
+10:     Update D by Liadv
+                                                                                    The effectiveness of CTPA is measured experimentally. The
+11:     Update E T by Liadv
+                                                                                 proposed method will be verified through machine RUL predic-
+12:     Update E T and M T by L = LCSA + LPCDG
+                                                                                 tion tasks. The experimental dataset, the evolution metrics, and
+13: end for
+                                                                                 the performance and comparison of the experimental results will
+                                                                                 be presented in detail.
+
+    2) Contrastive Self-Supervised Alignment Loss: To prevent                    A. Experimental Dataset
+adversarial DA from deleting task-specific information from
+the target features, we propose a contrastive self-supervised                       To evaluate the performance of our approach, we chose
+alignment loss LCSA to preserve task-specific domain-invariant                   the Commercial Modular Aero Propulsion System Simulation
+information.                                                                     (C-MAPSS) [26] dataset for our experiments. The data in this
+   Similar to LCDG , it is still assumed that there is some correla-             dataset are the run-to-failure sensor monitoring data of an aero-
+tion between the trend of the labels and the trend of the features               engine. The RUL of an engine refers to the number of remaining
+even if the data are belong to various domains. However, in                      operating cycles for which the engine can still continue to
+the domain adaption tasks, the labels of the target data are not                 operate. The time-series of turbofan engines in C-MAPSS is
+visible. Therefore, we need to capture the domain invariance of                  collected through 21 sensors.
+the features of data in various domains. Although the distribution                  The C-MAPSS dataset contains four subdatasets, which dif-
+of data in different domains is quite different, the trend of                    fer in terms of operating conditions, fault modes, maximum
+data distribution changing with labels is relevant. With LCDG ,                  lifetime, and number of engines. Each sub-dataset is divided
+the source data with similar labels are represented into similar                 into a training set and a test set. All time-series contain 26-D
+latent representations. Here, the data with similar features are                 variables, which are engine number, engine operating cycle,
+represented into similar latent representations with LCSA . LCSA                 three operating settings, and 21 sensor data. We select only the
+is defined as                                                                    most informative sensors, i.e., sensors 2, 3, 4, 7, 8, 9, 11, 12, 13,
+                                                                                 14, 15, 17, 20, and 21. Each variable of sensor data is normalized.
+ LCSA = arg min EX∈X T                                                           We used a sliding window to partition the dataset into samples,
+                   E T ,M T
+                                                                              setting the window size and step size to 30 and 1, respectively.
+                       k=i exp (−τ hi −hk 2) exp (−Xi −Xk 2)
+                                                                                 We set the maximum RUL value to 130, if the true RUL is greater
+   −         log                                                                than the set maximum.
+        i                             j=i exp (−Xi − Xk 2 )
+                                                                        (16)
+                                                                                 B. Parameters Setting
+where hSi = E S (XiS ) is the latent representation, and τ1 is the                 During training, the Adam optimizer was applied in 200
+hyperparameters. X in (16) has been normalized.                                  epochs. The batch size was set to 256, the learning rate
+
+            Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on April 26,2026 at 12:40:53 UTC from IEEE Xplore. Restrictions apply.
+3242                                                                     IEEE TRANSACTIONS ON INDUSTRIAL INFORMATICS, VOL. 21, NO. 4, APRIL 2025
+
+
+
+                          TABLE I                                             are DANN [12], CORAL [11], AdaBN [13], ADDA [27],
+        MODEL STRUCTURE AND HYPERPARAMETERS SETTING
+                                                                              CADA [23], CLUDA [28], BNM [29], and SDAT [30],
+                                                                              respectively. Our experimental result is the average of the results
+                                                                              of ten randomly repeated experiments.
+                                                                                 The experimental results with state-of-the art methods are
+                                                                              shown in Table II and Fig. 4. It can be seen that CTPA can
+                                                                              effectively align the source model with the features of the target
+                                                                              data. The overall performance of CTPA was better than the other
+                                                                              competing methods in 12 groups of experiments. Taking RMSE
+                                                                              as the evaluation metric, CTPA performs the best in eight cases.
+                                                                              The performance of CTPA is not too bad even in the groups
+                                                                              where it could not obtain the best results. These results rank
+                                                                              relatively well compared to the results of our model in other
+was set to 0.0003, the encoder of the model consisted of                      sets of experiments. The highest rankings in the four groups of
+one layer of perceptron as well as four layers of equivari-                   experiments where we could not rank the first were CADA and
+ant attention, the predictor was a two-layer perceptron (be-                  AdaBN. Comparing these two methods with our method, our
+tween the two linear layers is the nonlinear activation func-                 method was ranked second in all four groups of experiments. We
+tion ReLU), the mapping module was a one-layer percep-                        believe that this proves the higher robustness of our model. It is
+tron, and the adversarial discriminator was a one-layer per-                  possible that the competing methods are a little better than ours
+ceptron. Without loss of generality, the network structure and                in some aspects, but our model has a wider range of applicability
+hyperparameters in each group of experiments are the same.                    and better generalization. With Score as the evaluation metric,
+The set values of various hyperparameters of the model are                    the same conclusion can be drawn.
+shown in Table I. It is worth noting that in our experiments,                    We found that if the two domains have large discrepancies
+X in the loss function LCSA is the last 14 variables of the                   (e.g., FD002 and FD004), the DA algorithms are generally strug-
+sequence.                                                                     gling in knowledge transferring with high accuracy. However,
+                                                                              since our CTPA method can capture the domain invariance be-
+C. Evaluation Metrics                                                         tween two domains and the mutual information between features
+                                                                              and labels, it can successfully align two domains with large dis-
+   In this article, two evaluation metrics will be applied to                 crepancies. Our domain adaption method can retain task-specific
+measure the performance of the proposed method, namely, the                   information and the feature extractor (i.e., equivariant attention)
+root-mean-square error (RMSE) and the Score metric. Assuming                  has better generalizability, which enables superior performance
+that N is the number of samples and yj and ŷj are the true RUL               of our proposed CTPA.
+and predicted value of the jth sample, respectively, the RMSE
+is defined as follows:    
+                                                                            E. Ablation Studies
+                          1 n
+                 RMSE =           (ŷj − yj )2 .           (19)                 In this section, we validate the contribution of each component
+                             N j=1
+                                                                              of our CTPA through ablation experiments. We experimentally
+   RMSE treats larger and smaller RUL predictions equally. For                validate the performance for knowledge transfer of each strategy
+practical applications, smaller RUL predictions may be more                   in CTPA. We name three variants of CTPA as “w/o CDG,”
+detrimental to the system. A fractional metric, Score, is thus                “w/o CSA” (the “CSA” here means contrastive self-supervised
+introduced to impose more penalties on late predictions [26], in              alignment with pseudocontrastive domain generalization), and
+the form of                                                                  “w/o IADV,” respectively. In particular, “w/o CDG” refers to the
+             N                                                               version of our model without contrastive domain generalization,
+                    exp(−(ŷj − yj )/13) − 1, ŷj < yj
+  Score = j=1  N                                          (20)               “w/o CSA” refers to the version of our model without contrastive
+                j=1 exp(−(ŷj − yj )/10) − 1, ŷj ≥ yj .
+                                                                              self-supervised alignment, and “w/o IADV” refers to the version
+                                                                              of our model without instancewise weighting in the adversarial
+                                                                              discriminant process.
+D. Comparison With State-of-the-Art DA Methods
+                                                                                 The results of this part of the ablation experiment are shown
+   To evaluate our proposed method in a cross-domain sce-                     in Table III. We found that in the majority of cases, our CTPA
+nario, labeled source domain training data are employed to                    had the best performance. Using RMSE as the evaluation metric,
+pretrain the model, unlabeled target domain training data are                 the performance of CTPA was slightly worse than that of “w/o
+utilized for model alignment, and target domain test data are                 CDG” in three groups of experiments. However, it does not mean
+exploited to evaluate model performance (i.e., RMSE and                       that CTPA is ineffective. First, in these cases, the accuracy of our
+Score). Since we have four subdatasets, we set up 12 sets of                  method and the best method is almost the same, indicating that
+cross-domain scenarios. In this article, our proposed method                  the proposed methods are unlikely to have any significant ad-
+is compared with ERM (minimizing the empirical risk within                    verse effects. Besides, as CDG is a method that realizes domain
+the source domain) and several state-of-the-art methods, which                generalization through domain-invariant representation, it will
+
+        Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on April 26,2026 at 12:40:53 UTC from IEEE Xplore. Restrictions apply.
+JIA et al.: CONTRASTIVE REPRESENTATION DA METHOD FOR INDUSTRIAL TIME-SERIES CROSS-DOMAIN PREDICTION                                                 3243
+
+
+
+                                                             TABLE II
+                              PERFORMANCE COMPARISONS AMONG CTPA AND SEVERAL STATE-OF-THE-ART METHODS
+
+
+
+
+Fig. 4. Visualization of the prediction results by each method in (a) FD002→FD003, (b) FD003→FD001, and (c) FD004→FD002. The shadow
+represents the error between the predicted result and the true value of RUL in the target domain. The bar chart below compares the prediction
+errors of CTPA and source-only method.
+
+
+unavoidably result in the ambiguity of the mapping relationship               these three strategies in our method are effective. It should be
+between features and labels, which will consequently reduce                   noted, however, that contrastive domain generalization is not as
+the upper limit of the prediction accuracy. Thus, in cases where              effective when the domains are with relatively large differences,
+there is a large divergence in distribution between the source and            for instance, in FD002→FD004 and FD004→FD002, w/o CDG
+target domains (such as in FD002 and FD004), the effectiveness                has the best performance. The domain generalization training
+of CDG may not be satisfied. In addition, we conducted a                      had some negative impact on the accuracy of the prediction task.
+comparative analysis of the variance in prediction results of the             Eliminating this effect while obtaining the generalization effect
+three cases, in which the “result + variance” of CTPA are 25.53 ±             may require a suitable weighting of the loss functions.
+2.43, 20.06 ± 3.02, and 18.37 ± 2.77, while that of w/o CDG are                  Furthermore, we compared the performance of the adopted
+24.98 ± 4.96, 19.31 ± 5.97, and 17.97 ± 4.81. The experimental                benchmark (equivariant attention) with some commonly used
+results clearly demonstrate that the robustness of w/o CDG is                 neural networks, namely, LSTM, TCN, and Transformer. These
+significantly inferior to that of our method, which substantiating            models have similar structures to our benchmark. The Trans-
+the effectiveness of our approach. Therefore, in these two cases,             former used has the same structure as our model except that
+Liadv and LCSA are the ones that really work, just as shown                   equivariant attention is replaced by encoder of Transformer
+in Table III, and the performance of w/o CSA is the worst. In                 with vanilla multihead self-attention; the LSTM have the same
+the other nine cases, CTPA performs better. We can assert that                number of layers as our model; the TCN has the same number of
+
+
+         Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on April 26,2026 at 12:40:53 UTC from IEEE Xplore. Restrictions apply.
+3244                                                                     IEEE TRANSACTIONS ON INDUSTRIAL INFORMATICS, VOL. 21, NO. 4, APRIL 2025
+
+
+
+                            TABLE III
+           ABLATION STUDIES OF THE PROPOSED APPROACH
+
+
+                                                               CTPA
+
+
+
+
+                         TABLE IV
+ PERFORMANCE COMPARISONS OF RMSE AMONG OUR BENCHMARK AND
+          SEVERAL COMMONLY USED NEURAL NETWORKS
+
+
+                                                                              Fig. 5. Experimental results with various coefficient values for several
+                                                                              scenarios.
+
+
+                                                                              features of the data as well as the mutual information among the
+                                                                              features, while retaining information specific to the prediction
+                                                                              task. The proposed CTPA framework is based on contrastive
+                                                                              learning and consists of contrastive domain generalization in
+                                                                              the pretraining phase and contrastive self-supervised alignment
+                                                                              in the domain alignment phase. In addition, an instancewise
+                                                                              weighting strategy is applied to optimize the adversarial discrim-
+                                                                              inator module of the conventional domain adversarial network.
+                                                                              The effectiveness of our proposed CTPA is verified through
+                                                                              extensive experiments. In particular, the superior properties of
+                                                                              our method are demonstrated through comparison experiments
+layers as our model and each layer has three 3-D convolutions                 with four state-of-the-art methods. Also, the effectiveness of
+(the convolution sizes are 1×3, 1×5, and 1×7, and the number                  each component of our method is demonstrated through ablation
+of channels remains unchanged). We compared the prediction                    experiments.
+performance before and after cross-domain, and the result of                     Nonetheless, the data used for model training may be het-
+which are shown in Table IV. Experimental results show that                   erogeneous or even inaccessible in practical applications. In
+our model outperforms LSTM and TCN. Meanwhile, the per-                       future research, we will explore domain adaption methods in
+formance of our benchmark in the source domain is similar to                  the case where the source and target data are heterogeneous or
+that of Transformer, but the performance in the target domain is              inaccessible.
+better than that of Transformer, especially for relatively simple
+transfer tasks.                                                                                              REFERENCES
+F. Sensitivity Analysis                                                         [1] E. Sisinni, A. Saifullah, S. Han, U. Jennehag, and M. Gidlund, “Industrial
+                                                                                    Internet of Things: Challenges, opportunities, and directions,” IEEE Trans.
+   Since our method can be seen as a variant of DANN, Liadv can                     Ind. Informat., vol. 14, no. 11, pp. 4724–4734, Nov. 2018.
+be seen as the main loss function for target domain alignment,                  [2] Z. Chen, Y. Laili, L. Zhang, and L. Wang, “A Trans-Ptr-Nets-based transfer
+so we fix the weight of Liadv to 1. We investigate the sensitivity                  optimization method for multiobjective flexible job-shop scheduling in
+                                                                                    IIoT,” IEEE Internet Things J., vol. 11, no. 14, pp. 25382–25393, Jul. 2024.
+of the proposed CTPA with respect to the coefficient of the loss                [3] L. Ren, Z. Jia, Y. Laili, and D. Huang, “Deep learning for time-series
+functions LCDG , LCSA , and LPCDG . The first four cases of the                     prediction in IIoT: Progress, challenges, and prospects,” IEEE Trans.
+experiment are selected for sensitivity analysis. The coefficient                   Neural Netw. Learn. Syst., vol. 35, no. 11, pp. 15072–15091, Nov. 2024,
+                                                                                    doi: 10.1109/TNNLS.2023.3291371.
+of each loss function is experimented from 0.001 to 10.0. Let λ,                [4] W. Zhang, D. Yang, and H. Wang, “Data-driven methods for predictive
+δ, and ε represent the coefficient of LCDG , LCSA , and LPCDG .                     maintenance of industrial equipment: A survey,” IEEE Syst. J., vol. 13,
+The results are shown in Fig. 5.                                                    no. 3, pp. 2213–2227, Sep. 2019.
+                                                                                [5] L. Ren, Z. Jia, X. Wang, J. Dong, and W. Wang, “A t2 -tensor-aided
+                                                                                    multiscale transformer for remaining useful life prediction in IIoT,” IEEE
+                          V. CONCLUSION                                             Trans. Ind. Informat., vol. 18, no. 11, pp. 8108–8118, Nov. 2022.
+                                                                                [6] Y. Qin, C. Yuen, Y. Shao, B. Qin, and X. Li, “Slow-varying dynamics-
+   In this article, a novel DA method, CTPA, for industrial time-                   assisted temporal capsule network for machinery remaining useful life
+series prediction is proposed. It captures the domain-invariant                     estimation,” IEEE Trans. Cybern., vol. 53, no. 1, pp. 592–606, Jan. 2023.
+
+
+        Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on April 26,2026 at 12:40:53 UTC from IEEE Xplore. Restrictions apply.
+JIA et al.: CONTRASTIVE REPRESENTATION DA METHOD FOR INDUSTRIAL TIME-SERIES CROSS-DOMAIN PREDICTION                                                           3245
+
+
+
+ [7] X. Li, J. Li, L. Zuo, L. Zhu, and H. T. Shen, “Domain adaptive remaining
+     useful life prediction with transformer,” IEEE Trans. Instrum. Meas.,                                    Zidi Jia (Member, IEEE) received the bache-
+     vol. 71, 2022, Art. no. 3521213.                                                                         lor’s and the master’s degree from the School of
+ [8] B. Maschler and M. Weyrich, “Deep transfer learning for industrial                                       Automation and Control Engineering, University
+     automation: A review and discussion of new techniques for data-driven                                    of Electronic Science and Technology of China,
+     machine learning,” IEEE Ind. Electron. Mag., vol. 15, no. 2, pp. 65–75,                                  Chengdu, China, in 2017 and 2020, respec-
+     Jun. 2021.                                                                                               tively. He is currently working toward the Ph.D.
+ [9] Q. Qian, J. Luo, and Y. Qin, “Adaptive intermediate class-wise distribution                              degree in pattern recognition and intelligent sys-
+     alignment: A universal domain adaptation and generalization method for                                   tems with the School of Automation Science
+     machine fault diagnosis,” IEEE Trans. Neural Netw. Learn. Syst., early                                   and Electrical Engineering, Beihang University,
+     access, Mar. 21, 2024, doi: 10.1109/TNNLS.2024.3376449.                                                  Beijing, China.
+[10] J. Yang, Y. Xu, H. Cao, H. Zou, and L. Xie, “Deep learning and transfer                                     His research interests include deep learning,
+     learning for device-free human activity recognition: A survey,” J. Automat.      domain adaptation, industrial artificial intelligence, Industrial Internet of
+     Intell., vol. 1, no. 1, 2022, Art. no. 100007.                                   Things, and industrial process monitoring.
+[11] B. Sun, J. Feng, and K. Saenko, “Correlation alignment for unsupervised
+     domain adaptation,” in Domain Adaptation in Computer Vision Applica-
+     tions. Cham, Switzerland: Springer, 2017, pp. 153–171.
+[12] Y. Ganin et al., “Domain-adversarial training of neural networks,” J. Mach.
+     Learn. Res., vol. 17, no. 59, pp. 1–35, 2016.
+[13] J. Li, X. Li, and D. He, “Domain adaptation remaining useful life prediction                               Lei Ren (Senior Member, IEEE) received the
+     method based on AdaBN-DCNN,” in Proc. 2019 Prognostics Syst. Health                                        Ph.D. degree in computer science from the Insti-
+     Manage. Conf. (PHM-Qingdao), 2019, pp. 1–6.                                                                tute of Software, Chinese Academy of Sciences,
+[14] Y. Ding, P. Ding, X. Zhao, Y. Cao, and M. Jia, “Transfer learning for                                      Beijing, China, in 2009.
+     remaining useful life prediction across operating conditions based on                                         He is currently a Professor with the School
+     multisource domain adaptation,” IEEE/ASME Trans. Mechatron., vol. 27,                                      of Automation Science and Electrical Engineer-
+     no. 5, pp. 4143–4152, Oct. 2022.                                                                           ing, Beihang University, Beijing, and Hangzhou
+[15] M. Miao, J. Yu, and Z. Zhao, “A sparse domain adaption network for                                         International Innovation Institute, Beihang Uni-
+     remaining useful life prediction of rolling bearings under different working                               versity, Hangzhou, China. He is also with the
+     conditions,” Rel. Eng. System Saf., vol. 219, 2022, Art. no. 108259.                                       Zhongguancun Laboratory, Beijing, and the
+[16] K. He, H. Fan, Y. Wu, S. Xie, and R. Girshick, “Momentum contrast for                                      State Key Laboratory of Intelligent Manufactur-
+     unsupervised visual representation learning,” in Proc. IEEE/CVF Conf.            ing System Technology, Beijing. His research interests include neural
+     Comput. Vis. Pattern Recognit., Jun. 2020, pp. 9729–9738.                        networks and deep learning, industrial embodied intelligence, and in-
+[17] X. Liu et al., “Self-supervised learning: Generative or contrastive,” IEEE       dustrial AI applications.
+     Trans. Knowl. Data Eng., vol. 35, no. 1, pp. 857–876, Jan. 2023.                   Dr. Ren is an Associate Editor for IEEE TRANSACTIONS ON NEURAL
+[18] Y. Wang et al., “Contrastive regression for domain adaptation on gaze            NETWORKS AND LEARNING SYSTEMS,an Technical Editor for IEEE TRANS-
+     estimation,” in Proc. IEEE/CVF Conf. Comput. Vis. Pattern Recognit.,             ACTIONS ON MECHATRONICSand other international journals.
+     Jun. 2022, pp. 19376–19385.
+[19] T. Chen, S. Kornblith, M. Norouzi, and G. Hinton, “A simple framework
+     for contrastive learning of visual representations,” in Proc. 37th Int. Conf.
+     Mach. Learn., H. D. III and A. Singh, Eds., 2020, pp. 1597–1607.
+[20] P. Bachman, R. D. Hjelm, and W. Buchwalter, “Learning representations
+     by maximizing mutual information across views,” in Proc. 33rd Int. Conf.                                  Yang Tang (Fellow, IEEE) received the B.S.
+     Neural Inf. Process. Syst., 2019, pp. 15535–15545.                                                        and Ph.D. degrees in electrical engineering from
+[21] T. Chen, S. Kornblith, M. Norouzi, and G. Hinton, “A simple framework                                     Donghua University, Shanghai, China, in 2006
+     for contrastive learning of visual representations,” in Proc. Int. Conf. Mach.                            and 2010, respectively.
+     Learn., 2020, pp. 1597–1607.                                                                                 From 2008 to 2010, he was a Research Asso-
+[22] Y. Ding, J. Zhuang, P. Ding, and M. Jia, “Self-supervised pretraining via                                 ciate with The Hong Kong Polytechnic Univer-
+     contrast learning for intelligent incipient fault detection of bearings,” Rel.                            sity, Hong Kong. From 2011 to 2015, he was
+     Eng. Syst. Saf., vol. 218, 2022, Art. no. 108126.                                                         a Postdoctoral Researcher with the Humboldt
+[23] M. Ragab et al., “Contrastive adversarial domain adaptation for machine                                   University of Berlin, Berlin, Germany, and with
+     remaining useful life prediction,” IEEE Trans. Ind. Informat., vol. 17, no. 8,                            the Potsdam Institute for Climate Impact Re-
+     pp. 5239–5249, Aug. 2021.                                                                                 search, Potsdam, Germany. He is currently a
+[24] M.-H. Guo, Z.-N. Liu, T.-J. Mu, and S.-M. Hu, “Beyond self-attention:            Professor with the East China University of Science and Technology,
+     External attention using two linear layers for visual tasks,” IEEE Trans.        Shanghai. He has authored or coauthored more than 200 papers in in-
+     Pattern Anal. Mach. Intell., vol. 45, no. 5, pp. 5436–5447, May 2023,            ternational journals and conferences, including more than 130 papers in
+     doi: 10.1109/TPAMI.2022.3211006.                                                 IEEE Transactions and 20 papers in IFAC journals. His current research
+[25] A. v. d. Oord, Y. Li, and O. Vinyals, “Representation learning with              interests include distributed estimation/control/optimization, computer
+     contrastive predictive coding,” 2018, arXiv:1807.03748.                          vision, reinforcement learning, cyber-physical systems, hybrid dynam-
+[26] A. Saxena, K. Goebel, D. Simon, and N. Eklund, “Damage propagation               ical systems, and their applications.
+     modeling for aircraft engine run-to-failure simulation,” in Proc. 2008 Int.         Prof. Tang was the recipient of the Alexander von Humboldt Fellow-
+     Conf. Prognostics Health Manage., 2008, pp. 1–9.                                 ship. He is a Senior Area Editor of IEEE TRANSACTIONS ON CIRCUITS
+[27] M. Ragab, Z. Chen, M. Wu, C. K. Kwoh, and X. Li, “Adversarial transfer           AND SYSTEMS-I: REGULAR PAPERS, Associate Editor of IEEE TRANSAC-
+     learning for machine remaining useful life prediction,” in Proc. 2020 IEEE       TIONS ON NEURAL NETWORKS AND LEARNING SYSTEMS, IEEE TRANS-
+     Int. Conf. Prognostics Health Manage., 2020, pp. 1–7.                            ACTIONS ON CYBERNETICS, IEEE TRANSACTIONS ON INDUSTRIAL INFOR-
+[28] M. Vayyat, J. Kasi, A. Bhattacharya, S. Ahmed, and R. Tallamraju, “Cluda:        MATICS, IEEE/ASME TRANSACTIONS ON MECHATRONICS, IEEE TRANSAC-
+     Contrastive learning in unsupervised domain adaptation for semantic              TIONS ON CIRCUITS AND SYSTEMS-I: REGULAR PAPERS, IEEE TRANSAC-
+     segmentation,” 2022, arXiv:2208.14227.                                           TIONS ON COGNITIVE AND DEVELOPMENTAL SYSTEMS, IEEE TRANSACTIONS
+[29] S. Cui, S. Wang, J. Zhuo, L. Li, Q. Huang, and Q. Tian, “Towards dis-            ON EMERGING TOPICS IN COMPUTATIONAL INTELLIGENCE, IEEE SYSTEMS
+     criminability and diversity: Batch nuclear-norm maximization under label         JOURNAL, Engineering Applications of Artificial Intelligence (IFAC Jour-
+     insufficient situations,” in Proc. IEEE/CVF Conf. Comput. Vis. Pattern           nal), Science China Information Sciences, and Acta Automatica Sinica.
+     Recognit., 2020, pp. 3941–3950.                                                  He has been awarded as best/outstanding Associate Editor in IEEE
+[30] H. Rangwani, S. K. Aithal, M. Mishra, A. Jain, and V. B. Radhakrishnan,          journals for four times. He is a (leading) guest editor for several special
+     “A closer look at smoothness in domain adversarial training,” in Proc. Int.      issues focusing on autonomous systems, robotics, and industrial intelli-
+     Conf. Mach. Learn., 2022, pp. 18378–18399.                                       gence in IEEE Transactions.
+
+
+
+
+            Authorized licensed use limited to: XIDIAN UNIVERSITY. Downloaded on April 26,2026 at 12:40:53 UTC from IEEE Xplore. Restrictions apply.
+

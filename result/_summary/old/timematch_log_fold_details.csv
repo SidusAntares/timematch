@@ -1,0 +1,24 @@
+﻿Task,Fold,BestValidationMacroF1,TestMacroF1IfAny,SourceLog
+FR1 -> FR2,0,0.6885,0.6784,run_timematch_30TXT_gpu1.log
+FR1 -> FR2,1,0.6975,0.6914,run_timematch_30TXT_gpu1.log
+FR1 -> FR2,2,0.6938,0.6780,run_timematch_30TXT_gpu1.log
+FR1 -> DK1,0,,,run_timematch_30TXT_gpu1.log
+FR1 -> AT1,0,0.6835,0.6436,run_timematch_30TXT_gpu1.log
+FR1 -> AT1,1,,,run_timematch_30TXT_gpu1.log
+FR2 -> FR1,0,,,run_timematch_31TCJ_gpu2.log
+FR2 -> DK1,0,,,run_timematch_31TCJ_gpu2.log
+FR2 -> AT1,0,0.6230,0.6045,run_timematch_31TCJ_gpu2.log
+FR2 -> AT1,1,,,run_timematch_31TCJ_gpu2.log
+DK1 -> FR1,0,,,run_timematch_32VNH_gpu0.log
+DK1 -> FR2,0,0.4274,0.4194,run_timematch_32VNH_gpu0.log
+DK1 -> FR2,1,0.3867,0.3716,run_timematch_32VNH_gpu0.log
+DK1 -> FR2,2,,,run_timematch_32VNH_gpu0.log
+DK1 -> AT1,0,0.6112,0.5909,run_timematch_32VNH_gpu0.log
+DK1 -> AT1,1,0.5802,0.5439,run_timematch_32VNH_gpu0.log
+DK1 -> AT1,2,0.5712,0.5641,run_timematch_32VNH_gpu0.log
+AT1 -> FR1,0,0.6652,0.6641,run_timematch_33UVP_gpu3.log
+AT1 -> FR1,1,0.6593,0.6716,run_timematch_33UVP_gpu3.log
+AT1 -> FR1,2,0.7025,0.6747,run_timematch_33UVP_gpu3.log
+AT1 -> FR2,0,,,run_timematch_33UVP_gpu3.log
+AT1 -> DK1,0,0.5751,0.5512,run_timematch_33UVP_gpu3.log
+AT1 -> DK1,1,,,run_timematch_33UVP_gpu3.log

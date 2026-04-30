@@ -11,7 +11,6 @@ import numpy as np
 import torch
 import torch.backends.cudnn
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader
 from torchvision.transforms import transforms
 from tqdm import tqdm
 
@@ -20,16 +19,15 @@ from competitors.jumbot.jumbot import train_jumbot
 from competitors.mmd.train_mmd import train_mmd
 from competitors.alda.train_alda import train_alda
 from dataset import PixelSetData, create_evaluation_loaders, create_train_loader
-from dataset import GroupByShapesBatchSampler
 from evaluation import evaluation, validation
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
-from temp import compute_pairwise_structure, compute_separability, compute_class_doy_means, collect_class_doy_parcel_means
 from timematch import train_timematch
 from transforms import Normalize, RandomSamplePixels, RandomSampleTimeSteps, ToTensor, RandomTemporalShift, Identity
 from utils import label_utils
 from utils.focal_loss import FocalLoss
 from utils.metrics import overall_classification_report
-from utils.train_utils import AverageMeter, bool_flag, to_cuda, should_disable_tqdm
+from utils.train_utils import AverageMeter, bool_flag, to_cuda
+
 
 
 def main(config):
@@ -38,28 +36,18 @@ def main(config):
     torch.manual_seed(config.seed)
     device = torch.device(config.device)
 
-    # Build a closed-set label space from source classes.
-    # Rare source classes and the fallback "unknown" bucket are excluded.
-    source_classes = label_utils.get_classes(cfg.source.split('/')[0],
-                                             combine_spring_and_winter=cfg.combine_spring_and_winter)
+    # Select classes that appear at least 200 times source
+    source_classes = label_utils.get_classes(cfg.source.split('/')[0], combine_spring_and_winter=cfg.combine_spring_and_winter)
     source_data = PixelSetData(cfg.data_root, cfg.source, source_classes)
     labels, counts = np.unique(source_data.get_labels(), return_counts=True)
     source_classes = [source_classes[i] for i in labels[counts >= 200]]
-    source_classes = [class_name for class_name in source_classes if class_name != 'unknown']
-    print('Using closed-set classes:', source_classes)
+    print('Using classes:', source_classes)
     cfg.classes = source_classes
     cfg.num_classes = len(source_classes)
-    cfg.unknown_class_idx = None
-
-    if config.compute_separability:
-        compute_and_save_separability(config)
-        return
 
     # Randomly assign parcels to train/val/test
-    indices = {config.source: len(source_data),
-               config.target: len(PixelSetData(config.data_root, config.target, source_classes))}
-    folds = create_train_val_test_folds([config.source, config.target], config.num_folds, indices, config.val_ratio,
-                                        config.test_ratio)
+    indices = {config.source: len(source_data), config.target: len(PixelSetData(config.data_root, config.target, source_classes))}
+    folds = create_train_val_test_folds([config.source, config.target], config.num_folds, indices, config.val_ratio, config.test_ratio)
 
     if config.overall:
         overall_performance(config)
@@ -84,7 +72,7 @@ def main(config):
             model = PseGru(input_dim=config.input_dim, num_classes=config.num_classes, with_extra=config.with_extra)
         else:
             raise NotImplementedError()
-
+        
         model.to(config.device)
 
         best_model_path = os.path.join(config.fold_dir, 'model.pt')
@@ -93,13 +81,12 @@ def main(config):
             print(model)
             print('Number of trainable parameters:', get_num_trainable_params(model))
 
-            if os.path.isfile(best_model_path) and not config.overwrite_existing:
-                continue
-                # answer = input(f'Model already exists at {best_model_path}! Override y/[n]? ')
-                # override = strtobool(answer) if len(answer) > 0 else False
-                # if not override:
-                #     print('Skipping fold', fold_num)
-                #     continue
+            # if os.path.isfile(best_model_path):
+            #     answer = input(f'Model already exists at {best_model_path}! Override y/[n]? ')
+            #     override = strtobool(answer) if len(answer) > 0 else False
+            #     if not override:
+            #         print('Skipping fold', fold_num)
+            #         continue
 
             writer = SummaryWriter(log_dir=f'{config.tensorboard_log_dir}_fold{fold_num}', purge_step=0)
             if config.method == 'timematch':
@@ -117,13 +104,12 @@ def main(config):
 
         print('Restoring best model weights for testing...')
 
-        state_dict = torch.load(best_model_path)['state_dict']
+        state_dict = torch.load(best_model_path, weights_only=False)['state_dict']
         model.load_state_dict(state_dict)
 
         test_metrics = evaluation(model, test_loader, device, config.classes, mode='test')
 
-        print(
-            f"Test result for {config.experiment_name}: accuracy={test_metrics['accuracy']:.4f}, f1={test_metrics['macro_f1']:.4f}")
+        print(f"Test result for {config.experiment_name}: accuracy={test_metrics['accuracy']:.4f}, f1={test_metrics['macro_f1']:.4f}")
         print(test_metrics['classification_report'])
 
         save_results(test_metrics, config)
@@ -134,62 +120,9 @@ def main(config):
 def get_num_trainable_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-
 def get_dataset_size(data_root, dataset):
     dir = os.path.join(data_root, dataset)
     return len([name for name in os.listdir(os.path.join(dir, 'data')) if name.endswith('.zarr')])
-
-
-def create_separability_loader(config):
-    transform = transforms.Compose([
-        Normalize(),
-        ToTensor(),
-    ])
-    dataset = PixelSetData(
-        config.data_root,
-        config.source,
-        config.classes,
-        transform=transform,
-        with_extra=config.with_extra,
-    )
-    data_loader = DataLoader(
-        dataset,
-        num_workers=config.num_workers,
-        batch_sampler=GroupByShapesBatchSampler(dataset, config.batch_size),
-        pin_memory=torch.cuda.is_available(),
-    )
-    print(f'separability dataset: {config.source}, n={len(dataset)}, batches={len(data_loader)}')
-    return data_loader
-
-
-def save_separability_results(config, separability, classes, dist_mat, pair_scores):
-    source_name = str(config.source).replace('/', '_')
-    result = {
-        'source': config.source,
-        'target': config.target,
-        'separability': float(separability),
-        'num_classes': len(classes),
-        'classes': list(classes),
-        'pair_scores': {f'{a}-{b}': float(score) for (a, b), score in pair_scores.items()},
-        'distance_matrix': dist_mat.tolist(),
-    }
-
-    output_path = os.path.join(config.output_dir, f'separability_{source_name}.json')
-    with open(output_path, 'w') as outfile:
-        json.dump(result, outfile, indent=4)
-
-    print(f"Separability for {config.source}: {separability:.6f}")
-    print(f'Saved separability result to {output_path}')
-
-
-def compute_and_save_separability(config):
-    data_loader = create_separability_loader(config)
-    data_dict = collect_class_doy_parcel_means(data_loader)
-    class_doy_means = compute_class_doy_means(data_dict)
-    separability = compute_separability(class_doy_means)
-    classes, dist_mat, pair_scores = compute_pairwise_structure(class_doy_means)
-    save_separability_results(config, separability, classes, dist_mat, pair_scores)
-
 
 def train_supervised(model, config, writer, splits, val_loader, device, best_model_path):
     model.to(device)
@@ -200,8 +133,7 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
     train_transform = transforms.Compose([
         RandomSamplePixels(config.num_pixels),
         RandomSampleTimeSteps(config.seq_length),
-        RandomTemporalShift(max_shift=config.max_shift_aug,
-                            p=config.shift_aug_p) if config.with_shift_aug else Identity(),
+        RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
         Normalize(),
         ToTensor(),
     ])
@@ -209,8 +141,7 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
     if config.train_on_target:
         dataset_name = config.target
 
-    dataset = PixelSetData(config.data_root, dataset_name, config.classes, train_transform,
-                           splits[dataset_name]['train'])
+    dataset = PixelSetData(config.data_root, dataset_name, config.classes, train_transform, splits[dataset_name]['train'])
     data_loader = create_train_loader(dataset, config.batch_size, config.num_workers)
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
 
@@ -223,12 +154,7 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
         model.train()
         loss_meter = AverageMeter()
 
-        progress_bar = tqdm(
-            enumerate(data_loader),
-            total=len(data_loader),
-            desc=f'Epoch {epoch + 1}/{config.epochs}',
-            disable=should_disable_tqdm(config),
-        )
+        progress_bar = tqdm(enumerate(data_loader), total=len(data_loader), desc=f'Epoch {epoch + 1}/{config.epochs}')
         global_step = epoch * len(data_loader)
         for step, sample in progress_bar:
             targets = sample['label'].cuda(device=device, non_blocking=True)
@@ -246,13 +172,7 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
 
             if step % config.log_step == 0:
                 lr = optimizer.param_groups[0]["lr"]
-                if should_disable_tqdm(config):
-                    print(
-                        f"Epoch {epoch + 1}/{config.epochs} Step {step}/{len(data_loader)}: "
-                        f"lr={lr:.1E}, loss={loss_meter.avg:.3f}"
-                    )
-                else:
-                    progress_bar.set_postfix(lr=f'{lr:.1E}', loss=f"{loss_meter.avg:.3f}")
+                progress_bar.set_postfix(lr=f'{lr:.1E}', loss=f"{loss_meter.avg:.3f}")
                 writer.add_scalar("train/loss", loss_meter.val, global_step + step)
                 writer.add_scalar("train/lr", lr, global_step + step)
 
@@ -295,59 +215,10 @@ def save_results(metrics, config):
     conf_mat = metrics.pop('confusion_matrix')
     class_report = metrics.pop('classification_report')
     target_name = str(config.target).replace('/', '_')
-    metadata = {
-        'experiment_name': config.experiment_name,
-        'method': config.method,
-        'source': config.source,
-        'target': config.target,
-        'use_prototype_relation_alignment': bool(
-            getattr(config, 'use_prototype_relation_alignment', False)
-        ),
-        'pra_trade_off': float(getattr(config, 'pra_trade_off', 0.0)),
-        'pra_point_trade_off': float(getattr(config, 'pra_point_trade_off', 0.0)),
-        'pra_warmup_epochs': int(getattr(config, 'pra_warmup_epochs', 0)),
-        'pra_min_samples_per_class': int(getattr(config, 'pra_min_samples_per_class', 0)),
-        'pra_bank_momentum': float(getattr(config, 'pra_bank_momentum', 0.9)),
-        'pra_use_refined_prototypes': bool(getattr(config, 'pra_use_refined_prototypes', False)),
-        'pra_refinement_keep_ratio': float(getattr(config, 'pra_refinement_keep_ratio', 1.0)),
-        'pra_use_prototype_contrastive': bool(getattr(config, 'pra_use_prototype_contrastive', False)),
-        'pra_contrastive_trade_off': float(getattr(config, 'pra_contrastive_trade_off', 0.0)),
-        'pra_contrastive_temperature': float(getattr(config, 'pra_contrastive_temperature', 0.1)),
-        'pra_use_memory_invariant_prototypes': bool(getattr(config, 'pra_use_memory_invariant_prototypes', False)),
-        'pra_use_phase_pse_alignment': bool(getattr(config, 'pra_use_phase_pse_alignment', False)),
-        'pra_num_phases': int(getattr(config, 'pra_num_phases', 3)),
-        'pra_phase_trade_off': float(getattr(config, 'pra_phase_trade_off', 0.0)),
-        'pra_phase_contrastive_trade_off': float(getattr(config, 'pra_phase_contrastive_trade_off', 0.0)),
-        'pra_phase_trend_trade_off': float(getattr(config, 'pra_phase_trend_trade_off', 0.0)),
-        'pra_phase_temperature': float(getattr(config, 'pra_phase_temperature', 0.1)),
-    }
-    metrics_with_metadata = dict(metrics)
-    metrics_with_metadata['metadata'] = metadata
 
     with open(os.path.join(out_dir, f'test_metrics_{target_name}.json'), 'w') as outfile:
-        json.dump(metrics_with_metadata, outfile, indent=4)
+        json.dump(metrics, outfile, indent=4)
     with open(os.path.join(out_dir, f'class_report_{target_name}.txt'), 'w') as outfile:
-        outfile.write(
-            f"use_prototype_relation_alignment={getattr(config, 'use_prototype_relation_alignment', False)}\n"
-        )
-        outfile.write(f"pra_trade_off={getattr(config, 'pra_trade_off', 0.0)}\n")
-        outfile.write(f"pra_point_trade_off={getattr(config, 'pra_point_trade_off', 0.0)}\n")
-        outfile.write(f"pra_warmup_epochs={getattr(config, 'pra_warmup_epochs', 0)}\n")
-        outfile.write(f"pra_min_samples_per_class={getattr(config, 'pra_min_samples_per_class', 0)}\n")
-        outfile.write(f"pra_bank_momentum={getattr(config, 'pra_bank_momentum', 0.9)}\n")
-        outfile.write(f"pra_use_refined_prototypes={getattr(config, 'pra_use_refined_prototypes', False)}\n")
-        outfile.write(f"pra_refinement_keep_ratio={getattr(config, 'pra_refinement_keep_ratio', 1.0)}\n")
-        outfile.write(f"pra_use_prototype_contrastive={getattr(config, 'pra_use_prototype_contrastive', False)}\n")
-        outfile.write(f"pra_contrastive_trade_off={getattr(config, 'pra_contrastive_trade_off', 0.0)}\n")
-        outfile.write(f"pra_contrastive_temperature={getattr(config, 'pra_contrastive_temperature', 0.1)}\n")
-        outfile.write(f"pra_use_memory_invariant_prototypes={getattr(config, 'pra_use_memory_invariant_prototypes', False)}\n")
-        outfile.write(f"pra_use_phase_pse_alignment={getattr(config, 'pra_use_phase_pse_alignment', False)}\n")
-        outfile.write(f"pra_num_phases={getattr(config, 'pra_num_phases', 3)}\n")
-        outfile.write(f"pra_phase_trade_off={getattr(config, 'pra_phase_trade_off', 0.0)}\n")
-        outfile.write(f"pra_phase_contrastive_trade_off={getattr(config, 'pra_phase_contrastive_trade_off', 0.0)}\n")
-        outfile.write(f"pra_phase_trend_trade_off={getattr(config, 'pra_phase_trend_trade_off', 0.0)}\n")
-        outfile.write(f"pra_phase_temperature={getattr(config, 'pra_phase_temperature', 0.1)}\n")
-        outfile.write(f"experiment_name={config.experiment_name}\n\n")
         outfile.write(str(class_report))
     pkl.dump(conf_mat, open(os.path.join(out_dir, f'conf_mat_{target_name}.pkl'), 'wb'))
 
@@ -357,38 +228,29 @@ def overall_performance(config):
     target_name = str(config.target).replace("/", "_")
 
     cms = []
-    metadata = None
     for fold in range(config.num_folds):
         fold_dir = os.path.join(config.output_dir, f'fold_{fold}')
         test_metrics = json.load(open(os.path.join(fold_dir, f'test_metrics_{target_name}.json')))
-        if metadata is None:
-            metadata = test_metrics.get('metadata', {})
-        numeric_metrics = {
-            metric: value
-            for metric, value in test_metrics.items()
-            if metric != 'metadata' and isinstance(value, (int, float))
-        }
-        for metric, value in numeric_metrics.items():
+        for metric, value in test_metrics.items():
             overall_metrics[metric].append(value)
         cm = pkl.load(open(os.path.join(fold_dir, f'conf_mat_{target_name}.pkl'), 'rb'))
         cms.append(cm)
 
-    for i, row in enumerate(np.mean(cms, axis=0)):
+    for i,row in enumerate(np.mean(cms, axis=0)):
         print(config.classes[i], row.astype(int))
 
     print(f'Overall result across {config.num_folds} folds:')
     print(overall_classification_report(cms, config.classes))
-    for metric in ['accuracy', 'macro_f1']:
-        if metric not in overall_metrics:
-            continue
-        values = np.array(overall_metrics[metric]) * 100
-        print(f"{metric}: {np.mean(values):.1f}??{np.std(values):.1f}")
+    for metric, values in overall_metrics.items():
+        values = np.array(values)
+        if metric == 'loss':
+            print(f"{metric}: {np.mean(values):.4}±{np.std(values):.4}")
+        else:
+            values *= 100
+            print(f"{metric}: {np.mean(values):.1f}±{np.std(values):.1f}")
+
     with open(os.path.join(config.output_dir, f'overall_{target_name}.json'), 'w') as file:
-        output = {
-            'metrics': overall_metrics,
-            'metadata': metadata or {},
-        }
-        file.write(json.dumps(output, indent=4))
+        file.write(json.dumps(overall_metrics, indent=4))
 
 
 if __name__ == '__main__':
@@ -397,8 +259,7 @@ if __name__ == '__main__':
     # Setup parameters
     parser.add_argument('--data_root', default='/data/user/DBL/timematch_data', type=str,
                         help='Path to datasets root directory')
-    parser.add_argument('--num_blocks', default=50, type=int,
-                        help='Number of geographical blocks in dataset for splitting. Default 100.')
+    parser.add_argument('--num_blocks', default=100, type=int, help='Number of geographical blocks in dataset for splitting. Default 100.')
 
     available_tiles = ['denmark/32VNH/2017', 'france/30TXT/2017', 'france/31TCJ/2017', 'austria/33UVP/2017']
 
@@ -409,23 +270,15 @@ if __name__ == '__main__':
                         help='Ratio of training data to use for validation. Default 10%.')
     parser.add_argument("--test_ratio", default=0.2, type=float,
                         help='Ratio of training data to use for testing. Default 20%.')
-    parser.add_argument('--sample_pixels_val', type=bool_flag, default=True,
-                        help='speed up validation at the cost of randomness')
+    parser.add_argument('--sample_pixels_val', type=bool_flag, default=True, help='speed up validation at the cost of randomness')
     parser.add_argument('--output_dir', default='outputs', help='Path to the folder where the results should be stored')
     parser.add_argument('-e', '--experiment_name', default=None, help='Name of the experiment')
     parser.add_argument('--num_workers', default=8, type=int, help='Number of data loading workers')
-    parser.add_argument('--seed', default=111, type=int, help='Random seed')
+    parser.add_argument('--seed', default=1, type=int, help='Random seed')
     parser.add_argument('--device', default='cuda', type=str, help='Name of device to use for tensor computations')
-    parser.add_argument('--log_step', default=10, type=int,
-                        help='Interval in batches between display of training metrics')
-    parser.add_argument('--disable_tqdm', action='store_true',
-                        help='disable tqdm progress bars explicitly (also disabled automatically in non-interactive logs)')
-    parser.add_argument('--overwrite_existing', action='store_true',
-                        help='overwrite existing fold checkpoints and force retraining')
+    parser.add_argument('--log_step', default=10, type=int, help='Interval in batches between display of training metrics')
     parser.add_argument('--eval', action='store_true', help='run only evaluation')
     parser.add_argument('--overall', action='store_true', help='print overall results, if exists')
-    parser.add_argument('--compute_separability', action='store_true',
-                        help='compute source-domain class separability and exit')
     parser.add_argument('--combine_spring_and_winter', default=False, type=bool_flag)
 
     # Training configuration
@@ -435,23 +288,16 @@ if __name__ == '__main__':
     parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight decay rate')
     parser.add_argument('--focal_loss_gamma', default=1.0, type=float, help='gamma value for focal loss')
     parser.add_argument('--num_pixels', default=64, type=int, help='Number of pixels to sample from the input sample')
-    parser.add_argument('--seq_length', default=30, type=int,
-                        help='Number of time steps to sample from the input sample')
+    parser.add_argument('--seq_length', default=30, type=int, help='Number of time steps to sample from the input sample')
     parser.add_argument('--model', default='pseltae', choices=['psetae', 'pseltae', 'psetcnn', 'psegru'])
     parser.add_argument('--input_dim', default=10, type=int, help='Number of channels of input sample')
-    parser.add_argument('--with_extra', default=False, type=bool_flag,
-                        help='whether to input extra geometric features to the PSE')
+    parser.add_argument('--with_extra', default=False, type=bool_flag, help='whether to input extra geometric features to the PSE')
     parser.add_argument('--tensorboard_log_dir', default='runs')
-    parser.add_argument('--train_on_target', default=False, action='store_true',
-                        help='supervised training on target for upper bound comparison')
+    parser.add_argument('--train_on_target', default=False, action='store_true', help='supervised training on target for upper bound comparison')
 
-    # TODO 
-    parser.add_argument('--with_shift_aug', default=True, action='store_true',
-                        help='whether to apply random temporal shift augmentation')
-    parser.add_argument('--shift_aug_p', default=1.0, type=float,
-                        help='probability to apply temporal shift augmentation')
-    parser.add_argument('--max_shift_aug', default=60, type=int,
-                        help='highest shift to apply for temporal shift augmentation')
+    parser.add_argument('--with_shift_aug', default=False, type=bool_flag, help='whether to apply random temporal shift augmentation')
+    parser.add_argument('--shift_aug_p', default=1.0, type=float, help='probability to apply temporal shift augmentation')
+    parser.add_argument('--max_shift_aug', default=60, type=int, help='highest shift to apply for temporal shift augmentation')
 
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')
@@ -494,104 +340,31 @@ if __name__ == '__main__':
     alda.add_argument('--epochs', default=20, type=int, help='Number of epochs per fold')
     alda.add_argument('--lr', default=0.001, type=float, help='Learning rate')
     alda.add_argument("--trade_off", default=1.0, type=float, help='weight of adversarial loss')
-    alda.add_argument("--pseudo_threshold", default=0.7, type=float,
-                      help='confidence threshold for assigning pseudo labels')
+    alda.add_argument("--pseudo_threshold", default=0.7, type=float, help='confidence threshold for assigning pseudo labels')
+
 
     # TimeMatch
     timematch = subparsers.add_parser('timematch')
     timematch.add_argument('--weights', type=str, help='path to source trained model weights')
     timematch.add_argument('--lr', default=0.0001, type=float, help='Learning rate')
-    timematch.add_argument("--pseudo_threshold", default=0.9, type=float,
-                           help='confidence threshold for assigning pseudo labels')
-    timematch.add_argument(
-        "--pseudo_selection",
-        default="confidence",
-        choices=["confidence", "confidence_margin", "confidence_entropy", "hybrid"],
-        help='pseudo-label filtering strategy for target updates',
-    )
-    timematch.add_argument(
-        "--pseudo_margin_threshold",
-        default=0.05,
-        type=float,
-        help='minimum top1-top2 probability margin when margin-based pseudo filtering is enabled',
-    )
-    timematch.add_argument(
-        "--pseudo_entropy_threshold",
-        default=0.30,
-        type=float,
-        help='maximum normalized entropy when entropy-based pseudo filtering is enabled',
-    )
+    timematch.add_argument("--pseudo_threshold", default=0.9, type=float, help='confidence threshold for assigning pseudo labels')
     timematch.add_argument("--ema_decay", default=0.9999, type=float, help='decay rate for mean teacher')
     timematch.add_argument("--trade_off", type=float, default=2.0, help='weight for unsupervised loss')
-    timematch.add_argument("--estimate_shift", type=bool_flag, default=True,
-                           help='whether to account for temporal shift')
+    timematch.add_argument("--estimate_shift", type=bool_flag, default=True, help='whether to account for temporal shift')
     timematch.add_argument('--epochs', default=20, type=int, help='Number of epochs per fold')
     timematch.add_argument("--steps_per_epoch", type=int, default=500, help='n steps per epoch')
     timematch.add_argument("--balance_source", type=bool_flag, default=True, help='class balanced batches for source')
     timematch.add_argument("--use_focal_loss", type=bool_flag, default=True, help='use focal loss or cross entropy')
-    timematch.add_argument("--shift_source", type=bool_flag, default=True,
-                           help='whether to apply temporal shift to source data')
-    timematch.add_argument("--sample_size", type=int, default=100,
-                           help='number of batches to sample for estimating shift')
+    timematch.add_argument("--shift_source", type=bool_flag, default=True, help='whether to apply temporal shift to source data')
+    timematch.add_argument("--sample_size", type=int, default=100, help='number of batches to sample for estimating shift')
     timematch.add_argument("--max_temporal_shift", type=int, default=60, help='maximum temporal shift to consider')
-    timematch.add_argument("--domain_specific_bn", type=bool_flag, default=True,
-                           help='whether to use domain specific batch normalization')
+    timematch.add_argument("--domain_specific_bn", type=bool_flag, default=True, help='whether to use domain specific batch normalization')
     timematch.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT'])
-    timematch.add_argument('--run_validation', default=True, action='store_true',
-                           help='whether to run validation each epoch')
+    timematch.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
     timematch.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
-    timematch.add_argument(
-        "--use_prototype_relation_alignment",
-        "--use_pra",
-        dest="use_prototype_relation_alignment",
-        action="store_true",
-        help='align class prototype relation matrices between source and target',
-    )
-    timematch.add_argument(
-        "--disable_pra",
-        dest="use_prototype_relation_alignment",
-        action="store_false",
-        help='disable prototype relation alignment explicitly',
-    )
-    timematch.set_defaults(use_prototype_relation_alignment=False)
-    timematch.add_argument("--pra_trade_off", type=float, default=0.1,
-                           help='weight for prototype edge alignment loss')
-    timematch.add_argument("--pra_point_trade_off", type=float, default=0.005,
-                           help='weight for prototype point alignment loss')
-    timematch.add_argument("--pra_warmup_epochs", type=int, default=5,
-                           help='number of warmup epochs before enabling prototype relation alignment')
-    timematch.add_argument("--pra_min_samples_per_class", type=int, default=4,
-                           help='minimum number of source and target samples per class within a batch to build PRA prototypes')
-    timematch.add_argument("--pra_bank_momentum", type=float, default=0.9,
-                           help='EMA momentum for source/target prototype memory banks used by PRA')
-    timematch.add_argument("--pra_normalize_geometry", type=bool_flag, default=True,
-                           help='center and rescale shared source/target prototypes before PRA point/edge alignment')
-    timematch.add_argument("--pra_use_refined_prototypes", type=bool_flag, default=False,
-                           help='use stable temporal segments instead of full-sequence features when constructing PRA prototypes')
-    timematch.add_argument("--pra_refinement_keep_ratio", type=float, default=0.7,
-                           help='fraction of lowest-instability timesteps kept for refined prototype pooling')
-    timematch.add_argument("--pra_use_prototype_contrastive", type=bool_flag, default=False,
-                           help='enable sample-to-prototype contrastive adaptation using shared prototype anchors')
-    timematch.add_argument("--pra_contrastive_trade_off", type=float, default=0.0,
-                           help='weight for prototype contrastive adaptation loss')
-    timematch.add_argument("--pra_contrastive_temperature", type=float, default=0.1,
-                           help='temperature for prototype contrastive logits')
-    timematch.add_argument("--pra_use_memory_invariant_prototypes", type=bool_flag, default=False,
-                           help='use EMA memory-bank prototypes as invariant anchors for prototype contrastive adaptation')
-    timematch.add_argument("--pra_use_phase_pse_alignment", type=bool_flag, default=False,
-                           help='enable phase-aware alignment on PSE temporal features')
-    timematch.add_argument("--pra_num_phases", type=int, default=3,
-                           help='number of contiguous temporal phases used by phase-aware PSE alignment')
-    timematch.add_argument("--pra_phase_trade_off", type=float, default=0.0,
-                           help='weight for class-phase prototype alignment loss')
-    timematch.add_argument("--pra_phase_contrastive_trade_off", type=float, default=0.0,
-                           help='weight for class-phase contrastive loss')
-    timematch.add_argument("--pra_phase_trend_trade_off", type=float, default=0.0,
-                           help='weight for phase-trend alignment loss')
-    timematch.add_argument("--pra_phase_temperature", type=float, default=0.1,
-                           help='temperature for class-phase contrastive logits')
 
     cfg = parser.parse_args()
+
 
     # Setup folders based on name
     if cfg.experiment_name is not None:
@@ -602,8 +375,9 @@ if __name__ == '__main__':
     for fold in range(cfg.num_folds):
         os.makedirs(os.path.join(cfg.output_dir, 'fold_{}'.format(fold)), exist_ok=True)
 
+
     # write training config to file
-    if not cfg.eval and not cfg.compute_separability:
+    if not cfg.eval:
         with open(os.path.join(cfg.output_dir, 'train_config.json'), 'w') as f:
             f.write(json.dumps(vars(cfg), indent=4))
     print(cfg)

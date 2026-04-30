@@ -1,0 +1,1031 @@
+                                                                                                                                                    1
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+
+
+          Unsupervised domain adaptation semantic
+        segmentation of high-resolution remote sensing
+        imagery with invariant domain-level prototype
+                           memory
+                     Jingru Zhu, Ya Guo, Geng Sun, Libo Yang, Min Deng and Jie Chen, Member, IEEE
+
+   Abstract—Semantic segmentation is a key technique involved in            production, and natural disaster monitoring. Specifically,
+automatic interpretation of high-resolution remote sensing (HRS)            semantic segmentation model is an important tool for the
+imagery and has drawn much attention in the remote sensing                  automatic interpretation of HRS imagery. It aims to assign a
+community. Deep convolutional neural networks (DCNNs) have
+                                                                            land cover category (such as building, tree, etc.) to each pixel
+been successfully applied to the HRS imagery semantic
+segmentation task due to their hierarchical representation ability.         in the image. In the past 10 years, deep convolutional neural
+However, the heavy dependency on a large number of training                 networks (DCNNs) have achieved great success in remote
+data with dense annotation and the sensitiveness to the variation           sensing image automatic interpretation tasks, such as scene
+of data distribution severely restrict the potential application of         classification [1, 2], image caption [3, 4], object detection [5,
+DCNNs for the semantic segmentation of HRS imagery. This study              6], and semantic segmentation [7, 8], due to their excellent
+proposes a novel unsupervised domain adaptation semantic
+                                                                            capability in exhibiting representations and high-level features.
+segmentation network (MemoryAdaptNet) for the semantic
+segmentation of HRS imagery. MemoryAdaptNet constructs an                   A fully convolutional network (FCN) [9] is a classic semantic
+output space adversarial learning scheme to bridge the domain               segmentation tool based on the DCNN structure. Some studies,
+distribution discrepancy between source domain and target                   including [10, 11], have applied FCNs to remote sensing
+domain and to narrow the influence of domain shift. Specifically,           imagery semantic segmentation task and drawn much attention.
+we embed an invariant feature memory module to store invariant              More complex encoder–decoder frameworks with skip
+domain-level prototype information because the features obtained
+                                                                            connection, such as SegNet [12], U-Net [13], PSPNet [14], and
+from adversarial learning only tend to represent the variant
+feature of current limited inputs. This module is integrated by a           Deeplab [15], have been used to HRS imagery semantic
+category attention-driven invariant domain-level memory                     segmentation.
+aggregation module to current pseudo invariant feature for                     However, some major problems are found in applying
+further augmenting the representations. An entropy-based pseudo             DCNNs to the semantic segmentation of HRS imagery. (1) The
+label filtering strategy is used to update the memory module with           superior performance of DCNN-based semantic segmentation
+high-confident pseudo invariant feature of current target images.
+                                                                            models relies heavily on a massive number of high-quality
+Extensive experiments under three cross-domain tasks indicate
+that our proposed MemoryAdaptNet is remarkably superior to the              training samples with dense annotation. Although many HRS
+state-of-the-art methods.                                                   semantic segmentation datasets with dense annotation are
+                                                                            available in the community, they are often limited to a certain
+   Index Terms—Unsupervised domain adaptation, high-                        area or an application. Manually annotating the dense semantic
+resolution remote sensing (HRS) imagery, semantic segmentation,             label is labor intensive and time consuming. Overall, the
+invariant domain-level context, memory module, category                     insufficient training data limit the availability of DCNN-based
+attention, pseudo label filtering strategy.
+                                                                            semantic segmentation models for HRS imagery. (2) The
+                                                                            DCNN-based semantic segmentation methods prefer to be
+                        I. INTRODUCTION
+
+
+D
+                                                                            particularly sensitive to the distribution variation. The
+         RIVEN by the rapid growth of Earth observation                     appearance and structural characteristics of HRS imagery vary
+         technology, large amounts of remote sensing imagery                because of the diverse imaging conditions, including difference
+         with high spatial resolution are increasingly available,           in geolocations, imaging sensors, and observational
+which makes Earth observation possible. Automatic                           illumination, as shown in Fig. 1. This condition makes the deep
+interpretation of high-resolution remote sensing (HRS) imagery              models trained on a certain HRS dataset with annotated labels
+plays a vital role in the field of remote sensing analysis, such as         invalid when dealing with images obtained under different
+urban planning, intelligent transportation, agricultural                    imaging conditions. Therefore, finding an accurate and efficient
+
+Manuscript received ; revised ; accepted ; date of publication ; date of    J. R. Zhu, Y. Guo, G. Sun, L. B. Yang, M. Deng, and J. Chen are with the
+current version. This work was supported by the National Key Research and   School of Geosciences and Info-Physics, Central South University, Changsha
+Development Program of China (Grant 2020YFA0713503) and the National        410083, China (e-mail: cj2011@ csu.edu.cn).
+Natural Science Foundation of China (Grant 42071427). (Corresponding
+author: Jie Chen.)
+                                                                                                                                     2
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+semantic segmentation method for HRS imagery with the                or feature alignment. The existing UDA semantic segmentation
+ability to deal with domain gap is crucial.                          methods of HRS imagery need to cut the large-size HRS images
+                                                                     into small-size patches, which are inputted into the model in the
+                                                                     form of batch (1 ≤ batch size ≪ dataset size) for the adversarial
+                                                                     training. However, the distribution of these batch source or
+                                                                     target images cannot represent the data distribution of the entire
+                                                                     source or target domain. In other words, the network propagates
+                                                                     the gradient based on the adversarial loss generated by these
+                                                                     batch images, which causes the extracted features only
+                                                                     represent the invariant features of current inputs (batch images
+                                                                     of source or target domain) rather than the domain invariant
+                                                                     features, which we call pseudo invariant features. Theoretically,
+                                                                     a certain bias and variance is observed between pseudo
+Fig. 1. Cross-domain remote sensing imagery.
+                                                                     invariant features and domain invariant features, which makes
+   Unsupervised domain adaptation (UDA) is developed to              the knowledge learned in the source domain cannot be
+bridge the domain discrepancy between the source and target          transferred to the target domain to the greatest extent. We aim
+domains. UDA can transfer knowledge learned from source              that domain adaptation models based on adversarial learning
+domain with dense annotation to unlabeled target domain by           can represent domain invariant features based on all data in the
+reducing the shift of domain distributions. Recently, adversarial    two domains rather than the pseudo invariant features.
+learning [16] has raised great attention in the fields of computer   Therefore, how to obtain domain invariant features from pseudo
+vision and has been applied to the UDA semantic segmentation.        invariant features is extremely important for cross-domain
+In accordance with the levels of data that generate adversarial      semantic segmentation of HRS imagery.
+loss, adversarial adaptation methods can be divided into pixel-         Considering these issues, we develop a novel UDA semantic
+level, feature-level, and output-level adversarial adaptation        segmentation method for HRS imagery by integrating invariant
+methods. The pixel-level adversarial adaptation methods              domain-level prototype information. Given that the output-
+usually implement generative adversarial network-based image         level adaptation methods can ensure the semantic consistency
+translation model to transfer the source domain images into          of features by conducting adversarial learning in the output
+target domain-styled images and then realize the semantic            space, we use an output-level-based adversarial strategy to
+segmentation model on the transferred images [17-19]. They           reduce the distribution difference in the source domain and
+can bridge the domain discrepancy in terms of image style,           target domain images, and to obtain the pseudo invariant feature
+including illumination, color, and texture. However, they            with semantic consistency. As illustrated in Fig. 2, we use a
+cannot narrow the domain differences in the content structure.       prototype memory module to store the pseudo invariant features
+Besides, their excellent performance relies on a successful          of historical source images and target images and dynamically
+image translation model. The feature-level adversarial               update them to obtain the domain invariant feature in category
+adaptation methods focus on the alignment of source and target       wise form because a certain bias and variance is found between
+domains at the feature space through adversarial learning based      the pseudo invariant feature and the domain invariant feature.
+on the feature representations [20, 21]. However, adversarial        We use an invariant domain-level memory aggregation module
+learning at high-dimension feature space may be unstable and         to adaptively integrate the domain invariant feature in prototype
+unreliable due to the heterogeneity and noninterpretability of       memory module and the current pseudo invariant feature.
+high-dimension feature. The output-level adaptation methods          Current pseudo invariant feature representations are augmented
+adopt adversarial learning in the output space [22-24]. The          by integrating the domain invariant feature representations,
+features from the source and target domains can maintain the         which enables the model to maximize the transferability of
+semantic consistency through a minimax game between                  knowledge learned from the source domain to the target
+segmentation network and discriminator.                              domain, thereby enhancing the performance of semantic
+   Although the above UDA methods based on adversarial               segmentation model on target HRS imagery. Our main
+learning have achieved impressive performance in semantic            contributions can be summarized as follows:
+segmentation, they are mainly designed for natural images [17,          1) This study develops an invariant domain prototype
+18, 22, 23]. Given that some differences are found between the       memory module M to integrate invariant domain-level
+remote sensing and natural images in terms of imaging angle,         prototype information for the UDA semantic segmentation of
+observation subject, scene complexity, and spatial layout, the       HRS imagery, where the M can be dynamically updated by the
+above methods cannot be directly applied to the cross-domain         pseudo invariant features of historical source images and target
+semantic segmentation of HRS imagery. In recent years, many          images to obtain the invariant domain-level prototype
+domain adaptation semantic segmentation methods for HRS              presentation. Concretely, this presentation is stored classwise
+imagery have been developed in the remote sensing community          for the alignment of category-level joint distribution.
+[25-28], most which reduce the domain shift by pixel alignment
+                                                                                                                                     3
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+
+
+
+Fig. 2. Mining invariant domain-level prototype information beyond current images. The prototype memory module stores the
+invariant domain-level representations of various categories.
+
+   2) This study introduces a category attention-driven invariant      source training data into the target domain by adversarial
+domain-level memory aggregation module to better integrate             learning in pixel-level to bridge the low-level discrepancy
+the invariant domain-level prototype information to current            between the source and target domains. [19] utilized a
+pseudo invariant feature for enhancing the feature                     bidirectional learning framework to promote the image
+representations of current input images.                               translation model and segmentation adaptation model
+   3) This study proposes an entropy-based pseudo label                simultaneously, which can gradually reduce the domain gap.
+filtering strategy to better utilize the pseudo invariant feature of   These UDA methods pursue the alignment of source and target
+current target images for dynamically updating the M.                  domains at the pixel-level. Some adversarial-based UDA
+Specifically, it reserves the prediction in which its entropy is       methods pursued the adaptation between the source and target
+                                                                       domains at the feature space so that the aligned features can
+less than or equal to the threshold.
+                                                                       generalize to the two domains. [20] used a convolutional
+   The remainder of this study is organized as follows. Section
+                                                                       domain adversarial training technique to align the distribution
+II summarizes the related work to our study. Section III               of source and target domains at the global-level and category-
+introduces the proposed method in detail. Section IV discusses         level. [21] proposed a domain adversarial learning framework
+the experiment settings, comparative analysis of experimental          joining global and class-specific measures for performing
+results, ablation experiments, parameter sensitivity analysis of       cross-city semantic segmentation task. Considering the
+entropy threshold, and the effects of different data                   heterogeneity and noninterpretability of adversarial-based
+augmentation strategies. Section V provides the conclusion and         domain adaptation methods at feature space, the output-level
+future research directions.                                            adversarial adaptation methods employed adversarial learning
+                                                                       in output space via a minimax game between semantic
+                       II. RELATED WORK                                segmentation network and discriminator. [22] employed output
+                                                                       space-based adversarial learning at different feature levels for
+  A. UDA Semantic Segmentation in the Computer Vision Field
+                                                                       domain adaptation. [23] used a category-level adversarial
+   UDA can narrow the distribution shift between different data        learning framework on the output space to enforce the local
+domains, in which we denote the labeled dataset as source              semantic consistency and global alignment. [24] introduced an
+domain, and the unlabeled dataset with different distributions         adversarial training method based on the entropy of semantic
+from source domain as target domain. Traditional deep                  predictions to address the UDA semantic segmentation from the
+adaptation semantic segmentation network [29] used the                 source domain to target domain. The output-level adversarial
+multiple kernel variant of MMD (MK-MMD) to jointly                     adaptation methods can ensure the semantic similarity and
+maximize the difference of source and target domains. As the           consistency of source domain and target domain features by
+extension of MMD, [30] explored a CMD to learn the domain-             adversarial learning in the output space.
+invariant representation by matching the higher order central            Although the adversarial learning-based UDA methods have
+moments of probability distribution. As another choice of UDA          achieved good performance in the semantic segmentation of
+methods, adversarial learning bridges the domain shift by              natural images, they cannot be directly applied to the UDA
+forcing the generator to produce pixels, features or predictions       semantic segmentation task of HRS imagery because they
+that confuse the discriminator. CyCADA [17] transferred
+                                                                       ignore the special properties of HRS imagery in terms of
+                                                                                                                                       4
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+content complexity, image resolution, and spatial layout.            level representations for mining the contextual information
+                                                                     more than the current input images. [38] maintained a class wise
+B. UDA Semantic Segmentation in Remote Sensing Field
+                                                                     memory module to yield similar pixel-level feature
+   UDA has been proposed to remote sensing for bridging the          representations with relevant features from labels data for semi
+data shift due to the differences in imaging sensor, geographic      supervised semantic segmentation. In this study, we utilize an
+location, and atmospheric conditions. Previous UDA semantic          effective feature memory module to retain the invariant
+segmentation studies of remote sensing mainly focused on             domain-level representations in category wise form to enable
+scene classification task. [31] considered the denoising             the segmentation network in seizing the domain invariant
+autoencoders and domain-adversarial neural networks to learn         information more than the current input images and enhance the
+domain-invariant feature representations and applied them to         performance on the target domain image.
+the UDA scene classification task of hyperspectral and
+multispectral images. [32] used a subspace alignment method                               III. METHODOLOGY
+based on DCNN to deal with the UDA task in remote sensing
+                                                                        We concentrate on the UDA semantic segmentation task of
+image scene classification. [33] presented a correlation
+subspace dynamic distribution alignment framework to narrow          HRS imagery. Given source domain data 𝑋! with 𝐶" -class
+the distribution difference between the source and target            pixel-level labels 𝑌! ∈ {0, 1, … , 𝐶" }#×% , where H and W denote
+domains for the cross-domain scene classification of remote          the height and width of image data, and 𝐶" represents the
+sensing image. In recent years, increasing researchers have          number of categories. Our goal is to learn a semantic
+focused on the UDA semantic segmentation task of remote              segmentation model that well performs on unlabeled target
+sensing images. [25] designed an appearance adaptation               domain data 𝑋& by transferring the knowledge learned from the
+approach with semantic consistency for the UDA semantic              labeled source domain data 𝑋! and 𝑌! .
+segmentation of remote sensing images. To deal with the                 As shown in Fig. 3, our proposed MemoryAdaptNet makes
+domain shift issue in road segmentation, [26] presented a            up a domain feature alignment (DFA) branch and an invariant
+stagewise domain adaptation model to align the feature of            domain-level memory aggregation (IDMA) branch. It uses the
+source and target domains via the interdomain adaptation based       DFA branch to adapt the features between the source and target
+on the generative adversarial networks. To learn an excellent        domain images through adversarial learning in the output space,
+semantic segmentation network for UDA remote sensing image           which is presented in Section III-A. In IDMA, we use a memory
+semantic segmentation task, [27] exploited an objective              module to store each pseudo invariant feature of the current
+function under multiple weakly supervised constraints to             input generated by DFA and dynamically update them to obtain
+minimize the disadvantageous effects of data distribution shift      invariant domain-level prototype representation, which is
+between source and target domains. [28] designed a category-         integrated to the current feature representations for further
+certainty attention to adaptively deal with the unadapted regions    refining the prediction of the final class probability distribution,
+and categories for the UDA semantic segmentation of HRS              as introduced in Section III-B. When updating the invariant
+imagery. The input size of the existing UDA methods is usually       domain-level prototype presentation in the IDMA branch with
+limited to the batch size (1 ≤ batch size ≪ dataset size) level,     pseudo invariant feature of current target images, we use the
+which makes the features extracted from the network pseudo           entropy-based pseudo label filtering strategy to provide a high-
+invariant features rather than the true domain invariant features,   confidence pseudo label for the target domain images, which
+so that the knowledge learned in the source domain cannot be         contribute to the calculation of each target category
+transferred to the target domain to the maximum extent.              representation for invariant domain-level presentation. The
+Therefore, how to obtain the domain invariant features from          details are provided in Section III-C.
+pseudo invariant features needs to be further studied on the         A. DFA
+cross-domain HRS imagery semantic segmentation task.                    Domain adaptation algorithms based on the adaptation in
+C. The Memory Module                                                 output space are one of the effective methods to solve the
+   Memory module can enable the DCNNs to store variables             domain shift between two domains, which can preserve the
+and data beyond a small local range. It has been widely used in      semantic consistency of source domain and target domain
+various fields of computer vision, such as image captioning          features by performing adversarial learning in the output space.
+[34], video object detection [35], video object segmentation         On this basis, we construct an adversarial learning scheme on
+[36], and semantic segmentation [37, 38]. [34] exploited the         the output space to align the features between the source and
+memory as a context repository of prior knowledge and                target domains in our proposed framework. Intuitively, the
+attached previously generated words to memory for seizing the        overview of DFA branch is visually shown in Fig. 4.
+long-term dependency for personalized image captioning. For             As shown in Fig. 4, the DFA contains a feature extractor F,
+video object detection task, MEGA [35] utilized a long range         a classifier C1, and a discriminator D, where F and C1 make up
+memory module to effectively integrate global and local              segmentation network G1. F extracts features from source and
+information, which is vital for recognizing the object in a video.   target images, and can be any CNN-based network. To realize
+For the semantic segmentation task we focus on in this work,         a high-quality segmentation performance, we utilize the
+[37] employed a feature memory module to store the dataset-          ResNet-101 [39] pretrained on ImageNet [40] as our backbone
+                                                                                                                                    5
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+
+
+
+Fig. 3. Structure of MemoryAdaptNet.
+
+for feature extractor F. It composes 33 residual blocks, each of      iteration is only based on the adversarial loss generated by the
+which has 3 convolutional layers with a skip connection. We           current batch images at each iteration update, causing the
+apply an atrous convolution layer with rate = 2 to replace the        extracted features of feature extractor F to represent the
+ordinary convolution layer with kernel 3 × 3 in the last residual     invariant features of the current inputs, which cannot represent
+blocks for extracting dense feature maps and capturing long           the invariant features of the two domains. Therefore, the
+range context. The detailed structure of the applied ResNet-101       invariant features obtained through the DFA branch belong to
+is shown in Fig. 5 (a); C1 classifies the features yielded from F     pseudo invariant features, preventing the knowledge learned in
+into predefined semantic categories pixel by pixel, such as           the source domain to be transferred to the target domain to the
+building, tree, and car. Fig. 5 (b) shows the detailed structure of   greatest extent.
+classifier C1. It consists of an atrous spatial pyramid pooling          The memory module can enable the DCNNs to depict the
+layer with dilations of 6, 12, and 18 to effectively capture multi-   valid information beyond the current input image. Contrary to
+scale information in HRS imagery and two convolution-                 previous memory modules [41, 42] that saved image-level
+BatchNorm-ReLU layers to obtain the pixel-level prediction            features, classwise memory modules used in [37, 38] have
+with predefined semantic categories. We utilize an interpolation      shown their advantage in semantic segmentation task by storing
+algorithm to fit the size of pixel-level prediction and input         per-pixel features in a class wise form. In this study, the
+image; D attempts to distinguish whether the input comes from         classwise memory module is taken to convert the pseudo
+the source domain or target domain, which encourages F to             invariant feature obtained from the DFA branch to domain
+generate feature distributions with semantic consistency              invariant feature. Specifically, an IDMA branch is embedded
+between the source domain and the target domain. As show in           into the DFA branch. As shown in Fig. 3, it makes up an
+Fig. 5 (c), D is constructed by five 4 × 4 convolution layers with    invariant domain prototype memory module M, an invariant
+stride of 2, and its channel number is [64, 128, 256, 512, 1].        domain-level memory aggregation module A, and a classifier
+                                                                      C2, where F M, A, and C2 make up the segmentation network
+                                                                      G2. M is used to store pseudo invariant feature of current input
+                                                                      images and update them dynamically in real time. Given that M
+                                                                      integrated the pseudo invariant feature of all source and target
+                                                                      domain images during dynamic update, the feature stored in M
+                                                                      can approximate invariant features of source and target domains.
+                                                                      Specifically, M stored the feature in a classwise format to
+                                                                      enhance intraclass consistency and interclass difference of HRS
+Fig. 4. DFA branch.                                                   imagery. A is designed to integrate the invariant domain-level
+                                                                      prototype information in M to current feature for enhancing
+B. IDMA                                                               feature representations of current input images. We use
+  The domain adaptation semantic segmentation method based            classifier C2 to classify the enhanced features into a precise
+on adversarial learning normally propagating gradient in each         pixel-level prediction with predefined semantic classes. The
+                                                                      details of M and A are presented in Sections III-B-1) and -2).
+                                                                                                                                    6
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+
+
+
+Fig. 5. Structure of DFA branch. Different modules are represented by different colors (blue represents feature extractor F, green
+represents classifier C1, orange represents discriminator D).
+
+   1) Invariant Domain Prototype Memory Module                       where 𝑚+ represents the value of m at the tth iteration, T
+    M stores the invariant domain-level representations in           represent the total number of training iterations, and p and 𝑚<
+category format to enable the network depict invariant-feature       are default parameters and set to 0.9.
+information more than the current input images. M is a data            2) Category Attention-driven Invariant Domain-level
+vector ℳ with size 𝐶" × 𝐶 ' × 1, where 𝐶 ' is the vector size of            Memory Aggregation Module
+each category. During training, same as [37, 38], we first              The A aims to adaptively integrate invariant domain-level
+calculate the average value for each category from a randomly        prototype stored in M to current feature representations and
+feature generated by F to initialize ℳ. ℳ is then updated on         obtain an enhanced feature. In order to avoid introducing
+every training iteration with a pseudo invariant feature subset      uncertain and incorrect information for the prediction of
+of 𝐹( = (𝑓) |𝑓* , 𝑓+ ∈ 𝑅,×#×% ) generated by F. Specifically,        semantic segmentation during integrating the invariant domain-
+given the current pseudo invariant feature 𝑓) , we first permute     level category prototypes stored in M into the current pseudo-
+                                                                     invariant features of target domain, we design a category
+it as size 𝐻𝑊 × 𝐶, that is, 𝑅#%×, . Subsequently, we calculate
+                                                                     attention mechanism to realize the feature aggregation, and Fig.
+the representation of each category 𝑐- existing in 𝑓)
+                                                                     6 shows the detailed structure. Given the memory feature ℳ ∈
+                   𝑅.! = {𝑅#%×, |𝐺𝑇 = 𝑐- } ∈ 𝑅/"! ×, ,         (1)            +
+                                                                     𝑅,*×, ×5 stored in M and current pseudo invariant feature 𝐹( =
+where 𝑅.! is the feature representations of each category 𝑐- ,       {𝑓) |𝑓* , 𝑓+ } ∈ 𝑅,×#×% , where C denotes the number of channels
+𝐺𝑇 ∈ 𝑅#% denotes the ground truth with category labels, and          in 𝐹( . As shown in Fig. 6, three 1×1 convolutional layers are
+𝑁.! is the number of pixels labeled as 𝑐- in 𝑓) . We calculate the   applied to them and generate three features 𝑄 ∈ 𝑅,×#×% , 𝐾 ∈
+similarity 𝑆.! between 𝑅.! and memory of each category ℳ.!           𝑅,*×,×5 , and 𝑉 ∈ 𝑅,*×,×5 , respectively. Subsequently, we
+by cosine similarity.                                                matrix multiply the reshaped feature Q and feature K. A
+                                    0"! ∙ℳ"!
+                         𝑆.! =                       ,        (2)    SoftMax function is utilized to compute the affinity attention
+                                 30" 3 ∙3ℳ" 3
+                                   ! #         ! #                   map 𝑆 ∈ 𝑅#%×,* between each category prototype in memory
+where ℳ.! ∈ 1 × 𝐶 ' , and ‖∙‖4 represents the L2-norm. We            feature and the current pseudo invariant feature
+update the representation of c- as                                                                       @A) (C$ ∙"% )
+                                                                                              𝑠:,? =    ,* @A) (C ∙" )
+                                                                                                                         ,        (7)
+                              /"!     56!"$                                                            ∑$'(      $ %
+                     𝑅.' ! = ∑:;5  & "
+                                           !
+                                             %
+                                                  ∙ 𝑅.: ! ,   (4)    where 𝑠:,? ∈ 𝑆 measures the correlation between the 𝑖+D
+                                  ∑%'(! (56!" )
+                                              !
+   We calculate the updated memory of each category by               category memory of feature K and 𝑗+D channel of feature Q, 𝑖 =
+leveraging moving average                                            [1,2, ⋯ , 𝐶" ], 𝑗 = [1,2, ⋯ 𝐶] . We weighted sum the affinity
+                  ℳ.'! = (1 − 𝑚) ∙ ℳ.! + 𝑚 ∙ 𝑅.' ! ,  (5)            attention map S and feature V to obtain the memory feature ℳ’s
+where m is the momentum, and we employ polynomial                    attention map 𝑆 ' on the current pseudo invariant feature 𝐹( and
+annealing policy to update it                                        reshape it to 𝑅,×#×% . The current pseudo invariant feature 𝐹(
+                       +           =     =                           and the attention map 𝑆 ' are concatenated to acquire the
+           𝑚+ = (1 − )) ∙ D𝑚< − ) E + ) , 𝑡 ∈ [0, 𝑇], (6)
+                        &             5<<       5<<                  enhanced feature 𝐹& as follows:
+                                                                                              𝐹& = 𝜃(𝑐𝑎𝑡(𝜑(𝑆 ' ), 𝐹( )),           (8)
+                                                                                                                                          7
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+where 𝜑(∙) and 𝜃(∙) represent the mapping functions                  to class 𝑐- , 𝑐- ∈ {1,2, ⋯ , 𝐶" }, and 𝐶" is the number of classes.
+implemented by 1×1 convolution-BatchNorm-ReLU layer. The
+enhanced feature 𝐹& can adaptively enhance the presentation of
+current pseudo invariant features by calculating the correlation
+between the memory feature and original pseudo invariant
+features. The segmentation network can seize the prototype
+information more than the current input images, which can
+enhance the performance of semantic segmentation network on
+the target domain HRS imagery.
+
+
+
+
+                                                                     Fig. 7. Entropy map of pseudo labels.
+
+                                                                        We use the probability value to determine whether a pixel is
+                                                                     associated with a label, so we calculate the highest probability
+Fig. 6. Structure of category attention-driven invariant domain-                (D,E)                  (D,E)
+                                                                     value of 𝑝+,.! by 𝜇 = 𝑚𝑎𝑥 (𝑝+,.! ) and assign the index of 𝜇
+level memory aggregation module.
+                                                                     as the category of pixel (h, w) of 𝑝+,: . The predicted
+                                                                     classification label matrix 𝑙+,: can obtained as
+C. Entropy-based Pseudo Label Filtering                                                                     (D,E)
+                                                                                          𝑙+,: ∈ 𝑅#×% , 𝑙+,: = 𝑖𝑛𝑑𝑒𝑥(𝜇).          (10)
+   In accordance with Section III-B-1, the ground truth is
+                                                                        Given that the pixels of 𝑙+,: are not all high confidence, we
+required to calculate the feature representations of each
+                                                                     use the entropy map of 𝑙+,: to retain the high-confidence pixels
+category. However, no ground truth of target domain images is
+                                                                     and remove the low-confidence pixels. Given the predicted
+found in the UDA semantic segmentation task of HRS imagery.
+If the category feature representations of the target domain         classification probability matrix 𝑝+,: , the entropy map 𝐸: ∈
+images are not reserved in the memory module, the memory             [0,1]#×% is composed of independent pixelwise entropies
+                                                                                    (D,E)        65    ,      (D,E,. )   (D,E,. )
+feature is more inclined to represent the context information of                   𝐸:      = FGH (, ) ∑.!*;5 𝑝+,: ! 𝑙𝑜𝑔𝑝+,: ! , (11)
+                                                                                                       *
+the source domain images and fails to depict the feature                      (D,E)
+                                                                     where 𝐸:         represents the entropy at pixel (h,w) of 𝐸: .
+distribution of the target domain images, which is detrimental                                 (D,E)
+to the semantic segmentation of target domain images.                Specifically, high 𝐸:             represents low confidence of 𝑙+,: ,
+                                                                                      (D,E)
+Therefore, the memory module with the pseudo invariant               whereas low 𝐸:           represents high confidence of 𝑙+,: , so we set
+features of the target domain images must be updated. We can         a threshold 𝜎 of 𝐸:
+                                                                                         (D,E)
+                                                                                             to select the 𝑙+,: with high confidence
+use the segmentation predictions of target images as pseudo                                    '
+                                                                                              𝑙+,: = {𝑅#×% |𝐸: ≤ 𝜎}.                 (12)
+labels to update the memory module. However, not all pixels in
+                                                                        In accordance with Eq. 12, the pseudo label with entropy
+the segmentation predictions are high-confidence, so directly
+                                                                     value greater than the threshold 𝜎 is discarded, whereas the
+using the segmentation predictions as pseudo labels of target
+                                                                     pseudo label with entropy value less than or equal to the
+images is unreasonable. On the basis of the observation in Fig.
+                                                                     threshold 𝜎 is reserved.
+7, the predictions produced by the model trained only on the
+                                                                        Owing to the entropy-based pseudo label filtering strategy,
+source domain have high confidence, low entropy on source                                                              '
+                                                                     we can obtain high-confidence pseudo labels 𝑙+,:    of 𝑥+,: , which
+images and low confidence, high entropy on target images.                                                      '  /
+Therefore, we propose an entropy-based pseudo label filtering        makes up the pseudo label set 𝐺𝑇+ = {𝑙+,: }:;5 . 𝐺𝑇+ and 𝐺𝑇*
+                                                                                                                   -
+
+
+strategy to provide a high-confidence pseudo label for the target    make up the ground truth set GT, which is used to update the
+domain image. It can assist the updating of target image             invariant feature memory module.
+invariant features in the memory module. This strategy can also      D. Network Training
+make the memory module better represent the invariant domain            The proposed MemoryAdaptNet model is optimized by two
+features, so as to realize superior segmentation performance on      training steps. In step 1, we only train the DFA branch in some
+the target domain image.                                             epochs for reducing the domain shift between the source and
+                                            /-
+   Given the target image set 𝑋& = {𝑥+,: }:;5   , where 𝑁+ is the    target domains, and obtaining the pseudo invariant feature.
+size of target image set. We place each image 𝑥+,: to                Subsequently, we simultaneously optimize the DFA branch and
+MemoryAdaptNet and obtain a SoftMax prediction set                   IDMA branch in step 2 to enhance the performance of semantic
+                          /-
+𝑃& = {𝑝+,: ∈ 𝑅#×%×,* }:;5     generated by classifier C2, where      segmentation network on the target HRS imagery.
+                   (D,E)        (D,E)   (D,E)    (D,E)                 1) Step 1: DFA Branch Training
+                  𝑝+,:     = X𝑝+,5 , 𝑝+,4 , ⋯ , 𝑝+,,* Y,      (9)
+                                                                        In the first 𝜏 ′ iterations, we only train the DFA branch.
+ (D,E)
+𝑝+,.! represents the probability that pixel (h, w) in 𝑝+,: belongs   Given a source domain image 𝑥* ∈ 𝑋! and a target domain
+                                                                                                                                          8
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+image 𝑥+ ∈ 𝑋& , we forward them to F and obtain the feature               summarized in Algorithm I for better understanding.
+maps 𝑓* and 𝑓+ , which are inputted to classifiers C1 to acquire
+the pixel-level predictions 𝑝I and 𝑝+ , respectively. 𝑝I is used to        Algorithm I Optimization process of MemoryAdaptNet
+compute a segmentation loss under the supervision of ground                Input: Source image 𝑥* ∈ 𝑋! and target image 𝑥+ ∈ 𝑋& ;
+truth 𝑦* ∈ 𝑌! for optimizing G1. In this study, we adopt the               Output: The predicted label 𝑝*' of source image 𝑥* and
+cross-entropy loss function as the segmentation loss, which is             the predicted label 𝑝+' of target image 𝑥+ ;
+shown as Eq. (13)
+                                         ,*    (:)                         1: for 𝜏 = 0; 𝜏 < 𝜏′ ; 𝜏++ do
+𝐿*@J5 (𝑋! , 𝑌! ) = −𝐸(A.,K.)~(M/,N/) ∑:;5    𝑦* 𝑙𝑜𝑔𝐺5 (𝑥* )(:) , (13)      2: Use source image 𝑥* and target image 𝑥+ to optimize
+where 𝐿*@J5 (𝑋! , 𝑌! ) is the segmentation loss, x* ∈ X!                   the DFA branch with Eqs. 15 and 16;
+represents the images from source domain, and y* ∈ 𝑌!                      3: end for
+represents the ground truth corresponding to x* .                          4: for 𝜏 = 𝜏′ ; 𝜏 < 𝒯; 𝜏++ do
+   In addition to the segmentation loss, we forward 𝑝O to D to             5: Simultaneously optimize the DFA branch and IDMA
+yield an adversarial loss for optimizing G1. The adversarial loss          branch;
+can be defined as follows:                                                 6: Using the source feature 𝑓* and the target feature 𝑓+
+                 𝐿PQR (𝑋& ) = −𝐸A-~(0(A) [𝑙𝑜𝑔𝐷(𝐺5 (𝑥+ ))], (14)            from feature extractor F to update the memory value in
+where 𝐿PQR (𝑋& ) represents the adversarial loss generated by              invariant feature memory module M;
+target images, and 𝑃& (𝑥) represents the distributions of target           7: Use source image 𝑥* and target image 𝑥+ to optimize
+domains. The network propagates gradients from D to G1,                    the DFA branch with Eqs. 15 and 16;
+which encourages F to extract the feature distributions with               8: Use the source feature 𝑓* from feature extractor F to
+semantic consistency between the target domain and the source              optimize the IDMA branch with Eq.1 7;
+domain.                                                                    9: end for
+   In summary, the training objective for the segmentation
+network G1 can be extended from Eq. (13) and (14) as
+                                                                                     IV. EXPERIMENTS AND RESULT ANALYSIS
+                𝐿(𝑋! , 𝑋& ) = 𝐿*@J5 (𝑋! , 𝑌! ) + 𝜆PQR 𝐿PQR (𝑋& ), (15)
+                                                                             In this section, we first present the experimental settings in
+where 𝜆PQR is the weight used to balance the adversarial loss
+                                                                          Section IV-A, including the description of datasets, task
+𝐿PQR (𝑋& ), and we set it to 1.
+                                                                          settings, implementation details, and evaluation metrics. We
+   We then optimize D with the pixel-level prediction 𝑝I and 𝑝O .
+                                                                          conduct comparison experiments with the state-of-the-art UDA
+Specifically, we forward 𝑝I and 𝑝+ to D to output a single
+                                                                          semantic segmentation methods that extract the pseudo
+scalar, which denotes the probability that the input came from
+                                                                          invariant feature to verify the effectiveness of our proposed
+the source domain rather than the target domain (i.e., label 0 for
+                                                                          network in Section IV-B. In Section IV-C, we perform an
+target training sample and 1 for source training sample). The
+                                                                          ablation study to demonstrate the effectiveness of each module
+single scalar is used to compute a cross-entropy loss 𝐿Q for
+                                                                          in our MemoryAdaptNet. We conduct parameter sensitivity
+optimizing D. The loss can be written as
+                                                                          analysis to select the appropriate 𝜎 value for entropy-based
+ 𝐿Q (𝑋! , 𝑋& ) = −𝐸A~(.(A) [𝑙𝑜𝑔𝐷(𝐺5 (𝑋! ))] − 𝐸A~(-(A) [𝑙𝑜𝑔 (1 −
+                                                                          pseudo label filtering strategy in Section IV-D. We discuss the
+                              𝐷(𝐺5 (𝑋& )))].                      (16)    effects of different data augmentation strategies on the UDA
+2) Step 2: DFA Branch and IDMA Branch Training                            semantic segmentation of HRS imagery in Section IV-E.
+   After 𝜏 ′ iterations, we simultaneously optimize the DFA
+and IDMA branches. The optimization process of DFA branch                 A. Experimental Settings
+is the same as Section III-D-1. For the optimization of IDMA                1) Datasets
+branch, we first use the source feature 𝑓* and the target feature            To demonstrate the importance of MemoryAdaptNet on the
+𝑓+ obtained from feature extractor F to update the M. We then             UDA semantic segmentation of HRS imagery, we perform our
+forward 𝑓* and ℳ in M to A for integrating the invariant                  experiments on two very high-resolution datasets: Vaihingen
+domain-level prototype information in M to the current pseudo             2D dataset and Potsdam 2D dataset supplied by the
+invariant feature 𝑓* , thereby obtaining the enhanced feature of          International Society for Photogrammetry and Remote Sensing
+source images. The enhanced feature is inputted to classifiers            (ISPRS) WG II/4 [43]. All images in the two datasets are
+C2 to generate the pixel-level prediction 𝑝*' , which is used to          provided with semantic labels, which consist of six general land
+compute the segmentation loss by cross-entropy loss function              cover categories: Imp. surf. (impervious surfaces), building
+as follows:                                                               (buildings), low veg. (low vegetation), tree (trees), car (cars),
+                            𝐿*@J4 (𝑋! , 𝑌! ) =                            and clutter (clutter/background). In the training process, we do
+                          (:)                        (:)                  not employ the semantic labels of the target domain images.
+−𝐸(A.,K.)~(M/,N/) ∑/
+                   :;5 𝑦* 𝑙𝑜𝑔𝐶4 k𝐴(𝐹(𝑥* ), ℳ)m ,                   (17)      Vaihingen dataset: The Vaihingen dataset draws a small
+ In summary, the total semantic segmentation loss of                      village with sparse layout pattern. It contains 33 high-resolution
+MemoryAdaptNet can be expressed as                                        true orthophoto tiles (TOPs) with an average size of 2,494 ×
+            𝐿*@J (𝑋! , 𝑌! ) = 𝐿*@J5 (𝑋! , 𝑌! ) + 𝐿*@J4 (𝑋! , 𝑌! ). (18)   2,064 pixels and a spatial resolution of 9 cm. As shown in Fig.
+ The whole optimization process of MemoryAdaptNet is                      8 (a), the near-infrared (IR), red (R), and green (G) channels are
+                                                                                                                                     9
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+provided in this dataset. We employ ID: 2, 5, 7, 8, 13, 20, 22,
+24 for testing, and the remaining 25 images for training and
+validation.
+   Potsdam dataset: The Potsdam dataset depicts a city scene
+with crowded residential pattern. It contains 38 TOPs with a
+fixed size of 6,000 × 6,000 and a spatial resolution of 5 cm. The
+dataset provides near-IR, red (R), green (G), and blue (B)
+channels, which are combined into three channel compositions:
+[IR, R, G], [R, G, B], and [IR, R, G, B]. We employ ID: 2_13,
+2_14, 3_13, 3_14, 4_13, 4_14, 4_15, 5_13, 5_14, 5_15, 6_13,
+6_14, 6_15, 7_13 for testing, and the remaining 24 images for
+training and validation. As shown in Figs. 8 (b) and (c), we         Fig. 9. Pixel percentage of each category in Vaihingen and
+employ the [IR, R, G] and [R, G, B] channel compositions in          Potsdam training datasets.
+our experiments.
+   Fig. 9 represents the pixel percentage of each category to the    paired labels into 512 × 512 size patches with horizontal and
+total number of pixels in the Potsdam and Vaihingen training         vertical strides of 256 pixels and yield approximately 1,700
+datasets. Concretely, the pixel proportions of imp. surf.,           patches. In P2V_S and P2V_D tasks, we utilize the Potsdam
+building, low veg., tree, car, and clutter in the Potsdam training   training set for training and the Vaihingen testing and validation
+datasets are 28.46%, 26.72%, 23.54%, 14.62%, 1.69%, and              sets for testing and validation. In V2P task, we utilize the
+4.96%, respectively. The pixel proportions of imp. surf.,            Vaihingen training set for training and the Potsdam testing and
+building, low veg., tree, car, and clutter in the Vaihingen          validation sets for testing and validation.
+training datasets are 28.69%, 26.70%, 20.56%, 21.91%, 1.29%,           3) Implementation Details
+and 0.86%, respectively. The two datasets have the                      We implement our network using the PyTorch toolbox on a
+characteristics of unbalanced category samples. For example,         single RTX 3090 GPU with 24 GB memory. To train the
+the proportion of car and cluster categories in the two datasets     semantic segmentation networks G1 and G2, we employ the
+is remarkably lower than other categories.                           stochastic gradient descent optimizer [44] with the initial
+  2) Task Settings                                                   learning rate of 2.5×10−4, momentum of 0.9, and weight decay
+   We set up three UDA semantic segmentation tasks in our            of 10−4. For the discriminator training, we employ the Adam
+experiments: (1) P2V_S task, where the Potsdam dataset with          optimizer [45] with the initial learning rate of 10−4 and
+[IR, R, G] channel composition serves as the source domain           momentum of 0.9 and 0.99.
+dataset, and the Vaihingen dataset with [IR, R, G] channel             4) Evaluation Metric
+composition serves as the target domain dataset. (2) P2V_D              We employ four general evaluation metrics, namely, 𝐹5 -
+task, where the Potsdam with [R, G, B] channel composition           score, OA, MA, and mIoU [9], to assess the performance of
+serves as the source domain dataset, and the Vaihingen dataset       different UDA semantic segmentation methods. The higher the
+with [IR, R, G] channel composition serves as the target domain      values of these metrics, the better the semantic segmentation
+dataset. (3) V2P task, where the Vaihingen dataset with [IR, R,      performance.
+G] channel composition serves as the source domain dataset,             𝐹5 -score is a common evaluation metric applied to the
+and the Potsdam dataset with [IR, R, G] channel composition          semantic segmentation task. It can be expressed as follows:
+                                                                                                        (S@.:*:TU∗0@.PWW
+serves as the target domain dataset. In the training phase, we                                𝐹5 = 2 × (S@.:*:TUX0@.PWW,           (19)
+crop the Potsdam ([IR, R, G] and [R, G, B] channel                   where the Precision and Recall of category 𝑐: can be computed
+compositions) datasets and their paired labels into 512 × 512        as follows:
+size patches with horizontal and vertical strides of 256 pixels                         Precision.$ = 𝑛.$.$ ⁄∑.% 𝑛.%.$ ,         (20)
+and yield a total of 13,310 patches. With regard to the
+                                                                                          Recall.$ = 𝑛.$.$ ⁄∑.$ 𝑛.$.% ,          (21)
+Vaihingen_[IR, R, G] dataset, we crop the images and their
+                                                                     where 𝑛.$.$ denotes the number of pixels of category 𝑐:
+                                                                     predicted as category 𝑐: , 𝑛.$.% denotes the number of pixels of
+                                                                     category 𝑐: predicted as category 𝑐? , and 𝑛.%.$ denotes the
+                                                                     number of pixels of category 𝑐? predicted as category 𝑐: .
+                                                                        OA represents the overall accuracy of semantic segmentation
+                                                                     performance, MA represents the mean accuracy of semantic
+                                                                     segmentation performance, and mIoU represents the
+Fig. 8. Examples of image and classwise ground truth labels for      intersection over union on each category of predicted labels.
+the ISPRS Vaihingen and Potsdam datasets. (a) is the                 They can be expressed as follows:
+Vaihingen dataset with [IR, R, G] channel composition, (b) is
+                                                                                         OA = ∑.$ 𝑛.$.% |∑.$ ∑.% 𝑛.$.% ,        (22)
+the Potsdam dataset with [IR, R, G] channel composition, and
+(c) is the Potsdam dataset with [R, G, B] channel composition.                        MA = (1⁄𝐶" ) ∑.$ D𝑛.$.$ ⁄∑.% 𝑛.$.% E,       (23)
+                                                                                                                                  10
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+mIoU = (1⁄𝐶" ) ∑.$ 𝑛.$.$ |D∑.% 𝑛.$.% + ∑.% 𝑛.%.$ − 𝑛.$.$ E. (24)     Compared with the source-only model, the performance of
+                                                                     seven comparative state-of-the-art UDA methods achieves
+B. Comparative Experimental Result Analysis                          improvement in varying degrees by employing different
+   To confirm the effectiveness of MemoryAdaptNet with               domain adaptation strategy. However, since they only calculate
+domain invariant features, we perform comparison experiments         the loss based on the information of current batch images during
+with a deep model without DA (Source-only) and nine state-of-        network parameters update, their features extracted by the
+the-art UDA methods without domain invariant features that           feature extractor tend to represent the invariant features of
+performs gradient propagation and parameters update only             current batch images rather than the domain invariant feature.
+based on the loss generated by the current batch images              Our MemoryAdaptNet can convert pseudo invariant features
+(MCD_DA, CLAN, AdaptSegNet, AdvEnt, FADA, SDCA,                      into domain invariant features by considering the information
+MUCSS, Zhang’s and ProCA), in which MUCSS, Zhang’s are               of all domain data and forming category prototype, and
+the state-of-the-art UDA methods proposed in the remote              achieves the highest OA, MA, and mIoU values with 77.87%,
+sensing semantic segmentation, and we directly used the              77.05%, and 56.05%, respectively. Compared with the
+quantitative evaluation results reported in the original paper.      comparison method MCD_CA with the worst performance, our
+   Source-only: segmentation network only trained on the             MemoryAdaptNet shows the performance improvement of 8.01%
+source domain and is directly tested on the target domain.           on OA, 25.35% on MA, and 14.54% on mIoU. Compared with
+   MCD_DA [46]: a UDA method that attempts to align source           the comparison method ProCA with the best performance, our
+and target domain distributions by considering task-specific         MemoryAdaptNet presents the improvement of 0.39%, 7.8%,
+decision boundaries.                                                 and 1.68% on OA, MA, and mIoU. These performance
+   CLAN [23]: a UDA method that aims to enforce the                  differences demonstrate that our MemoryAdaptNet can better
+alignment of class-level consistency and global distribution for     deal with the domain discrepancy on P2V_S semantic
+UDA in semantic segmentation.                                        segmentation task by considering the invariant domain-level
+   AdaptSegNet [22]: a UDA method employing multilevel               prototype memory.
+adversarial learning in the output space for pixel-level semantic       In Table I, the 𝐹1 scores of MemoryAdaptNet in categories,
+segmentation.                                                        including low veg., tree, and clutter, realize the best accuracies
+   AdvEnt [24]: a UDA method for semantic segmentation via           of 68.22%, 78.52%, and 50.30%, respectively, compared with
+adversarial training approach based on the entropy of semantic       those of other models, which bring the improvement of
+predictions.                                                         4.54%~15.29% on low veg., 0.03%~8.04% on tree, and
+   FADA [47]: a UDA method for class-level feature alignment         12.54%~40.41% on clutter, respectively. Although our
+by fine-grained adversarial learning strategy.                       MemoryAdaptNet did not obtain the highest 𝐹1 score in the
+   SDCA [48]: a UDA method that aligns the pixel-wise                category of imp. surf., building, and car, it still achieved 6.8%,
+representation guided by semantic distribution.                      12.05% and 14.33% improvement compared with source only
+   MUCSS [27]: a UDA method under multiple weakly-                   model. This result shows that our method can relieve the effect
+supervised constraints to minimize the data shift of remote          of sample category imbalance on the UDA semantic
+sensing images.                                                      segmentation of HRS imagery by using the effective and
+   Zhang’s [49]: a UDA method exploiting curriculum-style            representative prototype features of each category stored in the
+and local-to-global adaptation to address the cross-domain           memory module.
+problem of remote sensing images.                                       Fig. 10 shows the qualitative results on the P2V_S task,
+   ProCA [50]: a UDA method that aligns the class-centered           where the segmentation results of source-only model show
+distribution by prototypical contrast learning.                      great difference with ground truth due to the serious domain
+   For the sake of fairness, all the comparative methods use the     shift problem. The segmentation performance is improved to
+DeepLab-v3 with ResNet-101 pretrained on ImageNet as the             varying degrees after adaptation. However, the semantic
+semantic segmentation network. Three cross-domain                    segmentation performance of the four state-of-the-art methods
+experimental tasks are set: P2V_S task, P2V_D task, and V2P          on low veg., car, and clutter categories is poor. For example, a
+task. The batch size and iteration are all set to 2 and 150k,        semantic confusion is observed between clutter, car, low veg.,
+respectively.                                                        and imp. surf. The segmentation boundary of ground objects is
+ 1) Comparative Studies on P2V_S Task                                rough. Compared with other domain adaptation methods, our
+   To prove the effectiveness of MemoryAdaptNet, we conduct          MemoryAdaptNet achieves the best semantic segmentation
+the comparative experiment on the P2V_S task. The domain             performance, in which the segmentation performance for each
+shift in this task is mainly found in geographic location, spatial   category and the problems of semantic errors and unsmoothed
+resolution, and illumination. The quantitative evaluation results    boundary are improved.
+of the compared domain adaptation methods on this domain              1) Comparative Studies on P2V_D Task
+shift are presented in Table I.                                         In this section, we implement the comparative experiment on
+   From Table I, due to the effects of domain shift, the source-     the P2V_D task. In addition to the difference in geographical
+only model achieves the worst performance with OA, MA, and           location, spatial resolution, and illumination, the domain shift
+mIoU values of 67.19%, 60.55%, and 43.58%, respectively.             in this task includes the difference in imaging sensors, which
+                                                                                                                                     11
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+                                                   TABLE I
+                 QUANTITATIVE EVALUATION RESULTS (%) OF DIFFERENT UDA MODELS ON THE P2V_S TASK
+                                                                        𝐹1 score
+                          Methods                                                                         OA      MA      mIoU
+                                                Imp. surf. Building Low veg.     Tree    Car    Clutter
+                          Source-only             72.85     74.40    56.42      67.96   46.76   28.49     67.19   60.55   43.58
+                               MCD_DA (2018)      77.00     80.30    54.94      70.48   54.28    nan      70.20   57.66   46.63
+                                CLAN (2019)       75.68     83.88    60.76      74.40   41.28    9.89     71.62   58.37   44.02
+                              AdaptSegNet (2018) 77.69      85.99    60.97      74.06   52.01   26.43     73.70   64.00   48.65
+                                AdvEnt (2019)     77.55     84.42    52.93      74.23   53.98   30.51     74.43   65.29   51.37
+             State-of-the-art
+                                 FADA (2020)      78.77     87.84    60.84      78.31   57.82   37.76     76.60   67.72   52.55
+                methods
+                                SDCA (2021)       81.80     88.55    56.47      77.29   64.19   31.20     76.71   67.77   52.79
+                                MUCSS (2021)      66.13     76.77    55.97      73.14   51.09   45.65     61.43     -     45.38
+                                Zhang’s (2022)    80.13     86.65    64.16      71.90   61.94   31.34     66.02     -     52.03
+                                ProCA (2022)      82.42     90.31    63.68      78.49   56.54   37.45     77.48   69.25   54.37
+                 MemoryAdaptSegNet (ours)         79.65     86.45    68.22      78.52   61.09   50.30     77.87   77.05   56.05
+
+
+
+
+Fig. 10. Qualitative results on the P2V_S task.
+
+has a larger domain gap than the P2V_S task. The quantitative            OA values, it reaches the highest MA and mIoU values of 71.51%
+evaluation results of the compared domain adaptation methods             and 46.88%, respectively, which obtains the improvement of
+on this domain shift are presented in Table II.                          23.44% and 13.30% on MA and mIoU compared with the
+  From Table II, the source-only model achieves the worst                source-only model. Our proposed method achieves the highest
+performance with OA, MA, and mIoU values of 57.38%,                      𝐹1 score in the categories of low veg., car, and clutter with the
+48.07%, and 33.58%, respectively. The performance of                     values of 57.26%, 58.35%, and 35.97%, which provides an
+semantic segmentation is improved after some domain                      improvement of 13.72%, 17.91%, and 28.03%, respectively,
+adaptations. Although our method does not achieve the highest            compared with the source-only model. These results show that
+                                                                                                                                       12
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+                                                    TABLE II
+                  QUANTITATIVE EVALUATION RESULTS (%) OF DIFFERENT UDA MODELS ON THE P2V_D TASK
+                         Methods                                        𝐹1 score
+                                                                                                          OA      MA      mIoU
+                                                Imp. surf. Building Low veg.     Tree    Car    Clutter
+                          Source-only             64.91     63.58    43.54      63.97   40.44    7.94     57.38   48.07   33.58
+                               MCD_DA (2018)      69.75     75.46    51.62      50.85   35.05    0.00     61.75   48.30   36.52
+                                 CLAN (2019)      67.67     77.04    47.26      58.96   26.76    8.43     62.94   50.35   35.96
+                              AdaptSegNet (2018) 68.31      78.23    46.27      63.73   40.44    8.09     63.13   51.08   37.55
+                                 AdvEnt (2019)    69.49     75.87    32.96      73.72   49.79    6.39     62.04   52.80   37.64
+             State-of-the-art
+                                 FADA (2020)      79.84     85.32    25.44      76.14   56.91   14.52     69.37   66.32   44.08
+                methods
+                                 SDCA (2021)      70.16     87.05    41.42      74.89   47.79   30.25     69.48   59.99   44.38
+                                MUCSS (2021)      61.33     83.00    42.17      70.66   57.88   13.88     54.82     -     39.93
+                                Zhang’s (2022)    76.89     84.81    56.26      68.10   57.15   18.64     60.31     -     46.13
+                                 ProCA (2022)     76.77     88.71    42.93      64.38   50.97   20.67     71.39   64.07   45.63
+                 MemoryAdaptSegNet (ours)         72.59     81.01    57.26      69.29   58.35   35.97     69.60   71.51   46.88
+
+
+
+
+Fig. 11. Qualitative results on the P2V_D task.
+
+our MemoryAdaptNet can deal well with the domain shift in               boundary and semantic confusion. The offset of the input
+terms of geographic location, spatial resolution, and imaging           limited data prevents the extracted features to represent the true
+sensor.                                                                 domain invariant feature, which results in the knowledge
+   Fig. 11 represents the qualitative results of compared domain        learned in the source domain cannot be transferred to the target
+adaptation methods on the P2V_D task, where the source-only             domain to the greatest extent. Our MemoryAdaptNet represents
+model achieves the worst semantic segmentation performance.             the domain variant features by updating the memory module
+Although the semantic segmentation performance of the four              with the historical pseudo invariant features of source domain
+state-of-the-art methods is improved after domain adaptation, it        and target domain images, enabling the classifier to classify by
+still has some shortcomings in the aspects of unsmooth                  learning the invariant domain-level presentation and the feature
+                                                                                                                                  13
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+                                                    TABLE III
+                   QUANTITATIVE EVALUATION RESULTS (%) OF DIFFERENT UDA MODELS ON THE V2P TASK
+                                                                       𝐹1 score
+                        Methods                                                                          OA      MA      mIoU
+                                               Imp. surf. Building Low veg.     Tree    Car    Clutter
+                         Source-only             71.32     69.45    60.97      54.67   69.10    5.47     64.36   54.05   41.22
+                              MCD_DA (2018)      75.67     76.72    63.53      39.97   60.68    0.00     67.04   56.42   43.71
+                                CLAN (2019)      75.94     79.08    64.44      49.17   66.91    6.77     67.87   57.10   44.12
+                             AdaptSegNet (2018) 76.55      77.93    62.15      45.45   70.89    6.16     68.93   57.33   44.94
+                                AdvEnt (2019)    76.65     82.64    63.73      32.94   71.74    2.76     69.59   58.03   45.43
+            State-of-the-art
+                                FADA (2020)      79.04     82.89    69.31      29.02   82.75    5.82     71.20   59.63   46.75
+               methods
+                                SDCA (2021)      79.35     82.17    70.10      41.35   78.76    5.06     71.74   60.03   47.18
+                               MUCSS (2021)      67.53     69.59    53.48      51.82   65.31   20.56     54.71     -     39.30
+                               Zhang’s (2022)    78.59     79.84    63.27      54.60   75.08   24.59     62.66     -     47.87
+                                ProCA (2022)     77.81     81.20    71.94      37.90   81.78   15.56     71.90   60.52   48.20
+                MemoryAdaptSegNet (ours)         79.70     77.84    67.58      64.06   76.54   16.15     72.25   61.87   49.82
+
+
+
+
+Fig. 12. Qualitative results on the V2P task.
+
+presentation of the current input image, thereby enhancing the             From Table III, the source-only model obtains the worst
+performance of semantic segmentation network on the target              performance with OA, MA, and mIoU values of 64.36%,
+HRS images. Fig. 11 confirms the effectiveness of our model             54.05%, and 41.22%, respectively. The performance of the
+on the P2V_D task.                                                      state-of-the-art methods and our method is improved to a
+ 2) Comparative Studies on V2P Task                                     certain extent after adaptation. Our MemoryAdaptNet reaches
+   We conduct the comparative experiment on the V2P task.               the highest OA, MA, and mIoU values of 72.25%, 61.87%, and
+The domain shift in this task is the same as the P2V_S task. The        49.82%, respectively, which obtains the improvement of 7.89%,
+quantitative and qualitative evaluation results of the compared         7.82%, and 8.60% on OA, MA, and mIoU compared with the
+domain adaptation methods on this task are presented in Table           source-only model, respectively. In Fig. 12, our
+III and Fig. 12.                                                        MemoryAdaptNet achieves the best semantic segmentation
+                                                                                                                                       14
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+performance with more accurate semantic information and                  with 77.87%, 77.05%, and 56.05% in OA, MA, and mIoU,
+smoother boundaries compared with other domain adaptation                respectively, which indicates that DFA and IDMA can promote
+methods. These results demonstrate that our proposed                     each other to enhance the semantic segmentation performance
+MemoryAdaptNet can well deal with the V2P task.                          of target domain. Notably, compared with the DFA model, the
+                                                                         DFA + IDMA model yields an improvement of 7.36%, 11.78%,
+C. Ablation Experiment
+                                                                         and 8.45% in OA, MA, and mIoU, which benefits from the
+   The contribution of each component. Our proposed                      invariant feature memory module in MemoryAdaptNet can
+MemoryAdaptNet benefits from the DFA and IDMA modules.                   integrate the pseudo invariant features of historical images to
+We conduct four different ablation experiments (source-only,             obtain category-level invariant domain-level features.
+DFA, IDMA, DFA + IDMA) to evaluate the contribution of the               Compared with the pseudo invariant features extracted from
+MemoryAdaptNet’s components to model performance.                        DFA, this feature can better represent the domain invariant
+Source-only represents the segmentation network only trained             features and maximize the transfer of knowledge learned in the
+on the source domain and is directly tested on the target domain.        source domain to the target domain.
+DFA represents the domain adaptation method that only uses                  Memory Aggregation. To verify the effectiveness of the
+the DFA branch to construct adversarial learning on the output           memory aggregation module: CAMA used in our
+space to align the feature between two domains. IDMA                     MemoryAdaptNet, we performed comparison experiments on
+represents the model that without the D of DFA to implement              CAMA and DCA used in [37] on P2V_S, P2V_D, and V2P
+adversarial learning on the output space. DFA + IDMA                     tasks, the corresponding results are shown in Table V. Table V
+represents the model embedded with IDMA branch on the basis              shows that our CAMA outperforms DCA on all three tasks.
+of DFA branch. The experiments are conducted on the P2V_S                This is because the key features in DCA is obtained by matrix
+                                                                         multiplication of M and a category probability predicted by a
+domain adaptation task, and the corresponding results are
+                                                                         classification head, since the predicted category probability
+shown in Table IV.
+                                                                         may be misclassified, the key feature may introduce uncertain
+   As shown in Table IV, the DFA model employing the DFA                 and incorrect information. However, our CAMA avoids the
+branch yields an improvement of 3.32%, 4.72%, and 4.02% in               above problem by assigning M as the key feature directly.
+OA, MA, and mIoU, respectively, compared with the source-                Furthermore, our CAMA can adaptively enhance the
+only model. This finding verifies the effect of adversarial              presentation of current pseudo invariant features by seizing the
+learning in the output space for UDA semantic segmentation.              prototype information beyond the current input images.
+The IDMA model without the output space adversarial loss                    Pseudo Label Filtering. To verify the effectiveness of the
+brings 7.69%, 5.95%, and 5.53% improvement in OA, MA, and                entropy-based pseudo label filtering strategy used in our
+mIoU, respectively, compared with the source-only model,                 MemoryAdaptNet, we conduct comparative experiments with
+even further surpassed the performance of the DFA model,                 the existing pseudo label filtering schemes, the Probability-
+which indicates that storing dataset-level feature information           based Filtering represents the model with the highest score
+for source domain and target domain (even if the target feature          when probability threshold is 0.25, and the corresponding
+is obtained without supervision) can significantly improve the           results are shown in Table VI. Compared to the existing pseudo
+semantic segmentation performance of target domain.                      label filtering schemes, our scheme achieves the best
+Furthermore, when embedding the IDMA branch into the DFA                 performance.
+branch (DFA +IDMA), the model yields the best performance
+
+                                                           TABLE IV
+                                           ABLATION STUDY RESULTS (%) ON THE P2V_S TASK
+                                                                       𝐹1 score
+                          Methods                                                                             OA       MA     mIoU
+                                               Imp. surf   Building   Low veg.    Tree     Car    Clutter
+                            Source-only         72.85       74.40      56.42      67.96   46.76   28.49      67.19    60.55    43.58
+               Ablation        DFA              74.77       78.29      61.18      64.98   53.66   45.06      70.51    65.27    47.60
+                Study         IDMA              79.02       85.84      60.87      78.19   52.28   19.47      74.88    66.50    49.11
+                            DFA + IDMA          79.65       86.45      68.22      78.52   61.09   50.30      77.87    77.05    56.05
+
+
+                                                      TABLE V
+                          COMPARATIVE EXPERIMENTS WITH EXISTING MEMORY AGGREGATION SCHEMES.
+                                                                     𝐹1 score
+                  Task        Methods                                                                       OA       MA       mIoU
+                                             Imp. surf. Building Low veg.     Tree    Car     Clutter
+                             Source-only       72.85     74.40    56.42      67.96   46.76    28.49         67.19    60.55    43.58
+                 P2V_S          DCA            78.75     85.03    62.91      77.09   59.60    43.53         75.90    74.52    52.96
+                                Ours           79.65     86.45    68.22      78.52   61.09    50.30         77.87    77.05    56.05
+                             Source-only       64.91     63.58    43.54      63.97   40.44     7.94         57.38    48.07    33.58
+                 P2V_D          DCA            73.62     80.00    52.68      71.70   57.84    20.99         68.93    68.02    44.83
+                                Ours           72.59     81.01    57.26      69.29   58.35    35.97         69.60    71.51    46.88
+                             Source-only       71.32     69.45    60.97      54.67   69.10     5.47         64.36    54.05    41.22
+                  V2P           DCA            78.55     80.71    65.95      66.02   70.93    15.61         71.93    61.18    48.75
+                                Ours           79.70     77.84    67.58      64.06   76.54    16.15         72.25    61.87    49.82
+                                                                                                                                            15
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+                                                     TABLE VI
+                        COMPARATIVE EXPERIMENTS WITH EXISTING PSEUDO LABEL FILTERING SCHEMES.
+                                                                    𝐹1 score
+                         Methods                                                                      OA      MA      mIoU
+                                            Imp. surf. Building Low veg.     Tree    Car    Clutter
+                        No Filtering          78.20     86.07    65.99      77.42   59.41   49.57     76.81   76.70   54.56
+                       MUCSS[27]              78.51     84.77    65.15      74.52   60.20   52.00     76.01   72.84   54.32
+                        ProCA [49]            79.35     85.02    67.20      75.35   60.26   43.92     75.68   73.56   55.09
+                 Probability-based Filtering 78.57      84.70    66.37      78.63   60.24   40.76     76.95   77.25   55.37
+                    Ours (Entropy-based)      79.65     86.45    68.22      78.52   61.09   50.30     77.87   77.05   56.05
+
+                                                                          HRS imagery. We conducted three experiments with different
+D. Analysis on the Entropy Threshold of the Target Pseudo
+                                                                          data augmentation strategies (w/o aug., affine aug., color-space
+Label
+                                                                          aug.) on the domain adaptation task from P2V_S and the
+   To investigate how the entropy threshold 𝜎 of target pseudo            domain adaptation task from P2V_D. The corresponding results
+label affect the proposed entropy-based pseudo label filtering            can be found in Table X. In Table X, the w/o aug. represents
+strategy, we assess the performance of our proposed
+                                                                          that no data augmentation strategy is utilized during the
+MemoryAdaptNet with different thresholds 𝜎 on the P2V_S
+                                                                          MemoryAdaptNet training. The affine aug. represents that the
+task, P2V_D task, and V2P task. The results of different
+                                                                          data augmentation strategy of affine transformation, such as
+thresholds σ on the three tasks are shown in Tables VII, VIII,
+and IX.                                                                   horizontal flip, vertical flip, random rotate, and shift scale rotate,
+   For the threshold 𝜎, 𝜎 = 0 represents that the pseudo label of         is used during the MemoryAdaptNet training. The color-space
+target images does not participate in the update of invariant             aug. represents the data augmentation strategy based on the
+feature memory module; σ = 1 represents that the pseudo label             color-space transformation, such as Gaussian noise, Gaussian
+                                                                          blur, random brightness, and random contrast, is used during
+of target images all are reserved for updating the invariant
+                                                                          the MemoryAdaptNet training.
+feature memory module without being filtered. When 0 < 𝜎 <
+                                                                             As shown in Table X, the w/o aug. model achieves the
+1, the higher the 𝜎 value, the more area of the pseudo label are
+                                                                          performance of 74.04%, 68.78%, and 50.47% in OA, MA, and
+reserved. 𝜎 = 0.5 represents that the pseudo label areas with
+                                                                          mIoU on the P2V_S task and the performance of
+entropy ≤ 0.5 are reserved for the update of the invariant
+                                                                          61.76%,61.98%, and 39.78% in OA, MA, and mIoU on the
+feature memory module, and the pseudo label areas with 0.5 <
+                                                                          P2V_D task, respectively. Compared with the w/o aug. model,
+entropy ≤ 1 are filtered. From Table VII, MemoryAdaptNet
+                                                                          the performance of the color-space aug. model decreases to
+obtains the lowest score with OA of 75.07%, MA of 76.04%,
+                                                                          varying degrees on the two domain adaptation tasks.
+and mIoU of 52.71% when the threshold 𝜎 is 0. This finding is
+                                                                          Specifically, the OA, MA, and mIoU on the P2V_S task
+because when the pseudo label of target images does not
+                                                                          decreased by 3.39%, 0.99%, and 3.17%, respectively, and the
+participate in the update of invariant feature memory module,
+                                                                          OA, MA, and mIoU on the P2V_D task decreased by 2.48%,
+the invariant feature stored in the invariant feature memory
+                                                                          12.61%, and 4.18%, respectively, which indicates that the data
+module is more inclined to represent the source domain data
+                                                                          augmentation strategy based on color-space transformation has
+distribution and cannot consider the target domain data
+                                                                          a negative effect on the domain adaptation semantic
+distribution, resulting in poor segmentation performance of the
+                                                                          segmentation of HRS image. This finding may be because the
+model on the target domain. When the pseudo label of target
+                                                                          UDA semantic segmentation task intends to narrow the domain
+domain participates in the update of invariant feature memory
+                                                                          gap between the source domain and the target domain. However,
+module (σ > 0), the segmentation performance of the model is
+                                                                          the data augmentation method based on color-space
+improved. The simultaneous update of the pseudo invariant
+                                                                          transformation increases the discrepancy in appearance and
+feature from the source and target domains enables the invariant
+                                                                          data distribution between the two domains by adding Gaussian
+feature stored in invariant feature memory module to represent
+                                                                          noise, Gaussian blur or random brightness to the source domain
+the invariant data distribution of source and target domains.
+                                                                          and target domain images randomly. Thus, the performance of
+Similar experimental phenomena appear in the P2V_D task and
+                                                                          the color-space aug. model is lower than that of the w/o aug.
+V2P task, as shown in Tables VIII and IX. When the                        model. The negative effect of the data augmentation method
+threshold σ > 0, MemoryAdaptNet obtains the highest score                 based on color-space transformation on the P2V_D task is
+with OA of 77.87%, MA of 77.05%, and mIoU of 56.05% when                  greater than that on the P2V_S task. This finding is because the
+the threshold 𝜎 is 0.5 on the P2V_S task. For the other tasks,            distribution difference caused by color-space transformation on
+MemoryAdaptNet obtains the highest score with OA of 69.60%,               datasets with large color-space differences (existing in P2V_D
+MA of 71.51%, and mIoU of 46.88% when the threshold 𝜎 is                  task) is greater than that on datasets with small color-space
+0.25 on the P2V_D task and obtains the highest score with OA              difference (existing in P2V_S task). Compared with the w/o aug.
+of 72.25%, MA of 61.87%, and mIoU of 49.82% when the                      model, the affine aug. model makes performance improvement
+threshold 𝜎 is 0.5 on the V2P task.                                       on the two domain adaptation tasks. Specifically, this model
+E. Effects of Different Data Augmentation Strategies                      achieves 3.83%, 8.27%, and 5.58% improvement of OA, MA,
+   In this section, we discuss the effects of different data              and mIoU on the P2V_S task, and 7.84%, 9.53%, and 7.10%
+augmentation strategies on the UDA semantic segmentation of               improvement of OA, MA, and mIoU on the P2V_D task,
+                                                                                                                                                  16
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+                                                   TABLE VII
+               PARAMETER ANALYSIS OF THE TARGET PSEUDO LABEL ENTROPY THRESHOLD ON THE P2V_S TASK
+                                                                      𝐹1 score
+                           𝜎                                                                                   OA      MA      mIoU
+                                            Imp. surf.    Building    Low veg.   Tree        Car     Clutter
+                          0.00                77.76        84.75       62.42     77.23      60.90    36.67     75.07   76.04   52.71
+                          0.25                77.46        86.44       65.77     77.34      59.66    51.86     76.46   78.42   54.82
+                          0.50                79.65        86.45       68.22     78.52      61.09    50.30     77.87   77.05   56.05
+                          0.75                78.39        85.65       65.33     78.24      58.79    40.74     76.88   76.28   53.22
+                          1.00                78.20        86.07       65.99     77.42      59.41    49.57     76.81   76.70   54.56
+                                                   TABLE VIII
+               PARAMETER ANALYSIS OF THE TARGET PSEUDO LABEL ENTROPY THRESHOLD ON THE P2V_D TASK
+                                                                      𝐹1 score
+                           𝜎                                                                                   OA      MA      mIoU
+                                            Imp. surf.    Building    Low veg.   Tree        Car     Clutter
+                          0.00                74.96        78.55       51.59     67.25      57.51    19.88     66.82   67.74   43.57
+                          0.25                72.59        81.01       57.26     69.29      58.35    35.97     69.60   71.51   46.88
+                          0.50                72.80        79.74       47.84     70.38      58.12    26.52     67.77   67.39   44.25
+                          0.75                74.49        81.14       54.47     62.82      58.33    29.32     66.91   71.23   44.92
+                          1.00                73.79        82.15       54.48     69.44      56.37    23.31     68.08   68.76   45.21
+                                                    TABLE IX
+                 PARAMETER ANALYSIS OF THE TARGET PSEUDO LABEL ENTROPY THRESHOLD ON THE V2P TASK
+                                                                      𝐹1 score
+                           𝜎                                                                                   OA      MA      mIoU
+                                            Imp. surf.    Building    Low veg.   Tree        Car     Clutter
+                          0.00                76.96        77.19       64.78     56.35      75.87     8.97     69.41   59.38   46.39
+                          0.25                80.58        83.55       64.46     65.80      62.01    13.82     72.94   59.70   48.03
+                          0.50                79.70        77.84       67.58     64.06      76.54    16.15     72.25   61.87   49.82
+                          0.75                79.13        77.71       67.34     63.70      75.96     7.09     72.39   61.08   49.19
+                          1.00                78.60        78.94       67.10     63.55      75.02     6.57     72.01   60.89   48.40
+                                                  TABLE X
+     QUANTITATIVE RESULTS (%) OF DIFFERENT DATA AUGMENTATION STRATEGIES ON THE P2V_S TASK AND P2V_DTASK
+                                                                           𝐹1 score
+                            Methods                                                                            OA      MA      mIoU
+                                                     Imp. surf. Building Low veg. Tree        Car      Clutter
+                                      w/o aug.         76.67     80.04    64.21     64.44    48.04     47.74 74.04     68.78   50.47
+                  P2V_S task      color-space aug.     75.68     80.19    58.70     60.48    52.65     36.86 70.65     67.79   47.30
+                                     affine aug.       79.65     86.45    68.22     78.52    61.09     50.30 77.87     77.05   56.05
+                                      w/o aug.         68.51     76.13    51.07     46.83    51.87     46.95 61.76     61.98   39.78
+                  P2V_D task      color-space aug.     69.49     76.29    48.53     49.34    47.66      5.05 59.28     49.37   35.60
+                                     affine aug.       72.59     81.01    57.26     69.29    58.35     35.97 69.60     71.51   46.88
+
+
+respectively. This result shows that appropriate affine                 of our MemoryAdaptNet, which favorably outperforms the
+transformation during model training can promote the                    baseline model and the state-of-the-art models.
+performance of domain adaptation semantic segmentation of                  In the future, we aim to further improve the
+HRS imagery.                                                            MemoryAdaptNet from the following aspects: 1) performing
+                                                                        adversarial learning at the output space with different feature
+             V. CONCLUSION AND FUTURE WORK                              levels by considering that different level features of DCNN
+   To address variation of data distribution from different             excavate different semantic and other detailed information, and
+domain in semantic segmentation of HRS imagery, we propose              2) exploring a pseudo label filtering strategy based on adaptive
+a novel UDA semantic segmentation network named                         entropy threshold rather than manually setting the entropy
+MemoryAdaptNet. Essentially, the MemoryAdaptNet use an                  threshold for reducing the manual intervention and workload.
+invariant feature memory module to refrain from the negative
+tendency of only representing the variant feature of current                                            REFERENCES
+limited inputs in an UDA with adversarial learning scheme.
+Given that the memory module can capture prototype                      [1]   Cheng, G., J. Han, and X. Lu, Remote sensing image scene classification:
+information, the MemoryAdaptNet is capable of storing the                     Benchmark and state of the art. Proceedings of the IEEE, 2017. 105(10):
+                                                                              p. 1865-1883.
+invariant domain-level prototype information. For further               [2]   Hu, F., et al., Transferring deep convolutional neural networks for the
+augmenting the feature representation of input image from                     scene classification of high-resolution remote sensing imagery. Remote
+target domain, we aggregate the invariant domain-level                        Sensing, 2015. 7(11): p. 14680-14707.
+                                                                        [3]   Chen, J., et al., Geospatial relation captioning for high-spatial-
+memory to the current pseudo invariant feature produced by the                resolution images by using an attention-based neural network.
+feature extractor with a category attention-driven module. Thus,              International Journal of Remote Sensing, 2019. 40(16): p. 6482-6498.
+the proposed model can consequently enhance the performance             [4]   Zhao, R., Z. Shi, and Z. Zou, High-resolution remote sensing image
+                                                                              captioning based on structured attention. IEEE Transactions on
+of semantic segmentation of HRS imagery in the target domain.                 Geoscience and Remote Sensing, 2021. 60: p. 1-14.
+The results of extensive experiments indicate the effectiveness
+                                                                                                                                                                 17
+> REPLACE THIS LINE WITH YOUR MANUSCRIPT ID NUMBER (DOUBLE-CLICK HERE TO EDIT) <
+
+[5]    Chen, J., et al., Multi-scale spatial and channel-wise attention for                 image semantic segmentation. ISPRS Journal of Photogrammetry and
+       improving object detection in remote sensing imagery. IEEE Geoscience                Remote Sensing, 2021. 175: p. 20-33.
+       and Remote Sensing Letters, 2019. 17(4): p. 681-685.                          [28]   Chen, J., et al., Unsupervised Domain Adaptation for Semantic
+[6]    Li, K., et al., Object detection in optical remote sensing images: A survey          Segmentation of High-Resolution Remote Sensing Imagery Driven by
+       and a new benchmark. ISPRS Journal of Photogrammetry and Remote                      Category-Certainty Attention. IEEE Transactions on Geoscience and
+       Sensing, 2020. 159: p. 296-307.                                                      Remote Sensing, 2022. 60: p. 1-15.
+[7]    Chen, J., et al., SMAF-Net: Sharing multiscale adversarial feature for        [29]   Geng, B., D. Tao, and C. Xu, DAML: Domain adaptation metric learning.
+       high-resolution remote sensing imagery semantic segmentation. IEEE                   IEEE Transactions on Image Processing, 2011. 20(10): p. 2980-2989.
+       Geoscience and Remote Sensing Letters, 2020. 18(11): p. 1921-1925.            [30]   Zellinger, W., et al., Central moment discrepancy (cmd) for domain-
+[8]    Zhang, J., et al., Multi-scale context aggregation for semantic                      invariant representation learning. arXiv preprint arXiv:1702.08811,
+       segmentation of remote sensing images. Remote Sensing, 2020. 12(4): p.               2017.
+       701.                                                                          [31]   Elshamli, A., et al., Domain adaptation using representation learning for
+[9]    Long, J., E. Shelhamer, and T. Darrell. Fully convolutional networks for             the classification of remote sensing images. IEEE Journal of Selected
+       semantic segmentation. in Proceedings of the IEEE conference on                      Topics in Applied Earth Observations and Remote Sensing, 2017. 10(9):
+       computer vision and pattern recognition. 2015. p. 3431-3440.                         p. 4198-4209.
+[10]   Zuo, T., J. Feng, and X. Chen. HF-FCN: Hierarchically fused fully             [32]   Song, S., et al., Domain adaptation for convolutional neural networks-
+       convolutional network for robust building extraction. in Asian                       based remote sensing scene classification. IEEE Geoscience and Remote
+       Conference on Computer Vision. 2016. Springer. p. 291-302.                           Sensing Letters, 2019. 16(8): p. 1324-1328.
+[11]   Yang, Y., et al., M-FCN: Effective fully convolutional network-based          [33]   Zhang, J., et al., Domain adaptation based on correlation subspace
+       airplane detection framework. IEEE Geoscience and Remote Sensing                     dynamic distribution alignment for remote sensing image scene
+       Letters, 2017. 14(8): p. 1293-1297.                                                  classification. IEEE Transactions on Geoscience and Remote Sensing,
+[12]   Badrinarayanan, V., A. Kendall, and R. Cipolla, Segnet: A deep                       2020. 58(11): p. 7920-7930.
+       convolutional encoder-decoder architecture for image segmentation.            [34]   Chunseong Park, C., B. Kim, and G. Kim. Attend to you: Personalized
+       IEEE transactions on pattern analysis and machine intelligence, 2017.                image captioning with context sequence memory networks. in
+       39(12): p. 2481-2495.                                                                Proceedings of the IEEE conference on computer vision and pattern
+[13]   Ronneberger, O., P. Fischer, and T. Brox. U-net: Convolutional networks              recognition. 2017. p. 895-903.
+       for biomedical image segmentation. in International Conference on             [35]   Chen, Y., et al. Memory enhanced global-local aggregation for video
+       Medical image computing and computer-assisted intervention. 2015.                    object detection. in Proceedings of the IEEE/CVF Conference on
+       Springer. p. 234-241.                                                                Computer Vision and Pattern Recognition. 2020. p. 10337-10346.
+[14]   Zhao, H., et al. Pyramid scene parsing network. in Proceedings of the         [36]   Oh, S.W., et al. Video object segmentation using space-time memory
+       IEEE conference on computer vision and pattern recognition. 2017. p.                 networks. in Proceedings of the IEEE/CVF International Conference on
+       2881-2890.                                                                           Computer Vision. 2019. p. 9226-9235.
+[15]   Chen, L.-C., et al., Deeplab: Semantic image segmentation with deep           [37]   Jin, Z., et al. Mining contextual information beyond image for semantic
+       convolutional nets, atrous convolution, and fully connected crfs. IEEE               segmentation. in Proceedings of the IEEE/CVF International
+       transactions on pattern analysis and machine intelligence, 2017. 40(4): p.           Conference on Computer Vision. 2021. p. 7231-7241.
+       834-848.                                                                      [38]   Alonso, I., et al. Semi-supervised semantic segmentation with pixel-level
+[16]   Goodfellow, I., et al., Generative adversarial nets. Advances in neural              contrastive learning from a class-wise memory bank. in Proceedings of
+       information processing systems, 2014. 27.                                            the IEEE/CVF International Conference on Computer Vision. 2021. p.
+[17]   Hoffman, J., et al. Cycada: Cycle-consistent adversarial domain                      8219-8228.
+       adaptation. in International conference on machine learning. 2018.            [39]   He, K., et al. Deep residual learning for image recognition. in
+       PMLR. p. 1989-1998.                                                                  Proceedings of the IEEE conference on computer vision and pattern
+[18]   Wu, Z., et al. Dcan: Dual channel-wise alignment networks for                        recognition. 2016. p. 770-778.
+       unsupervised scene adaptation. in Proceedings of the European                 [40]   Deng, J., et al. Imagenet: A large-scale hierarchical image database. in
+       Conference on Computer Vision (ECCV). 2018. p. 518-534.                              2009 IEEE conference on computer vision and pattern recognition. 2009.
+[19]   Li, Y., L. Yuan, and N. Vasconcelos. Bidirectional learning for domain               Ieee. p. 248-255.
+       adaptation of semantic segmentation. in Proceedings of the IEEE/CVF           [41]   Wu, Z., et al. Unsupervised feature learning via non-parametric instance
+       Conference on Computer Vision and Pattern Recognition. 2019. p. 6936-                discrimination. in Proceedings of the IEEE conference on computer
+       6945.                                                                                vision and pattern recognition. 2018. p. 3733-3742.
+[20]   Hoffman, J., et al., Fcns in the wild: Pixel-level adversarial and            [42]   He, K., et al. Momentum contrast for unsupervised visual representation
+       constraint-based adaptation. arXiv preprint arXiv:1612.02649, 2016.                  learning. in Proceedings of the IEEE/CVF conference on computer
+[21]   Chen, Y.-H., et al. No more discrimination: Cross city adaptation of road            vision and pattern recognition. 2020. p. 9729-9738.
+       scene segmenters. in Proceedings of the IEEE International Conference         [43]   Rottensteiner, F., et al., The ISPRS benchmark on urban object
+       on Computer Vision. 2017. p. 1992-2001.                                              classification and 3D building reconstruction. ISPRS Annals of the
+[22]   Tsai, Y.-H., et al. Learning to adapt structured output space for semantic           Photogrammetry, Remote Sensing and Spatial Information Sciences I-3
+       segmentation. in Proceedings of the IEEE conference on computer vision               (2012), Nr. 1, 2012. 1(1): p. 293-298.
+       and pattern recognition. 2018. p. 7472-7481.                                  [44]   Bottou, L., Large-scale machine learning with stochastic gradient
+[23]   Luo, Y., et al. Taking a closer look at domain shift: Category-level                 descent, in Proceedings of COMPSTAT'2010. 2010, Springer. p. 177-186.
+       adversaries for semantics consistent domain adaptation. in Proceedings        [45]   Kingma, D.P. and J. Ba, Adam: A method for stochastic optimization.
+       of the IEEE/CVF Conference on Computer Vision and Pattern                            arXiv preprint arXiv:1412.6980, 2014.
+       Recognition. 2019. p. 2507-2516.                                              [46]   Saito, K., et al. Maximum classifier discrepancy for unsupervised domain
+[24]   Vu, T.-H., et al. Advent: Adversarial entropy minimization for domain                adaptation. in Proceedings of the IEEE conference on computer vision
+       adaptation in semantic segmentation. in Proceedings of the IEEE/CVF                  and pattern recognition. 2018. p. 3723-3732.
+       Conference on Computer Vision and Pattern Recognition. 2019. p. 2517-         [47]   Wang, H., et al. Classes matter: A fine-grained adversarial approach to
+       2526.                                                                                cross-domain semantic segmentation. in European conference on
+[25]   Wittich, D. and F. Rottensteiner, Appearance based deep domain                       computer vision. 2020. Springer. p. 642-659.
+       adaptation for the classification of aerial images. ISPRS Journal of          [48]   Li, S., et al., Semantic distribution-aware contrastive adaptation for
+       Photogrammetry and Remote Sensing, 2021. 180: p. 82-102.                             semantic segmentation. arXiv preprint arXiv:2105.05013, 2021.
+[26]   Zhang, L., et al., Stagewise unsupervised domain adaptation with              [49]   Zhang B, Chen T, Wang B. Curriculum-style local-to-global adaptation
+       adversarial self-training for road segmentation of remote-sensing                    for cross-domain remote sensing image segmentation[J]. IEEE
+       images. IEEE Transactions on Geoscience and Remote Sensing, 2021.                    Transactions on Geoscience and Remote Sensing, 2021, 60: 1-12.
+       60: p. 1-13.                                                                  [50]   Jiang, Z., et al., Prototypical Contrast Adaptation for Domain Adaptive
+[27]   Li, Y., et al., Learning deep semantic segmentation network under                    Semantic Segmentation. arXiv preprint arXiv:2207.06654, 2022.
+       multiple weakly-supervised constraints for cross-domain remote sensing
+

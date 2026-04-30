@@ -5,7 +5,6 @@ from copy import deepcopy
 
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils import data
 from torchvision import transforms
@@ -22,414 +21,25 @@ from transforms import (
     Identity,
 )
 from utils.focal_loss import FocalLoss
-from utils.train_utils import AverageMeter, to_cuda, cycle, should_disable_tqdm
+from utils.train_utils import AverageMeter, to_cuda, cycle
 
 
-def compute_class_prototypes(features, labels, ignore_class_id=None, min_samples=1):
-    prototypes = {}
-    counts = {}
-    for class_id in torch.unique(labels):
-        if ignore_class_id is not None and int(class_id.item()) == int(ignore_class_id):
-            continue
-        class_mask = labels == class_id
-        class_count = int(torch.count_nonzero(class_mask).item())
-        if class_count < min_samples:
-            continue
-        class_id_int = int(class_id.item())
-        prototypes[class_id_int] = features[class_mask].mean(dim=0)
-        counts[class_id_int] = class_count
-    return prototypes, counts
+def _check_temporal_index_range(model, positions, applied_shift, tag):
+    temporal_encoder = model.temporal_encoder
+    min_pos = int(positions.min().item())
+    max_pos = int(positions.max().item())
+    min_idx = min_pos + applied_shift + temporal_encoder.max_temporal_shift
+    max_idx = max_pos + applied_shift + temporal_encoder.max_temporal_shift
+    table_size = temporal_encoder.positional_enc.num_embeddings
 
-
-def compute_temporal_instability(sequence_feats):
-    if sequence_feats.dim() != 3:
-        raise ValueError("sequence_feats must have shape (B, T, C)")
-
-    if sequence_feats.shape[1] <= 1:
-        return sequence_feats.new_zeros(sequence_feats.shape[:2])
-
-    deltas = torch.norm(sequence_feats[:, 1:, :] - sequence_feats[:, :-1, :], dim=2)
-    first_delta = deltas[:, :1]
-    return torch.cat([first_delta, deltas], dim=1)
-
-
-def compute_stable_temporal_mask(sequence_feats, keep_ratio):
-    keep_ratio = float(min(max(keep_ratio, 0.0), 1.0))
-    instability = compute_temporal_instability(sequence_feats)
-    batch_size, seq_len = instability.shape
-
-    if keep_ratio >= 1.0 or seq_len <= 1:
-        mask = torch.ones_like(instability)
-        return mask, instability
-
-    keep_steps = max(1, int(round(seq_len * keep_ratio)))
-    keep_steps = min(keep_steps, seq_len)
-
-    sorted_idx = torch.argsort(instability, dim=1, descending=False)
-    selected_idx = sorted_idx[:, :keep_steps]
-    mask = torch.zeros_like(instability)
-    mask.scatter_(1, selected_idx, 1.0)
-    return mask, instability
-
-
-def pool_stable_temporal_features(sequence_feats, keep_ratio):
-    stable_mask, instability = compute_stable_temporal_mask(sequence_feats, keep_ratio)
-    weights = stable_mask.unsqueeze(-1)
-    denom = weights.sum(dim=1).clamp_min(1.0)
-    pooled = (sequence_feats * weights).sum(dim=1) / denom
-    diagnostics = {
-        "avg_instability": float(instability.mean().item()),
-        "avg_stable_ratio": float(stable_mask.mean().item()),
-    }
-    return pooled, diagnostics
-
-
-def compute_relation_matrix(prototypes, class_ids):
-    proto_stack = torch.stack([prototypes[class_id] for class_id in class_ids], dim=0)
-    proto_stack = F.normalize(proto_stack, dim=1)
-    relation_matrix = proto_stack @ proto_stack.t()
-    relation_matrix.fill_diagonal_(0.0)
-
-    norm = relation_matrix.norm(p="fro")
-    if norm > 0:
-        relation_matrix = relation_matrix / norm
-
-    return relation_matrix
-
-
-def normalize_prototype_geometry(prototypes, class_ids, eps=1e-6):
-    proto_stack = torch.stack([prototypes[class_id] for class_id in class_ids], dim=0)
-    centered = proto_stack - proto_stack.mean(dim=0, keepdim=True)
-
-    if centered.shape[0] >= 2:
-        pairwise_dist = torch.pdist(centered, p=2)
-        scale = pairwise_dist.mean()
-    else:
-        scale = centered.norm(dim=1).mean()
-
-    if torch.isnan(scale) or torch.isinf(scale) or scale <= eps:
-        scale = centered.new_tensor(1.0)
-
-    normalized = centered / scale
-    return {class_id: normalized[idx] for idx, class_id in enumerate(class_ids)}
-
-
-def init_prototype_bank(num_classes, feat_dim, device):
-    bank = torch.zeros(num_classes, feat_dim, device=device)
-    valid_mask = torch.zeros(num_classes, dtype=torch.bool, device=device)
-    return bank, valid_mask
-
-
-@torch.no_grad()
-def update_prototype_bank(bank, valid_mask, prototypes, momentum):
-    updated_classes = []
-    for class_id, prototype in prototypes.items():
-        if valid_mask[class_id]:
-            bank[class_id] = momentum * bank[class_id] + (1.0 - momentum) * prototype.detach()
-        else:
-            bank[class_id] = prototype.detach()
-            valid_mask[class_id] = True
-        updated_classes.append(class_id)
-    return updated_classes
-
-
-def merge_prototypes_with_bank(current_prototypes, bank, valid_mask, ignore_class_id=None):
-    merged = {}
-    for class_id in range(valid_mask.shape[0]):
-        if ignore_class_id is not None and class_id == int(ignore_class_id):
-            continue
-        if class_id in current_prototypes:
-            merged[class_id] = current_prototypes[class_id]
-        elif valid_mask[class_id]:
-            merged[class_id] = bank[class_id]
-    return merged
-
-
-def prototype_relation_alignment_loss(source_prototypes, target_prototypes, normalize_geometry=False):
-    shared_classes = sorted(set(source_prototypes.keys()) & set(target_prototypes.keys()))
-    diagnostics = {
-        'shared_classes': len(shared_classes),
-        'active_pairs': 0,
-        'enabled': int(len(shared_classes) >= 2),
-    }
-    if len(shared_classes) < 2:
-        reference = next(iter(source_prototypes.values()), None)
-        if reference is None:
-            reference = next(iter(target_prototypes.values()), None)
-        if reference is None:
-            return torch.tensor(0.0), diagnostics
-        return reference.new_tensor(0.0), diagnostics
-
-    if normalize_geometry:
-        source_prototypes = normalize_prototype_geometry(source_prototypes, shared_classes)
-        target_prototypes = normalize_prototype_geometry(target_prototypes, shared_classes)
-    source_rel = compute_relation_matrix(source_prototypes, shared_classes)
-    target_rel = compute_relation_matrix(target_prototypes, shared_classes)
-    diagnostics['active_pairs'] = int(len(shared_classes) * (len(shared_classes) - 1) / 2)
-    return F.mse_loss(source_rel, target_rel), diagnostics
-
-
-def prototype_point_alignment_loss(source_prototypes, target_prototypes, normalize_geometry=False):
-    shared_classes = sorted(set(source_prototypes.keys()) & set(target_prototypes.keys()))
-    diagnostics = {
-        'shared_classes': len(shared_classes),
-        'active_points': len(shared_classes),
-        'enabled': int(len(shared_classes) >= 1),
-    }
-    if len(shared_classes) == 0:
-        reference = next(iter(source_prototypes.values()), None)
-        if reference is None:
-            reference = next(iter(target_prototypes.values()), None)
-        if reference is None:
-            return torch.tensor(0.0), diagnostics
-        return reference.new_tensor(0.0), diagnostics
-
-    if normalize_geometry:
-        source_prototypes = normalize_prototype_geometry(source_prototypes, shared_classes)
-        target_prototypes = normalize_prototype_geometry(target_prototypes, shared_classes)
-    source_stack = torch.stack([source_prototypes[class_id] for class_id in shared_classes], dim=0)
-    target_stack = torch.stack([target_prototypes[class_id] for class_id in shared_classes], dim=0)
-    source_stack = F.normalize(source_stack, dim=1)
-    target_stack = F.normalize(target_stack, dim=1)
-    point_loss = 1.0 - F.cosine_similarity(source_stack, target_stack, dim=1).mean()
-    return point_loss, diagnostics
-
-
-def build_domain_invariant_prototypes(source_prototypes, target_prototypes, ignore_class_id=None):
-    shared = {}
-    all_class_ids = sorted(set(source_prototypes.keys()) | set(target_prototypes.keys()))
-    for class_id in all_class_ids:
-        if ignore_class_id is not None and class_id == int(ignore_class_id):
-            continue
-        if class_id in source_prototypes and class_id in target_prototypes:
-            shared[class_id] = 0.5 * (source_prototypes[class_id] + target_prototypes[class_id])
-        elif class_id in source_prototypes:
-            shared[class_id] = source_prototypes[class_id]
-        else:
-            shared[class_id] = target_prototypes[class_id]
-    return shared
-
-
-def build_memory_invariant_prototypes(source_bank, source_valid_mask, target_bank, target_valid_mask, ignore_class_id=None):
-    anchors = {}
-    num_classes = int(source_valid_mask.shape[0])
-    for class_id in range(num_classes):
-        if ignore_class_id is not None and class_id == int(ignore_class_id):
-            continue
-        source_valid = bool(source_valid_mask[class_id].item())
-        target_valid = bool(target_valid_mask[class_id].item())
-        if source_valid and target_valid:
-            anchors[class_id] = 0.5 * (source_bank[class_id] + target_bank[class_id])
-        elif source_valid:
-            anchors[class_id] = source_bank[class_id]
-        elif target_valid:
-            anchors[class_id] = target_bank[class_id]
-    return anchors
-
-
-def prototype_contrastive_loss(features, labels, anchor_prototypes, temperature=0.1, ignore_class_id=None):
-    class_ids = sorted(anchor_prototypes.keys())
-    diagnostics = {
-        "enabled": int(len(class_ids) >= 2),
-        "num_anchor_classes": len(class_ids),
-        "num_valid_queries": 0,
-    }
-    if len(class_ids) < 2:
-        reference = next(iter(anchor_prototypes.values()), None)
-        if reference is None:
-            return features.new_tensor(0.0), diagnostics
-        return reference.new_tensor(0.0), diagnostics
-
-    label_to_index = {class_id: idx for idx, class_id in enumerate(class_ids)}
-    valid_mask = torch.tensor(
-        [
-            (ignore_class_id is None or int(label.item()) != int(ignore_class_id))
-            and int(label.item()) in label_to_index
-            for label in labels
-        ],
-        device=labels.device,
-        dtype=torch.bool,
-    )
-    diagnostics["num_valid_queries"] = int(valid_mask.sum().item())
-    if diagnostics["num_valid_queries"] == 0:
-        reference = next(iter(anchor_prototypes.values()))
-        return reference.new_tensor(0.0), diagnostics
-
-    query_feats = F.normalize(features[valid_mask], dim=1)
-    anchor_stack = torch.stack([anchor_prototypes[class_id] for class_id in class_ids], dim=0)
-    anchor_stack = F.normalize(anchor_stack, dim=1)
-    target_indices = torch.tensor(
-        [label_to_index[int(label.item())] for label in labels[valid_mask]],
-        device=labels.device,
-        dtype=torch.long,
-    )
-    logits = query_feats @ anchor_stack.t()
-    logits = logits / temperature
-    loss = F.cross_entropy(logits, target_indices)
-    return loss, diagnostics
-
-
-def extract_refined_prototype_features(base_feats, sequence_feats, config):
-    if getattr(config, "pra_use_refined_prototypes", False) and sequence_feats is not None:
-        refined_feats, refine_diag = pool_stable_temporal_features(
-            sequence_feats, getattr(config, "pra_refinement_keep_ratio", 0.7)
+    if min_idx < 0 or max_idx >= table_size:
+        raise ValueError(
+            f"{tag} temporal indices out of range: "
+            f"positions=[{min_pos}, {max_pos}], shift={applied_shift}, "
+            f"embedding_indices=[{min_idx}, {max_idx}], table_size={table_size}. "
+            "This usually means an extra temporal shift was applied on top of TimeMatch "
+            "alignment or the positional encoding range is inconsistent with the dataset dates."
         )
-        return refined_feats, refine_diag
-
-    return base_feats, {
-        "avg_instability": 0.0,
-        "avg_stable_ratio": 1.0,
-    }
-
-
-def pool_phase_sequence_features(sequence_feats, num_phases=3):
-    if sequence_feats is None:
-        return None
-    if sequence_feats.dim() != 3:
-        raise ValueError("sequence_feats must have shape (B, T, C)")
-
-    batch_size, seq_len, feat_dim = sequence_feats.shape
-    num_phases = max(1, int(num_phases))
-    phase_feats = []
-    boundaries = torch.linspace(0, seq_len, steps=num_phases + 1, device=sequence_feats.device)
-    boundaries = torch.round(boundaries).long()
-
-    for phase_idx in range(num_phases):
-        start = int(boundaries[phase_idx].item())
-        end = int(boundaries[phase_idx + 1].item())
-        if end <= start:
-            end = min(seq_len, start + 1)
-        pooled = sequence_feats[:, start:end, :].mean(dim=1)
-        phase_feats.append(pooled)
-
-    return torch.stack(phase_feats, dim=1)
-
-
-def compute_phase_class_prototypes(phase_features, labels, ignore_class_id=None, min_samples=1):
-    if phase_features is None:
-        return {}, {}
-
-    prototypes = {}
-    counts = {}
-    num_phases = int(phase_features.shape[1])
-    for class_id in torch.unique(labels):
-        class_id_int = int(class_id.item())
-        if ignore_class_id is not None and class_id_int == int(ignore_class_id):
-            continue
-        class_mask = labels == class_id
-        class_count = int(torch.count_nonzero(class_mask).item())
-        if class_count < min_samples:
-            continue
-        for phase_idx in range(num_phases):
-            key = (class_id_int, phase_idx)
-            prototypes[key] = phase_features[class_mask, phase_idx, :].mean(dim=0)
-            counts[key] = class_count
-    return prototypes, counts
-
-
-def phase_prototype_alignment_loss(source_phase_prototypes, target_phase_prototypes):
-    shared_keys = sorted(set(source_phase_prototypes.keys()) & set(target_phase_prototypes.keys()))
-    diagnostics = {
-        "shared_phase_keys": len(shared_keys),
-        "enabled": int(len(shared_keys) > 0),
-    }
-    if len(shared_keys) == 0:
-        reference = next(iter(source_phase_prototypes.values()), None)
-        if reference is None:
-            reference = next(iter(target_phase_prototypes.values()), None)
-        if reference is None:
-            return torch.tensor(0.0), diagnostics
-        return reference.new_tensor(0.0), diagnostics
-
-    source_stack = torch.stack([source_phase_prototypes[key] for key in shared_keys], dim=0)
-    target_stack = torch.stack([target_phase_prototypes[key] for key in shared_keys], dim=0)
-    source_stack = F.normalize(source_stack, dim=1)
-    target_stack = F.normalize(target_stack, dim=1)
-    loss = 1.0 - F.cosine_similarity(source_stack, target_stack, dim=1).mean()
-    return loss, diagnostics
-
-
-def phase_prototype_contrastive_loss(phase_features, labels, anchor_prototypes, temperature=0.1, ignore_class_id=None):
-    diagnostics = {
-        "enabled": 0,
-        "num_anchor_keys": 0,
-        "num_valid_queries": 0,
-    }
-    if phase_features is None or len(anchor_prototypes) < 2:
-        reference = next(iter(anchor_prototypes.values()), None)
-        if reference is None:
-            return labels.new_tensor(0.0, dtype=torch.float32), diagnostics
-        return reference.new_tensor(0.0), diagnostics
-
-    phase_keys = sorted(anchor_prototypes.keys())
-    diagnostics["enabled"] = 1
-    diagnostics["num_anchor_keys"] = len(phase_keys)
-    key_to_index = {key: idx for idx, key in enumerate(phase_keys)}
-
-    query_feats = []
-    target_indices = []
-    batch_size, num_phases, _ = phase_features.shape
-    for batch_idx in range(batch_size):
-        class_id = int(labels[batch_idx].item())
-        if ignore_class_id is not None and class_id == int(ignore_class_id):
-            continue
-        for phase_idx in range(num_phases):
-            key = (class_id, phase_idx)
-            if key not in key_to_index:
-                continue
-            query_feats.append(phase_features[batch_idx, phase_idx, :])
-            target_indices.append(key_to_index[key])
-
-    diagnostics["num_valid_queries"] = len(target_indices)
-    if len(target_indices) == 0:
-        reference = next(iter(anchor_prototypes.values()))
-        return reference.new_tensor(0.0), diagnostics
-
-    query_stack = F.normalize(torch.stack(query_feats, dim=0), dim=1)
-    anchor_stack = F.normalize(torch.stack([anchor_prototypes[key] for key in phase_keys], dim=0), dim=1)
-    logits = (query_stack @ anchor_stack.t()) / temperature
-    targets = torch.tensor(target_indices, device=phase_features.device, dtype=torch.long)
-    return F.cross_entropy(logits, targets), diagnostics
-
-
-def compute_trend_prototypes(phase_features, labels, ignore_class_id=None, min_samples=1):
-    if phase_features is None or phase_features.shape[1] < 2:
-        return {}, {}
-    trend_features = phase_features[:, -1, :] - phase_features[:, 0, :]
-    return compute_class_prototypes(
-        trend_features,
-        labels,
-        ignore_class_id=ignore_class_id,
-        min_samples=min_samples,
-    )
-
-
-def get_pseudo_label_mask(teacher_probs, config):
-    pseudo_conf, pseudo_targets = torch.max(teacher_probs, dim=1)
-    pseudo_mask = pseudo_conf > config.pseudo_threshold
-
-    top2_probs = torch.topk(teacher_probs, k=min(2, teacher_probs.shape[1]), dim=1).values
-    if top2_probs.shape[1] >= 2:
-        pseudo_margin = top2_probs[:, 0] - top2_probs[:, 1]
-    else:
-        pseudo_margin = torch.ones_like(pseudo_conf)
-
-    pseudo_entropy = -(teacher_probs * torch.log(teacher_probs + 1e-8)).sum(dim=1)
-    pseudo_entropy = pseudo_entropy / np.log(teacher_probs.shape[1])
-
-    selection = getattr(config, "pseudo_selection", "confidence")
-    if selection in {"margin", "confidence_margin", "hybrid"}:
-        pseudo_mask = pseudo_mask & (pseudo_margin > config.pseudo_margin_threshold)
-    if selection in {"entropy", "confidence_entropy", "hybrid"}:
-        pseudo_mask = pseudo_mask & (pseudo_entropy < config.pseudo_entropy_threshold)
-
-    diagnostics = {
-        "confidence": pseudo_conf,
-        "margin": pseudo_margin,
-        "entropy": pseudo_entropy,
-    }
-    return pseudo_targets, pseudo_mask, diagnostics
-
 
 
 def train_timematch(student, config, writer, val_loader, device, best_model_path, fold_num, splits):
@@ -437,7 +47,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
     # Setup model
     pretrained_path = f"{config.weights}/fold_{fold_num}"
-    pretrained_weights = torch.load(f"{pretrained_path}/model.pt")["state_dict"]
+    pretrained_weights = torch.load(f"{pretrained_path}/model.pt", weights_only=False)["state_dict"]
     student.load_state_dict(pretrained_weights)
     teacher = deepcopy(student)
     student.to(device)
@@ -459,8 +69,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
     target_iter = iter(cycle(target_loader))
     min_shift, max_shift = -config.max_temporal_shift, config.max_temporal_shift
     target_to_source_shift = 0
-    source_bank, source_bank_valid = None, None
-    target_bank, target_bank_valid = None, None
 
     # To evaluate how well we estimate class distribution
     target_labels = target_loader_no_aug.dataset.get_labels()
@@ -481,55 +89,21 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
     source_to_target_shift = 0
     for epoch in range(config.epochs):
-        progress_bar = tqdm(
-            range(steps_per_epoch),
-            desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}",
-            disable=should_disable_tqdm(config),
-        )
+        progress_bar = tqdm(range(steps_per_epoch), desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}")
         loss_meter = AverageMeter()
-        point_loss_meter = AverageMeter()
-        relation_loss_meter = AverageMeter()
-        phase_loss_meter = AverageMeter()
-        phase_contrastive_loss_meter = AverageMeter()
-        trend_loss_meter = AverageMeter()
-        pra_batches_enabled = 0
-        pra_batches_with_pairs = 0
-        pra_batches_with_points = 0
-        pra_active_points_total = 0
-        pra_shared_classes_total = 0
-        pra_active_pairs_total = 0
-        pra_source_samples_total = 0
-        pra_target_samples_total = 0
-        pra_source_classes_updated_total = 0
-        pra_target_classes_updated_total = 0
-        pra_source_bank_classes_total = 0
-        pra_target_bank_classes_total = 0
 
         if config.estimate_shift:
-            confident_pseudo_labels = np.array([])
-            if 'all_pseudo_labels' in locals():
-                pseudo_labels_np = np.array(all_pseudo_labels)
-                pseudo_mask_np = np.array(all_pseudo_mask, dtype=bool) if 'all_pseudo_mask' in locals() else None
-                if pseudo_mask_np is not None and len(pseudo_mask_np) == len(pseudo_labels_np):
-                    confident_pseudo_labels = pseudo_labels_np[pseudo_mask_np]
-                elif len(pseudo_labels_np) > 0:
-                    confident_pseudo_labels = pseudo_labels_np
-
-            if len(confident_pseudo_labels) > 0:
-                estimated_class_distr = estimate_class_distribution(confident_pseudo_labels, config.num_classes)
-            else:
-                estimated_class_distr = estimate_class_distribution(all_pseudo_labels, config.num_classes)
-
+            estimated_class_distr = estimate_class_distribution(all_pseudo_labels, config.num_classes)
             writer.add_scalar("train/kl_d", kl_divergence(actual_class_distr, estimated_class_distr), epoch)
             target_to_source_shift = estimate_temporal_shift(teacher,
                     target_loader_no_aug, device, estimated_class_distr,
                     min_shift=min_shift, max_shift=max_shift, sample_size=config.sample_size,
                     shift_estimator=config.shift_estimator)
-            if config.shift_source:
-                source_to_target_shift = -target_to_source_shift
-            else:
-                source_to_target_shift = 0
             if epoch == 0:
+                if config.shift_source:
+                    source_to_target_shift = -target_to_source_shift
+                else:
+                    source_to_target_shift = 0
                 min_shift, max_shift = min(target_to_source_shift, 0), max(0, target_to_source_shift)
             writer.add_scalar("train/temporal_shift", target_to_source_shift, epoch)
 
@@ -543,359 +117,36 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             # Get pseudo labels from teacher
             pixels_t_weak, mask_t_weak, position_t_weak, extra_t_weak = to_cuda(sample_target_weak, device)
             with torch.no_grad():
-                teacher_preds = F.softmax(
-                    teacher.forward(
-                        pixels_t_weak,
-                        mask_t_weak,
-                        position_t_weak + target_to_source_shift,
-                        extra_t_weak,
-                    ),
-                    dim=1,
-                )
-            pseudo_targets, pseudo_mask, pseudo_diag = get_pseudo_label_mask(teacher_preds, config)
+                teacher_preds = F.softmax(teacher.forward(pixels_t_weak, mask_t_weak, position_t_weak + target_to_source_shift, extra_t_weak), dim=1)
+            pseudo_conf, pseudo_targets = torch.max(teacher_preds, dim=1)
+            pseudo_mask = pseudo_conf > config.pseudo_threshold
 
             # Update student on shifted source data and pseudo-labeled target data
             pixels_s, mask_s, position_s, extra_s = to_cuda(sample_source, device)
             source_labels = sample_source['label'].cuda(device, non_blocking=True)
             pixels_t, mask_t, position_t, extra_t = to_cuda(sample_target_strong, device)
             logits_target = None
-            target_feats = None
-            source_feats = None
             loss_target = 0.0
-            loss_point = pixels_s.new_tensor(0.0)
-            loss_relation = pixels_s.new_tensor(0.0)
-            loss_proto_contrastive = pixels_s.new_tensor(0.0)
-            loss_phase = pixels_s.new_tensor(0.0)
-            loss_phase_contrastive = pixels_s.new_tensor(0.0)
-            loss_trend = pixels_s.new_tensor(0.0)
-            relation_stats = {
-                'shared_classes': 0,
-                'active_points': 0,
-                'active_pairs': 0,
-                'source_samples_used': 0,
-                'target_samples_used': 0,
-                'enabled': 0,
-                'source_classes_updated': 0,
-                'target_classes_updated': 0,
-                'source_bank_classes': 0,
-                'target_bank_classes': 0,
-                'source_avg_instability': 0.0,
-                'target_avg_instability': 0.0,
-                'source_avg_stable_ratio': 1.0,
-                'target_avg_stable_ratio': 1.0,
-                'contrastive_enabled': 0,
-                'contrastive_anchor_classes': 0,
-                'contrastive_valid_queries': 0,
-                'phase_enabled': 0,
-                'phase_shared_keys': 0,
-                'phase_anchor_keys': 0,
-                'phase_valid_queries': 0,
-                'trend_enabled': 0,
-                'trend_shared_classes': 0,
-            }
             if config.domain_specific_bn:
-                return_sequence_feats = bool(
-                    getattr(config, "pra_use_refined_prototypes", False)
-                    or getattr(config, "pra_use_phase_pse_alignment", False)
-                )
-                source_outputs = student.forward(
-                    pixels_s,
-                    mask_s,
-                    position_s + source_to_target_shift,
-                    extra_s,
-                    return_feats=True,
-                    return_sequence_feats=return_sequence_feats,
-                )
-                if return_sequence_feats:
-                    logits_source, source_feats, source_sequence_feats = source_outputs
-                else:
-                    logits_source, source_feats = source_outputs
-                    source_sequence_feats = None
+                _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
+                logits_source = student.forward(pixels_s, mask_s, position_s + source_to_target_shift, extra_s)
                 if len(torch.nonzero(pseudo_mask)) >= 2:  # at least 2 examples required for BN
-                    target_outputs = student.forward(
-                        pixels_t[pseudo_mask],
-                        mask_t[pseudo_mask],
-                        position_t[pseudo_mask],
-                        extra_t[pseudo_mask],
-                        return_feats=True,
-                        return_sequence_feats=return_sequence_feats,
-                    )
-                    if return_sequence_feats:
-                        logits_target, target_feats, target_sequence_feats = target_outputs
-                    else:
-                        logits_target, target_feats = target_outputs
-                        target_sequence_feats = None
+                    _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
+                    logits_target = student.forward(pixels_t[pseudo_mask], mask_t[pseudo_mask], position_t[pseudo_mask], extra_t[pseudo_mask])
             else:
+                _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
+                _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
                 pixels = torch.cat([pixels_s, pixels_t[pseudo_mask]])
                 mask = torch.cat([mask_s, mask_t[pseudo_mask]])
                 position = torch.cat([position_s + source_to_target_shift, position_t[pseudo_mask]])
                 extra = torch.cat([extra_s, extra_t[pseudo_mask]])
-                return_sequence_feats = bool(
-                    getattr(config, "pra_use_refined_prototypes", False)
-                    or getattr(config, "pra_use_phase_pse_alignment", False)
-                )
-                outputs = student.forward(
-                    pixels,
-                    mask,
-                    position,
-                    extra,
-                    return_feats=True,
-                    return_sequence_feats=return_sequence_feats,
-                )
-                if return_sequence_feats:
-                    logits, feats, sequence_feats = outputs
-                else:
-                    logits, feats = outputs
-                    sequence_feats = None
+                logits = student.forward(pixels, mask, position, extra)
                 logits_source, logits_target = logits[:config.batch_size], logits[config.batch_size:]
-                source_feats, target_feats = feats[:config.batch_size], feats[config.batch_size:]
-                if sequence_feats is not None:
-                    source_sequence_feats = sequence_feats[:config.batch_size]
-                    target_sequence_feats = sequence_feats[config.batch_size:]
-                else:
-                    source_sequence_feats = None
-                    target_sequence_feats = None
 
             loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
-                enable_relation_alignment = bool(getattr(config, "use_prototype_relation_alignment", False))
-                enable_prototype_contrastive = bool(getattr(config, "pra_use_prototype_contrastive", False))
-                enable_phase_pse_alignment = bool(getattr(config, "pra_use_phase_pse_alignment", False))
-                use_pra = (
-                    (
-                        enable_relation_alignment
-                        or enable_prototype_contrastive
-                        or enable_phase_pse_alignment
-                    )
-                    and epoch >= config.pra_warmup_epochs
-                )
-                if use_pra:
-                    if source_bank is None:
-                        source_bank, source_bank_valid = init_prototype_bank(
-                            config.num_classes, source_feats.shape[1], source_feats.device
-                        )
-                        target_bank, target_bank_valid = init_prototype_bank(
-                            config.num_classes, target_feats.shape[1], target_feats.device
-                        )
-
-                    source_proto_feats, source_refine_diag = extract_refined_prototype_features(
-                        source_feats, source_sequence_feats, config
-                    )
-                    target_proto_feats, target_refine_diag = extract_refined_prototype_features(
-                        target_feats, target_sequence_feats, config
-                    )
-
-                    source_batch_prototypes, source_batch_counts = compute_class_prototypes(
-                        source_proto_feats,
-                        source_labels,
-                        ignore_class_id=getattr(config, "unknown_class_idx", None),
-                        min_samples=config.pra_min_samples_per_class,
-                    )
-                    target_batch_prototypes, target_batch_counts = compute_class_prototypes(
-                        target_proto_feats,
-                        pseudo_targets[pseudo_mask],
-                        ignore_class_id=getattr(config, "unknown_class_idx", None),
-                        min_samples=config.pra_min_samples_per_class,
-                    )
-                    updated_source_classes = update_prototype_bank(
-                        source_bank,
-                        source_bank_valid,
-                        source_batch_prototypes,
-                        momentum=config.pra_bank_momentum,
-                    )
-                    updated_target_classes = update_prototype_bank(
-                        target_bank,
-                        target_bank_valid,
-                        target_batch_prototypes,
-                        momentum=config.pra_bank_momentum,
-                    )
-
-                    merged_source_prototypes = merge_prototypes_with_bank(
-                        source_batch_prototypes,
-                        source_bank,
-                        source_bank_valid,
-                        ignore_class_id=getattr(config, "unknown_class_idx", None),
-                    )
-                    merged_target_prototypes = merge_prototypes_with_bank(
-                        target_batch_prototypes,
-                        target_bank,
-                        target_bank_valid,
-                        ignore_class_id=getattr(config, "unknown_class_idx", None),
-                    )
-
-                    if enable_relation_alignment:
-                        loss_relation, relation_diag = prototype_relation_alignment_loss(
-                            merged_source_prototypes,
-                            merged_target_prototypes,
-                            normalize_geometry=getattr(config, "pra_normalize_geometry", True),
-                        )
-                        loss_point, point_diag = prototype_point_alignment_loss(
-                            merged_source_prototypes,
-                            merged_target_prototypes,
-                            normalize_geometry=getattr(config, "pra_normalize_geometry", True),
-                        )
-                    else:
-                        relation_diag = {'shared_classes': 0, 'active_pairs': 0, 'enabled': 0}
-                        point_diag = {'shared_classes': 0, 'active_points': 0, 'enabled': 0}
-
-                    if enable_prototype_contrastive:
-                        if getattr(config, "pra_use_memory_invariant_prototypes", False):
-                            invariant_prototypes = build_memory_invariant_prototypes(
-                                source_bank,
-                                source_bank_valid,
-                                target_bank,
-                                target_bank_valid,
-                                ignore_class_id=getattr(config, "unknown_class_idx", None),
-                            )
-                        else:
-                            invariant_prototypes = build_domain_invariant_prototypes(
-                                merged_source_prototypes,
-                                merged_target_prototypes,
-                                ignore_class_id=getattr(config, "unknown_class_idx", None),
-                            )
-                        source_contrastive_loss, source_contrastive_diag = prototype_contrastive_loss(
-                            source_proto_feats,
-                            source_labels,
-                            invariant_prototypes,
-                            temperature=getattr(config, "pra_contrastive_temperature", 0.1),
-                            ignore_class_id=getattr(config, "unknown_class_idx", None),
-                        )
-                        target_contrastive_loss, target_contrastive_diag = prototype_contrastive_loss(
-                            target_proto_feats,
-                            pseudo_targets[pseudo_mask],
-                            invariant_prototypes,
-                            temperature=getattr(config, "pra_contrastive_temperature", 0.1),
-                            ignore_class_id=getattr(config, "unknown_class_idx", None),
-                        )
-                        loss_proto_contrastive = source_contrastive_loss + target_contrastive_loss
-                    else:
-                        source_contrastive_diag = {'num_anchor_classes': 0, 'num_valid_queries': 0}
-                        target_contrastive_diag = {'num_anchor_classes': 0, 'num_valid_queries': 0}
-
-                    if enable_phase_pse_alignment and source_sequence_feats is not None and target_sequence_feats is not None:
-                        source_phase_feats = pool_phase_sequence_features(
-                            source_sequence_feats,
-                            num_phases=getattr(config, "pra_num_phases", 3),
-                        )
-                        target_phase_feats = pool_phase_sequence_features(
-                            target_sequence_feats,
-                            num_phases=getattr(config, "pra_num_phases", 3),
-                        )
-
-                        source_phase_prototypes, _ = compute_phase_class_prototypes(
-                            source_phase_feats,
-                            source_labels,
-                            ignore_class_id=getattr(config, "unknown_class_idx", None),
-                            min_samples=config.pra_min_samples_per_class,
-                        )
-                        target_phase_prototypes, _ = compute_phase_class_prototypes(
-                            target_phase_feats,
-                            pseudo_targets[pseudo_mask],
-                            ignore_class_id=getattr(config, "unknown_class_idx", None),
-                            min_samples=config.pra_min_samples_per_class,
-                        )
-                        loss_phase, phase_diag = phase_prototype_alignment_loss(
-                            source_phase_prototypes,
-                            target_phase_prototypes,
-                        )
-                        phase_anchor_prototypes = build_domain_invariant_prototypes(
-                            source_phase_prototypes,
-                            target_phase_prototypes,
-                        )
-                        source_phase_contrastive_loss, source_phase_contrastive_diag = phase_prototype_contrastive_loss(
-                            source_phase_feats,
-                            source_labels,
-                            phase_anchor_prototypes,
-                            temperature=getattr(config, "pra_phase_temperature", 0.1),
-                            ignore_class_id=getattr(config, "unknown_class_idx", None),
-                        )
-                        target_phase_contrastive_loss, target_phase_contrastive_diag = phase_prototype_contrastive_loss(
-                            target_phase_feats,
-                            pseudo_targets[pseudo_mask],
-                            phase_anchor_prototypes,
-                            temperature=getattr(config, "pra_phase_temperature", 0.1),
-                            ignore_class_id=getattr(config, "unknown_class_idx", None),
-                        )
-                        loss_phase_contrastive = source_phase_contrastive_loss + target_phase_contrastive_loss
-
-                        source_trend_prototypes, _ = compute_trend_prototypes(
-                            source_phase_feats,
-                            source_labels,
-                            ignore_class_id=getattr(config, "unknown_class_idx", None),
-                            min_samples=config.pra_min_samples_per_class,
-                        )
-                        target_trend_prototypes, _ = compute_trend_prototypes(
-                            target_phase_feats,
-                            pseudo_targets[pseudo_mask],
-                            ignore_class_id=getattr(config, "unknown_class_idx", None),
-                            min_samples=config.pra_min_samples_per_class,
-                        )
-                        loss_trend, trend_diag = prototype_point_alignment_loss(
-                            source_trend_prototypes,
-                            target_trend_prototypes,
-                            normalize_geometry=False,
-                        )
-                    else:
-                        phase_diag = {'shared_phase_keys': 0, 'enabled': 0}
-                        source_phase_contrastive_diag = {'num_anchor_keys': 0, 'num_valid_queries': 0}
-                        target_phase_contrastive_diag = {'num_anchor_keys': 0, 'num_valid_queries': 0}
-                        trend_diag = {'shared_classes': 0, 'enabled': 0}
-                    relation_stats = {
-                        'shared_classes': max(relation_diag['shared_classes'], point_diag['shared_classes']),
-                        'active_points': point_diag['active_points'],
-                        'active_pairs': relation_diag['active_pairs'],
-                        'source_samples_used': int(sum(source_batch_counts.values())),
-                        'target_samples_used': int(sum(target_batch_counts.values())),
-                        'enabled': int(relation_diag['enabled'] or point_diag['enabled']),
-                        'source_classes_updated': len(updated_source_classes),
-                        'target_classes_updated': len(updated_target_classes),
-                        'source_bank_classes': int(source_bank_valid.sum().item()),
-                        'target_bank_classes': int(target_bank_valid.sum().item()),
-                        'source_avg_instability': source_refine_diag['avg_instability'],
-                        'target_avg_instability': target_refine_diag['avg_instability'],
-                        'source_avg_stable_ratio': source_refine_diag['avg_stable_ratio'],
-                        'target_avg_stable_ratio': target_refine_diag['avg_stable_ratio'],
-                        'contrastive_enabled': int(enable_prototype_contrastive),
-                        'memory_anchor_enabled': int(getattr(config, "pra_use_memory_invariant_prototypes", False)),
-                        'contrastive_anchor_classes': int(
-                            max(
-                                source_contrastive_diag['num_anchor_classes'] if enable_prototype_contrastive else 0,
-                                target_contrastive_diag['num_anchor_classes'] if enable_prototype_contrastive else 0,
-                            )
-                        ),
-                        'contrastive_valid_queries': int(
-                            (
-                                source_contrastive_diag['num_valid_queries'] + target_contrastive_diag['num_valid_queries']
-                            ) if enable_prototype_contrastive else 0
-                        ),
-                        'phase_enabled': int(enable_phase_pse_alignment),
-                        'phase_shared_keys': int(phase_diag['shared_phase_keys'] if enable_phase_pse_alignment else 0),
-                        'phase_anchor_keys': int(
-                            max(
-                                source_phase_contrastive_diag['num_anchor_keys'] if enable_phase_pse_alignment else 0,
-                                target_phase_contrastive_diag['num_anchor_keys'] if enable_phase_pse_alignment else 0,
-                            )
-                        ),
-                        'phase_valid_queries': int(
-                            (
-                                source_phase_contrastive_diag['num_valid_queries']
-                                + target_phase_contrastive_diag['num_valid_queries']
-                            ) if enable_phase_pse_alignment else 0
-                        ),
-                        'trend_enabled': int(trend_diag['enabled'] if enable_phase_pse_alignment else 0),
-                        'trend_shared_classes': int(trend_diag['shared_classes'] if enable_phase_pse_alignment else 0),
-                    }
-            loss = (
-                loss_source
-                + config.trade_off * loss_target
-                + config.pra_point_trade_off * loss_point
-                + config.pra_trade_off * loss_relation
-                + getattr(config, "pra_contrastive_trade_off", 0.0) * loss_proto_contrastive
-                + getattr(config, "pra_phase_trade_off", 0.0) * loss_phase
-                + getattr(config, "pra_phase_contrastive_trade_off", 0.0) * loss_phase_contrastive
-                + getattr(config, "pra_phase_trend_trade_off", 0.0) * loss_trend
-            )
+            loss = loss_source + config.trade_off * loss_target
 
             # compute loss and backprop
             optimizer.zero_grad()
@@ -907,76 +158,15 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
             # Metrics
             loss_meter.update(loss.item())
-            phase_loss_meter.update(float(loss_phase.item()))
-            phase_contrastive_loss_meter.update(float(loss_phase_contrastive.item()))
-            trend_loss_meter.update(float(loss_trend.item()))
-            if relation_stats['enabled']:
-                point_loss_meter.update(float(loss_point.item()))
-                relation_loss_meter.update(float(loss_relation.item()))
-                pra_batches_enabled += 1
-            if relation_stats['active_points'] > 0:
-                pra_batches_with_points += 1
-                pra_active_points_total += relation_stats['active_points']
-            if relation_stats['active_pairs'] > 0:
-                pra_batches_with_pairs += 1
-                pra_shared_classes_total += relation_stats['shared_classes']
-                pra_active_pairs_total += relation_stats['active_pairs']
-                pra_source_samples_total += relation_stats['source_samples_used']
-                pra_target_samples_total += relation_stats['target_samples_used']
-            pra_source_classes_updated_total += relation_stats['source_classes_updated']
-            pra_target_classes_updated_total += relation_stats['target_classes_updated']
-            pra_source_bank_classes_total += relation_stats['source_bank_classes']
-            pra_target_bank_classes_total += relation_stats['target_bank_classes']
-
-            if should_disable_tqdm(config):
-                if step % config.log_step == 0:
-                    print(
-                        f"Epoch {epoch + 1}/{config.epochs} Step {step}/{steps_per_epoch}: "
-                        f"loss={loss_meter.avg:.3f}, source={float(loss_source.item()):.3f}, "
-                        f"target={float(loss_target) if isinstance(loss_target, float) else float(loss_target.item()):.3f}, "
-                        f"point={float(loss_point.item()):.5f}, edge={float(loss_relation.item()):.5f}, "
-                        f"proto_con={float(loss_proto_contrastive.item()):.5f}, "
-                        f"phase={float(loss_phase.item()):.5f}, "
-                        f"phase_con={float(loss_phase_contrastive.item()):.5f}, "
-                        f"trend={float(loss_trend.item()):.5f}"
-                    )
-            else:
-                progress_bar.set_postfix(
-                    loss=f"{loss_meter.avg:.3f}",
-                    point=f"{point_loss_meter.avg:.5f}" if point_loss_meter.count > 0 else "0.00000",
-                    rel=f"{relation_loss_meter.avg:.5f}" if relation_loss_meter.count > 0 else "0.00000",
-                    phase=f"{phase_loss_meter.avg:.5f}",
-                    trend=f"{trend_loss_meter.avg:.5f}",
-                )
+            progress_bar.set_postfix(loss=f"{loss_meter.avg:.3f}")
             all_labels.extend(sample_target_weak['label'].tolist())
             all_pseudo_labels.extend(pseudo_targets.tolist())
             all_pseudo_mask.extend(pseudo_mask.tolist())
 
             if step % config.log_step == 0:
                 writer.add_scalar("train/loss", loss_meter.val, global_step)
-                writer.add_scalar("train/loss_source", float(loss_source.item()), global_step)
-                writer.add_scalar("train/loss_target", float(loss_target) if isinstance(loss_target, float) else float(loss_target.item()), global_step)
-                writer.add_scalar("train/loss_point", float(loss_point.item()), global_step)
-                writer.add_scalar("train/loss_relation", float(loss_relation.item()), global_step)
-                writer.add_scalar("train/loss_proto_contrastive", float(loss_proto_contrastive.item()), global_step)
-                writer.add_scalar("train/loss_phase_proto", float(loss_phase.item()), global_step)
-                writer.add_scalar("train/loss_phase_contrastive", float(loss_phase_contrastive.item()), global_step)
-                writer.add_scalar("train/loss_phase_trend", float(loss_trend.item()), global_step)
                 writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
                 writer.add_scalar("train/target_updates", len(torch.nonzero(pseudo_mask)), global_step)
-                writer.add_scalar("train/pseudo_confidence", float(pseudo_diag["confidence"].mean().item()), global_step)
-                writer.add_scalar("train/pseudo_margin", float(pseudo_diag["margin"].mean().item()), global_step)
-                writer.add_scalar("train/pseudo_entropy", float(pseudo_diag["entropy"].mean().item()), global_step)
-                writer.add_scalar("train/source_avg_instability", relation_stats["source_avg_instability"], global_step)
-                writer.add_scalar("train/target_avg_instability", relation_stats["target_avg_instability"], global_step)
-                writer.add_scalar("train/source_avg_stable_ratio", relation_stats["source_avg_stable_ratio"], global_step)
-                writer.add_scalar("train/target_avg_stable_ratio", relation_stats["target_avg_stable_ratio"], global_step)
-                writer.add_scalar("train/contrastive_anchor_classes", relation_stats["contrastive_anchor_classes"], global_step)
-                writer.add_scalar("train/contrastive_valid_queries", relation_stats["contrastive_valid_queries"], global_step)
-                writer.add_scalar("train/phase_shared_keys", relation_stats["phase_shared_keys"], global_step)
-                writer.add_scalar("train/phase_anchor_keys", relation_stats["phase_anchor_keys"], global_step)
-                writer.add_scalar("train/phase_valid_queries", relation_stats["phase_valid_queries"], global_step)
-                writer.add_scalar("train/trend_shared_classes", relation_stats["trend_shared_classes"], global_step)
 
             global_step += 1
 
@@ -990,65 +180,22 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
         writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
 
-        pra_active_batches_denom = max(1, pra_batches_with_pairs)
-        pra_point_batches_denom = max(1, pra_batches_with_points)
-        avg_point_loss = point_loss_meter.avg if point_loss_meter.count > 0 else 0.0
-        avg_relation_loss = relation_loss_meter.avg if relation_loss_meter.count > 0 else 0.0
-        avg_active_points = pra_active_points_total / pra_point_batches_denom
-        avg_shared_classes = pra_shared_classes_total / pra_active_batches_denom
-        avg_active_pairs = pra_active_pairs_total / pra_active_batches_denom
-        avg_source_samples = pra_source_samples_total / pra_active_batches_denom
-        avg_target_samples = pra_target_samples_total / pra_active_batches_denom
-        avg_source_classes_updated = pra_source_classes_updated_total / max(1, steps_per_epoch)
-        avg_target_classes_updated = pra_target_classes_updated_total / max(1, steps_per_epoch)
-        avg_source_bank_classes = pra_source_bank_classes_total / max(1, steps_per_epoch)
-        avg_target_bank_classes = pra_target_bank_classes_total / max(1, steps_per_epoch)
-        writer.add_scalar("train/pra_avg_point_loss", avg_point_loss, epoch)
-        writer.add_scalar("train/pra_avg_relation_loss", avg_relation_loss, epoch)
-        writer.add_scalar("train/pra_batches_enabled", pra_batches_enabled, epoch)
-        writer.add_scalar("train/pra_batches_with_points", pra_batches_with_points, epoch)
-        writer.add_scalar("train/pra_batches_with_pairs", pra_batches_with_pairs, epoch)
-        writer.add_scalar("train/pra_avg_active_points", avg_active_points, epoch)
-        writer.add_scalar("train/pra_avg_shared_classes", avg_shared_classes, epoch)
-        writer.add_scalar("train/pra_avg_active_pairs", avg_active_pairs, epoch)
-        writer.add_scalar("train/pra_avg_source_samples", avg_source_samples, epoch)
-        writer.add_scalar("train/pra_avg_target_samples", avg_target_samples, epoch)
-        writer.add_scalar("train/pra_avg_source_classes_updated", avg_source_classes_updated, epoch)
-        writer.add_scalar("train/pra_avg_target_classes_updated", avg_target_classes_updated, epoch)
-        writer.add_scalar("train/pra_avg_source_bank_classes", avg_source_bank_classes, epoch)
-        writer.add_scalar("train/pra_avg_target_bank_classes", avg_target_bank_classes, epoch)
-        print(
-            "PRA diagnostics: "
-            f"enabled_batches={pra_batches_enabled}/{steps_per_epoch}, "
-            f"active_point_batches={pra_batches_with_points}/{steps_per_epoch}, "
-            f"active_pair_batches={pra_batches_with_pairs}/{steps_per_epoch}, "
-            f"avg_point_loss={avg_point_loss:.6f}, "
-            f"avg_relation_loss={avg_relation_loss:.6f}, "
-            f"avg_active_points={avg_active_points:.2f}, "
-            f"avg_shared_classes={avg_shared_classes:.2f}, "
-            f"avg_active_pairs={avg_active_pairs:.2f}, "
-            f"avg_source_samples={avg_source_samples:.2f}, "
-            f"avg_target_samples={avg_target_samples:.2f}, "
-            f"avg_source_classes_updated={avg_source_classes_updated:.2f}, "
-            f"avg_target_classes_updated={avg_target_classes_updated:.2f}, "
-            f"avg_source_bank_classes={avg_source_bank_classes:.2f}, "
-            f"avg_target_bank_classes={avg_target_bank_classes:.2f}"
-        )
+        writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
+        writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
 
         if config.run_validation:
             if config.output_student:
                 student.eval()
-                best_f1 = validation(best_f1, best_model_path, config, criterion, device, epoch, student, val_loader, writer)
+                best_f1 = validation(best_f1, None, config, criterion, device, epoch, student, val_loader, writer)
             else:
                 teacher.eval()
-                best_f1 = validation(best_f1, best_model_path, config, criterion, device, epoch, teacher, val_loader, writer)
+                best_f1 = validation(best_f1, None, config, criterion, device, epoch, teacher, val_loader, writer)
 
-    # If validation is disabled, fall back to the final epoch weights.
-    if not config.run_validation:
-        if config.output_student:
-            torch.save({'state_dict': student.state_dict()}, best_model_path)
-        else:
-            torch.save({'state_dict': teacher.state_dict()}, best_model_path)
+    # Save model final model 
+    if config.output_student:
+        torch.save({'state_dict': student.state_dict()}, best_model_path)
+    else:
+        torch.save({'state_dict': teacher.state_dict()}, best_model_path)
 
 def estimate_class_distribution(labels, num_classes):
     return np.bincount(labels, minlength=num_classes) / len(labels)
@@ -1056,32 +203,8 @@ def estimate_class_distribution(labels, num_classes):
 def kl_divergence(actual, estimated):
     return np.sum(actual * (np.log(actual + 1e-5) - np.log(estimated + 1e-5)))
 
-def sync_teacher_temporal_encoder(student, teacher):
-    student_encoder = getattr(student, "temporal_encoder", None)
-    teacher_encoder = getattr(teacher, "temporal_encoder", None)
-
-    if student_encoder is None or teacher_encoder is None:
-        return
-
-    student_positional_enc = getattr(student_encoder, "positional_enc", None)
-    teacher_positional_enc = getattr(teacher_encoder, "positional_enc", None)
-
-    if student_positional_enc is None or teacher_positional_enc is None:
-        return
-
-    if teacher_positional_enc.weight.shape == student_positional_enc.weight.shape:
-        teacher_encoder.max_temporal_shift = student_encoder.max_temporal_shift
-        return
-
-    teacher_encoder.max_temporal_shift = student_encoder.max_temporal_shift
-    teacher_encoder.positional_enc = nn.Embedding.from_pretrained(
-        student_positional_enc.weight.detach().clone(),
-        freeze=True,
-    ).to(student_positional_enc.weight.device)
-
 @torch.no_grad()
 def update_ema_variables(model, ema, decay=0.99):
-    sync_teacher_temporal_encoder(model, ema)
     for ema_v, model_v in zip(ema.state_dict().values(), model.state_dict().values()):
         ema_v.copy_(decay * ema_v + (1. - decay) * model_v)
 
@@ -1093,23 +216,15 @@ def get_data_loaders(splits, config, balance_source=True):
         ToTensor(),
     ])
 
-    source_aug = transforms.Compose([
-        RandomSamplePixels(config.num_pixels),
-        RandomSampleTimeSteps(config.seq_length),
-        Normalize(),
-        ToTensor(),
-    ])
-
-    target_strong_aug = transforms.Compose([
-        RandomSamplePixels(config.num_pixels),
-        RandomSampleTimeSteps(config.seq_length),
-        RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
-        Normalize(),
-        ToTensor(),
+    strong_aug = transforms.Compose([
+            RandomSamplePixels(config.num_pixels),
+            RandomSampleTimeSteps(config.seq_length),
+            Normalize(),
+            ToTensor(),
     ])
 
     source_dataset = PixelSetData(config.data_root, config.source,
-            config.classes, source_aug,
+            config.classes, strong_aug,
             indices=splits[config.source]['train'],)
 
     if balance_source:
@@ -1142,7 +257,7 @@ def get_data_loaders(splits, config, balance_source=True):
             indices=splits[config.target]['train'])
 
     strong_dataset = deepcopy(target_dataset)
-    strong_dataset.transform = target_strong_aug
+    strong_dataset.transform = strong_aug
     weak_dataset = deepcopy(target_dataset)
     weak_dataset.transform = weak_aug
     target_dataset_weak_strong = TupleDataset(weak_dataset, strong_dataset)
@@ -1197,11 +312,7 @@ def estimate_temporal_shift(model, target_loader, device, class_distribution=Non
 
     target_iter = iter(target_loader)
     shift_softmaxes, labels = [], []
-    for _ in tqdm(
-        range(sample_size),
-        desc=f'Estimating shift between [{min_shift}, {max_shift}]',
-        disable=should_disable_tqdm(),
-    ):
+    for _ in tqdm(range(sample_size), desc=f'Estimating shift between [{min_shift}, {max_shift}]'):
         sample = next(target_iter)
         labels.extend(sample['label'].tolist())
         pixels, valid_pixels, positions, extra = to_cuda(sample, device)
@@ -1215,10 +326,7 @@ def estimate_temporal_shift(model, target_loader, device, class_distribution=Non
 
     # shift_f1_scores = [f1_score(labels, shift_predictions, num_classes) for shift_predictions in all_shift_predictions]
     shift_acc_scores = [(labels == predictions).mean() for predictions in np.moveaxis(shift_predictions, 0, 1)]
-    best_acc_idx = int(np.argmax(shift_acc_scores))
-    best_acc_shift = shifts[best_acc_idx]
-    best_acc_score = float(np.max(shift_acc_scores))
-    print(f"Most accurate shift {best_acc_shift} with {best_acc_score:.3f}")
+    print(f"Most accurate shift {shifts[np.argmax(shift_acc_scores)]} with {np.max(shift_acc_scores):.3f}")
 
     p_yx = shift_softmaxes # (N, n_shifts, n_classes)
     p_y = shift_softmaxes.mean(axis=0)  # (n_shifts, n_classes)
@@ -1256,30 +364,10 @@ def estimate_temporal_shift(model, target_loader, device, class_distribution=Non
         kl_d = np.sum(c_train * (np.log(c_train + 1e-5) - np.log(one_hot_p_y + 1e-5)), axis=1)
         entropy = np.mean(np.sum(-p_yx * np.log(p_yx + 1e-5), axis=2), axis=0)
         am = kl_d + entropy
-        acc_scores = np.array(shift_acc_scores)
-        # Keep AM from jumping to a far-away shift when several candidates have similar
-        # classification quality. We only search among shifts close to the best accuracy.
-        acc_margin = 0.02
-        candidate_indices = np.where(acc_scores >= best_acc_score - acc_margin)[0]
-        if len(candidate_indices) == 0:
-            candidate_indices = np.array([best_acc_idx])
-
-        local_radius = 6
-        candidate_indices = np.array([
-            idx for idx in candidate_indices
-            if abs(shifts[idx] - best_acc_shift) <= local_radius
-        ])
-        if len(candidate_indices) == 0:
-            candidate_indices = np.array([best_acc_idx])
-
-        best_local = candidate_indices[np.argmin(am[candidate_indices])]
-        best_shift_idx = int(best_local)
+        shift_indices_ranked = np.argsort(am)  # min is best
+        best_shift_idx = shift_indices_ranked[0]
         best_shift = shifts[best_shift_idx]
-        candidate_shifts = [shifts[idx] for idx in candidate_indices.tolist()]
-        print(
-            f"Best AM Score shift {best_shift} with accuracy {shift_acc_scores[best_shift_idx]:.3f} "
-            f"(candidates near accuracy peak: {candidate_shifts})"
-        )
+        print(f"Best AM Score shift {best_shift} with accuracy {shift_acc_scores[best_shift_idx]:.3f}")
 
         return best_shift
     elif shift_estimator == 'ACC':  # for upperbound comparison
@@ -1296,7 +384,7 @@ def get_pseudo_labels(model, data_loader, device, best_shift, n=500):
     model.eval()
     pseudo_softmaxes = []
     indices = []
-    for i, sample in enumerate(tqdm(data_loader, "computing pseudo labels", disable=should_disable_tqdm())):
+    for i, sample in enumerate(tqdm(data_loader, "computing pseudo labels")):
         if n is not None and i == n:
             break
         indices.extend(sample["index"].tolist())
