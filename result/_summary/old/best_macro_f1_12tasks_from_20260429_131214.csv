@@ -1,0 +1,13 @@
+﻿Task,BestTimematch,Experiment
+FR1 -> FR2,0.7442759,timematch_FR1_to_FR2_shiftaug_off_shiftaug_off_baseline_reset
+FR1 -> DK1,0.5231949,timematch_FR1_to_DK1_shiftaug_off_shiftaug_off_baseline
+FR1 -> AT1,0.6322791,timematch_FR1_to_AT1_shiftaug_on_shiftaug_off_shiftaug_off_baseline_shiftaugsrc_daoff_reset
+FR2 -> FR1,0.6444620,timematch_FR2_to_FR1_shiftaug_on_shiftaug_off_shiftaug_off_baseline_shiftaugsrc_daoff_reset
+FR2 -> DK1,0.3588259,timematch_FR2_to_DK1_shiftaug_off_shiftaug_off_baseline_reset
+FR2 -> AT1,0.5473136,timematch_FR2_to_AT1_shiftaug_on_shiftaug_off_shiftaug_off_baseline_shiftaugsrc_daoff_reset
+DK1 -> FR1,0.5009737,timematch_DK1_to_FR1_shiftaug_on_shiftaug_off_shiftaug_off_baseline
+DK1 -> FR2,0.4055774,timematch_DK1_to_FR2_shiftaug_off_shiftaug_off_baseline_reset
+DK1 -> AT1,0.6040770,timematch_DK1_to_AT1_shiftaug_on_shiftaug_off_shiftaug_off_baseline_shiftaugsrc_daoff_reset
+AT1 -> FR1,0.6867903,timematch_AT1_to_FR1_shiftaug_off_shiftaug_off_baseline_reset
+AT1 -> FR2,0.6321117,timematch_AT1_to_FR2_shiftaug_off_shiftaug_off_baseline_reset
+AT1 -> DK1,0.6842788,timematch_AT1_to_DK1_shiftaug_off_shiftaug_off_baseline_reset

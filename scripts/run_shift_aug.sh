@@ -5,7 +5,7 @@ SOURCE_TILE=32VNH
 SOURCE=denmark/$SOURCE_TILE/2017
 
 # Train
-python train.py -e $SOURCE_MODEL --source $SOURCE --target $SOURCE --with_shift_aug --shift_aug_p 1.0
+python train.py -e $SOURCE_MODEL --source $SOURCE --target $SOURCE --with_shift_aug true --shift_aug_p 1.0
 
 # Evaluate on new domains
 TARGET_TILE=30TXT
@@ -29,7 +29,7 @@ SOURCE_TILE=30TXT
 SOURCE=france/$SOURCE_TILE/2017
 
 # Train
-python train.py -e $SOURCE_MODEL --source $SOURCE --target $SOURCE --with_shift_aug --shift_aug_p 1.0
+python train.py -e $SOURCE_MODEL --source $SOURCE --target $SOURCE --with_shift_aug true --shift_aug_p 1.0
 
 
 # Evaluate on new domains

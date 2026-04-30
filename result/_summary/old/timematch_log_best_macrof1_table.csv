@@ -1,0 +1,13 @@
+﻿Task,Timematch
+FR1 -> FR2,0.6975
+FR1 -> DK1,
+FR1 -> AT1,0.6835
+FR2 -> FR1,
+FR2 -> DK1,
+FR2 -> AT1,0.6230
+DK1 -> FR1,
+DK1 -> FR2,0.4274
+DK1 -> AT1,0.6112
+AT1 -> FR1,0.7025
+AT1 -> FR2,
+AT1 -> DK1,0.5751

@@ -1,0 +1,737 @@
+             Cross-domain Detection via Graph-induced Prototype Alignment
+
+              Minghao Xu1,2 Hang Wang1,2 Bingbing Ni1,2,3∗ Qi Tian4 Wenjun Zhang1
+                        1
+                          Shanghai Jiao Tong University, Shanghai 200240, China
+            2
+              MoE Key Lab of Artiﬁcial Intelligence, AI Institute, Shanghai Jiao Tong University
+                             3
+                               Huawei Hisilicon 4 Huawei Noah’s Ark Lab
+                  {xuminghao118, wang–hang, nibingbing, zhangwenjun}@sjtu.edu.cn
+                           nibingbing@hisilicon.com tian.qi1@huawei.com
+
+
+                           Abstract
+   Applying the knowledge of an object detector trained on
+a specific domain directly onto a new domain is risky, as
+the gap between two domains can severely degrade model’s
+performance. Furthermore, since different instances com-
+monly embody distinct modal information in object detec-                           (a)                              (b)
+tion scenario, the feature alignment of source and target
+                                                                    Figure 1. Two vehicles and corresponding region proposals from
+domain is hard to be realized. To mitigate these prob-
+                                                                    the Cityscapes [6] dataset which serves as target domain. These
+lems, we propose a Graph-induced Prototype Alignment                two vehicles reﬂect multi-modal information, e.g. distinct scale
+(GPA) framework to seek for category-level domain align-            and orientation, and the generated region proposals contain incom-
+ment via elaborate prototype representations. In the nut-           plete information of them.
+shell, more precise instance-level features are obtained
+through graph-based information propagation among re-               itself could be a laborious task in many cases. Furthermore,
+gion proposals, and, on such basis, the prototype repre-            when the model trained on a domain with abundant anno-
+sentation of each class is derived for category-level do-           tations is applied to a distinct domain with limited, even
+main alignment. In addition, in order to alleviate the neg-         unavailable, labels, it will suffer from performance decay,
+ative effect of class-imbalance on domain adaptation, we            due to the existence of domain shift [53].
+design a Class-reweighted Contrastive Loss to harmonize                 One of the extensively explored techniques to deal with
+the adaptation training process. Combining with Faster              such dilemma is Unsupervised Domain Adaptation (UDA),
+R-CNN, the proposed framework conducts feature align-               which seeks for knowledge transfer from a labeled dataset
+ment in a two-stage manner. Comprehensive results on                (source domain) to another unlabeled one (target domain).
+various cross-domain detection tasks demonstrate that our           In order to encourage domain-invariant feature representa-
+approach outperforms existing methods with a remarkable             tions, commonly adopted strategies can be roughly classi-
+margin. Our code is available at https://github.                    ﬁed into two categories: 1) Minimizing an explicitly de-
+com/ChrisAllenMing/GPA-detection.                                   ﬁned domain discrepancy measurement [25, 44, 42, 48]; 2)
+                                                                    Applying adversarial training to UDA via domain classi-
+                                                                    ﬁer [7, 43, 1, 32]. These strategies are comprehensively
+1. Introduction                                                     exploited in classiﬁcation-based tasks.
+   Following the rapid development of techniques leverag-               Besides classiﬁcation, cross-domain detection is also
+ing Deep Neural Networks (DNNs), a variety of computer-             strongly demanded in modern Computer Vision systems,
+vision-related tasks, e.g. object classiﬁcation [20, 14], ob-       including intelligent surveillance and autonomous driving,
+ject detection [35, 24], and semantic segmentation [4, 13],         in which the deployment environment, e.g. backgrounds,
+witnessed major breakthroughs in the last decade. It should         weather, illumination, changes from site to site. Previous
+be noticed that the impressive performance of these mod-            works [5, 2, 55] utilize independent or grouped region pro-
+els is established, to a great extent, on the basis of massive      posals to align source and target domain on local instance
+amounts of annotated data, of which the annotation process          level. However, since supervisory signal is lacked on target
+                                                                    domain, the generated region proposals commonly deviate
+   *The corresponding author is Bingbing Ni.                        from instances, which makes the information from primal
+
+
+
+
+                                                                 12355
+proposals improper to depict corresponding instances. In                             design a Class-reweighted Contrastive Loss to harmo-
+addition, the representation of an instance is insufﬁcient to                        nize the adaptation process among different classes.
+characterize the category it belongs to, because a single in-
+                                                                                   • Combining with the Faster R-CNN architecture, we
+stance can only reﬂect limited modal information, e.g. spe-
+                                                                                     propose a two-stage domain alignment scheme, and
+ciﬁc scale or orientation. However, the representations of
+                                                                                     it achieves state-of-the-art performance on the cross-
+instances within a category are multi-modal. Two typical
+                                                                                     domain detection tasks under various scenarios.
+examples are illustrated in Figure 1, where two vehicles ex-
+press different modal information, and the generated region
+proposals deviate from objects. These two problems make                       2. Related Work
+instance-level domain alignment trapped into dilemma. Ex-
+                                                                                  Object Detection. Current object detection methods can
+cept for these issues, in multi-class cross-domain detection
+                                                                              be roughly categorized into two classes: one-stage detectors
+tasks, class-imbalance leads to the inconsistency of domain
+                                                                              [33, 24, 34, 22] and two-stage detectors [10, 9, 35, 21, 13].
+adaptation process among different classes along training,
+                                                                              R-CNN [10] ﬁrst obtains region proposals with selective
+which greatly impairs model’s adaptation performance on
+                                                                              search and then classiﬁes each proposal. Fast R-CNN [9]
+those sample-scarce categories.
+                                                                              speeds up detection process by introducing RoI pooling.
+    Motivated by these problems, we propose the Graph-
+                                                                              Faster R-CNN [35] produces nearly cost-free region pro-
+induced Prototype Alignment (GPA) framework and em-
+                                                                              posals with Region Proposal Network. One-stage detectors,
+bed it into a two-stage detector, Faster R-CNN [35]. For the
+                                                                              such as YOLO [33] and SSD [24], directly predict category
+sake of better local alignment via region proposals, we in-
+                                                                              conﬁdence and regress bounding box based on predeﬁned
+troduce two key components, graph-based region aggrega-
+                                                                              anchors. Lin et al. [22] proposed focal loss to address
+tion and confidence-guided merging. In graph-based region
+                                                                              class-imbalance, which increases the accuracy of one-stage
+aggregation, a relation graph which takes both the location
+                                                                              detector. In this work, we choose Faster R-CNN as baseline
+and size of proposals into consideration is constructed to ag-
+                                                                              detector for its robustness and scalability.
+gregate features on instance level, such that the critical fea-
+                                                                                  Unsupervised Domain Adaptation (UDA). UDA aims
+tures of each instance are integrated. In conﬁdence-guided
+                                                                              to generalize the model learned from labeled source do-
+merging, the multi-modal information contained in various
+                                                                              main to the other unlabeled target domain. In the ﬁeld of
+instances is embodied by prototype† representations, such
+                                                                              UDA, a group of approaches focus on minimizing a spe-
+that, by utilizing the complementarity of multi-modal infor-
+                                                                              ciﬁc domain discrepancy metric, e.g., Maximum Mean Dis-
+mation, each category can be better characterized. Using
+                                                                              crepancy (MMD) [11, 44], Weighted MMD [49], Multi-
+prototypes as the proxy of different classes, category-level
+                                                                              Kernel MMD [25] and Wasserstein Distance [41]. Another
+domain alignment is performed. Furthermore, considering
+                                                                              research line is based on adversarial training, in which a do-
+that class-imbalance exists in the multi-class cross-domain
+                                                                              main classiﬁer is introduced to facilitate domain-invariance
+detection tasks, we harmonize the process of domain adap-
+                                                                              on feature level [7, 43, 26] or pixel level [40, 15, 47]. Re-
+tation via a Class-reweighted Contrastive Loss, in which
+                                                                              cently, several works [46, 54, 30, 3] utilize pseudo labels
+the sample-scarce classes are assigned with higher weights,
+                                                                              of samples from target domain to introduce discrimina-
+thus they can be better aligned during training.
+                                                                              tive information during domain alignment. Following the
+    Based on the two-stage structure of Faster R-CNN, we
+                                                                              prototype-based approaches [46, 30], we extend the usage
+also conduct feature alignment in a two-stage manner: 1)
+                                                                              of prototype to cross-domain detection tasks.
+In the ﬁrst stage, foreground and background distributions
+are separated, and class-agnostic alignment is performed on                       Cross-domain Detection. Beginning with the work of
+feature distributions of two domains; 2) In the second stage,                 Chen et al. [5], the topic of cross-domain detection arouses
+more ﬁne-grained alignment is respectively performed on                       interests in the community of UDA. In that work, a Domain
+each foreground category.                                                     Adaptive Faster R-CNN model is constructed to reduce do-
+    Our contributions can be summarized as follows:                           main discrepancy on both image and instance levels. More
+                                                                              recently, Saito et al. [38] proposed a strong-weak alignment
+   • We propose the Graph-induced Prototype Alignment
+                                                                              strategy which puts less effort on aligning globally dissimi-
+      (GPA) framework, in which more precise instance-
+                                                                              lar images. Cai et al. [2] remolded the mean teacher scheme
+      level features are obtained through graph-based region
+                                                                              for cross-domain detection. Kim et al. [18] used domain
+      aggregation, and prototype representations are derived
+                                                                              diversiﬁcation to learn feature representations which are in-
+      for category-level domain alignment.
+                                                                              variant among multiple domains. Zhu et al. [55] solved the
+   • In multi-class cross-domain detection tasks, for tack-                   questions of “where to look” and “how to align” via two
+     ling the class-imbalance during feature alignment, we                    key components, region mining and region-level alignment.
+   † Prototype is the representative embedding of all samples within the      In [17], domain adaptation problem is tackled from the per-
+same class.                                                                   spective of robust learning.
+
+
+
+
+                                                                           12356
+        source image                                                                                                   class A class B class C
+                                                                                                             source
+                                                                                                             target
+
+
+
+
+        target image
+
+
+
+
+                                                                                                                      ࣦ࢏࢔࢚ࢋ࢘           ࣦ࢏࢔࢚࢘ࢇ
+            (a)                         (b)                       (c)                       (d)                             (e)
+Figure 2. Framework overview. (a) Region proposals are generated. (b) Constructing the relation graph on produced region proposals.
+(c) More accurate instance-level feature representations are obtained through information propagation among proposals belonging to the
+same instance. (d) Prototype representation of each class is derived via conﬁdence-guided merging. (e) Performing category-level domain
+alignment through enhancing intra-class compactness and inter-class separability.
+
+    Improvements over existing methods. Although former                 of inaccurate region proposals. In addition, different in-
+works [5, 2, 55] seek for instance-level domain alignment               stances in various scenes commonly reﬂect diverse modal
+using region proposals, they fail to derive exact instance-             information, which makes it harder to align source and
+level representations and ignore the multi-modal informa-               target domain on local instance level. Another problem
+tion of various instances. In this work, we utilize relation            impairing model’s performance on cross-domain detection
+graph to obtain more precise instance-level feature repre-              tasks is class-imbalance. Concretely, those categories with
+sentations, and per-category prototypes are derived to inte-            abundant samples are trained more sufﬁciently, thus better
+grate different instances’ multi-modal information.                     aligned, while the sample-scarce categories can’t be readily
+    Graph Convolutional Network (GCN). GCN [19] has                     aligned for the lack of adaptation training.
+been explored as a manner to learn graph relations with                    To address above issues, we propose the Graph-induced
+convolution, which boosts the optimization of graph-based               Prototype Alignment (GPA) framework. In speciﬁc, do-
+model. Because of the effectiveness and interpretability of             main adaptation is realized via aligning two domains’ pro-
+GCN, it has been widely applied to various tasks, e.g., ac-             totypes, in which the critical information of each instance is
+tion recognition [50], person Re-ID [51], video understand-             aggregated via graph-based message propagation, and the
+ing [45, 52] and point cloud learning [23]. Several recent              multi-modal information reﬂected by different instances is
+works [29, 27] utilize graph model to structure multiple do-            integrated into per-category prototypes. On the basis of
+mains and categories for classiﬁcation-based domain adap-               this framework, Class-imbalance-aware Adaptation Train-
+tation. For cross-domain detection, we employ graph struc-              ing is proposed to harmonize the domain adaptation process
+ture to model the relation among region proposals.                      among different classes through assigning higher weights to
+                                                                        the sample-scarce categories.
+3. Method                                                               3.2. Graph-induced Prototype Alignment
+    In Unsupervised Domain Adaptation (UDA), source do-                    In the proposed framework, ﬁve steps are performed to
+main S = {(xSi , yiS )}Ni=1 is characterized by NS i.i.d. la-
+                          S
+                                                                        align source and target domain with category-level proto-
+                         S
+beled samples, where xi follows source distribution PS and              type representations, just as shown in Figure 2.
+yiS denotes its corresponding label. Similarly, target domain              Region proposal generation. In Faster R-CNN [35], re-
+T = {xTj }N j=1 is represented by NT i.i.d. unlabeled sam-
+              T
+                                                                        gion proposals are generated by Region Proposal Network
+ples, where xTj follows target distribution PT .                        (RPN) to characterize foreground and background. These
+                                                                        proposals provide abundant information of various instance
+3.1. Motivation and Overview                                            patterns and scene styles, while they usually contain incom-
+   In contrast to domain adaptation in classiﬁcation, its ap-           plete information of instances because of the deviation of
+plication in object detection is more sophisticated. In spe-            bounding boxes, especially on target domain. Subsequent
+ciﬁc, since supervisory signal is lacked on target domain,              operations aim to extract the exact information of each in-
+foreground instances are normally represented by a bunch                stance from region proposals.
+
+
+
+
+                                                                  12357
+            ‫ݎ‬௜                                 ‫ݎ‬௜         ‫ݎ‬௝ ᇲ         a certain instance should be aggregated. By utilizing the
+                                                                       spatial relevance provided by adjacency matrix A, propos-
+                      ‫ݎ‬௝                                     ‫݋‬௝ ᇲ
+                                                                       als’ feature embeddings F ∈ RNp ×d (d is the dimension of
+            ‫݋‬௜                                  ‫݋‬௜                     embedding) and classiﬁcation conﬁdence P ∈ RNp ×Nc (Nc
+                                                                       is the number of classes) are aggregated as follows:
+                        ‫݋‬௝
+                                                                                             = D− 12 AD− 21 F,
+                                                                                            F                                    (3)
+            (a)                                (b)
+                                                                                             = D− 21 AD− 21 P,
+                                                                                            P                                    (4)
+Figure 3. Region proposal ri interacts with another two region
+                                                                                      Np ×Np
+proposals, rj and rj  , with different sizes.                         where D ∈ R          denotes the diagonal degree matrix
+                                                                       with entries Dii = j Aij . In Eqs. 3, 4, after region aggre-
+    Constructing relation graph. We structure the propos-                       ∈ RNp ×d and P
+                                                                       gation, F                 ∈ RNp ×Nc express more precise
+als generated by RPN as a graph G = (V, E), where V rep-               instance-level information through information propagation
+resents the set of vertices corresponding to Np proposals,             among adjacent proposals. Compared with the conventional
+and E ⊆ V × V denotes the set of edges, i.e. the relations             graph convolution, we leave the learnable parameter matrix
+between proposals. Adjacency matrix A ∈ RNp ×Np is used                out, considering that explicit supervisory signal is lacked on
+to model such relationship. Intuitively, two spatially closer          the branch of domain adaptation learning. We illustrate the
+proposals more likely depict the same object and should be             beneﬁt of such operation in Sec. 5.1.
+assigned with higher connection weight. Following this in-                Confidence-guided merging. Now that the feature rep-
+tuition, a manner to obtain adjacency matrix is to apply a             resentations are aggregated on instance level, we would like
+Gaussian kernel over the Euclidean distance between the                to integrate the multi-modal information reﬂected by dif-
+centers of two proposals:                                              ferent instances into prototype representations. In order to
+                            ||o − o ||2                              highlight the modal information which is critical to a spe-
+                                  i      j 2
+               Ai,j = exp −                  ,            (1)          ciﬁc class, we employ proposals’ conﬁdence to each class
+                                    2σ 2
+                                                                       as the weight during merging, and prototypes are derived as
+where oi and oj denote the centers of the i-th and j-th pro-           the weighted mean embedding of region proposals:
+posal (1 ⩽ i, j ⩽ Np ), and σ is the standard deviation pa-
+                                                                                                 Np
+rameter which controls the sparsity of A.                                                                   T
+                                                                                                   i=1 Pik · Fi
+    However, when calculating the adjacency matrix, it is                                 ck =     N p         ,                (5)
+                                                                                                         
+unreasonable to treat proposals with various spatial sizes                                           i=1 Pik
+
+equally. Just as shown in Figure 3, though region proposal             where ck ∈ Rd denotes the prototype of class k. The de-
+pairs (ri , rj ) and (ri , rj  ) have the equal center distance,      rived prototypes serve as the proxy of each class during sub-
+their strength of relevance is obviously distinct, and (ri , rj )      sequent domain alignment.
+should possess higher connection weight in A for the larger               Category-level domain alignment. Prototype-based
+overlap between ri and rj . Intersection over Union (IoU)              domain alignment is comprehensively studied in recent lit-
+is a broadly used metric which takes both the location and             eratures [46, 30, 37]. The core idea of these methods is
+size of proposals into consideration, and the derivation of            to narrow the distance between same categories’ prototypes
+adjacency matrix with IoU is as follows:                               of two domains, which is achieved through minimizing an
+                                                                      intra-class loss, noted as Lintra . Furthermore, we pro-
+                                           ri rj
+                 Ai,j = IoU(ri , rj ) =  ,                   (2)      pose that the distance between different classes’ prototypes
+                                           ri rj
+                                                                       should also be constrained with another inter-class loss,
+where ri and rj denote the i-th and j-th region proposal re-           noted as Linter . In addition, considering the existence of
+spectively (1 ⩽ i, j ⩽ Np ). The setup of relation graph lays          class-imbalance, the inﬂuence of different classes needs to
+the foundation for information propagation among region                be adjusted. The detailed training scheme is presented in
+proposals. The comparison between above two methods of                 the next section.
+constructing adjacency matrix is presented in Sec. 5.1.
+                                                                       3.3. Class-imbalance-aware Adaptation Training
+   Graph-based region aggregation. Because of the devi-
+ation of bounding boxes, region proposals often distribute                In object detection scenario, the class-imbalance prob-
+around the ground truth objects, which leads to the inaccu-            lem commonly exists, which means the number of sam-
+racy of representing an object with single proposal. In fact,          ples belonging to different classes varies greatly. Former
+primal region proposals express incomplete information of              work [22] deems that such problem can overwhelm training
+instances. In order to achieve exact instance-level feature            and degrade detector’s performance. In cross-domain de-
+representations, the embeddings of proposals belonging to              tection tasks, class-imbalance can lead to another trouble:
+
+
+
+
+                                                                    12358
+the domain adaptation process among different classes is                 3.4. Two-stage Domain Alignment
+highly unbalanced. In particular, the feature distributions of
+                                                                            Faster R-CNN [35] is a two-stage object detector made
+sample-scarce categories can’t be readily aligned. Inspired
+                                                                         up of Region Proposal Network (RPN) and Region-based
+by Focal Loss [22] which puts more weights on hard-to-
+                                                                         CNN (R-CNN). First, based on the feature map produced by
+classify examples, we would like to assign higher weights
+                                                                         bottom convolutional layers, RPN generates class-agnostic
+to the sample-scarce categories during the training process
+                                                                         region proposals. After that, R-CNN predicts ﬁne-grained
+of domain adaptation.
+                                                                         category labels from feature vectors obtained via ROI pool-
+    Considering that the categories with abundant samples
+                                                                         ing. Each stage deﬁnes a classiﬁcation and a localization
+are trained more sufﬁciently and better aligned, especially
+                                                                         error, and the total detection loss is deﬁned as follows:
+in the early training phase, they should possess higher con-
+ﬁdence compared with sample-scarce categories. Based on
+this fact, we select a speciﬁc class’s highest conﬁdence in a                 Ldet = LRP
+                                                                                      cls
+                                                                                          N
+                                                                                            + LRP
+                                                                                               loc
+                                                                                                   N
+                                                                                                     + LRCN
+                                                                                                        cls
+                                                                                                            N
+                                                                                                              + LRCN
+                                                                                                                 loc
+                                                                                                                     N
+                                                                                                                       .          (11)
+set of proposals, and such conﬁdence value is employed to
+calculate the weight of this class:                                          Based on the two-stage structure of Faster R-CNN, we
+                                                                         also conduct domain alignment in a two-stage manner. In
+                                  ik },
+                        pk = max {P                            (6)       the ﬁrst stage, using the region proposals and correspond-
+                              1⩽i⩽Np                                     ing class-agnostic conﬁdence produced by RPN, foreground
+                                                                        and background features are separated on latent space, and
+                        (1 − pk )γ       if pk > N1c                     the foreground feature distributions are aligned as a whole.
+            αk =                                     ,         (7)
+                        0                otherwise                       In the second stage, by utilizing the more accurate bounding
+where pk is the maximum conﬁdence of class k within Np                   boxes and per-category conﬁdence, the feature distribution
+proposals, and γ is the parameter controlling the weights                of each category is respectively aligned. Applying the pro-
+among different classes. Also, we apply a hard threshold,                posed Class-reweighted Contrastive Loss to both RPN and
+1/Nc , to ﬁlter out those classes whose samples are not in-              RCNN, the overall objective is:
+cluded in the proposal set.
+   Contrastive loss [12] is commonly used in siamese net-                           min Ldet + λ1 LRP
+                                                                                                   da
+                                                                                                      N
+                                                                                                        + λ2 LRCN
+                                                                                                              da
+                                                                                                                  N
+                                                                                                                    ,             (12)
+                                                                                     Fθ
+work architecture to enhance the intra-class compactness
+and inter-class separability. Utilizing such property, we pro-           where Fθ represents the whole parameterized model, and
+pose a Class-reweighted Contrastive Loss to conduct do-                  λ1 and λ2 are the trade-off parameters between detection
+main alignment on category level, in which class weights                 and domain adaptation loss.
+{αiS }N           T Nc
+      i=0 and {αi }i=0 reweight each term in the loss (“i =
+        c
+                                                                            Implementation details. On the basis of ResNet-50 [14]
+0” denotes background). Concretely, in this loss function,
+                                                                         architecture, we implement two domain adaptation losses,
+the intra-class part requires identical classes’ prototypes to
+be as close as possible, and the inter-class part constrains the         LRP
+                                                                           da
+                                                                              N
+                                                                                and LRCN
+                                                                                       da
+                                                                                           N
+                                                                                             , through adding two domain adaptation
+distance between different classes’ prototypes to be larger              learning branches to the 7 × 7 × 1024 feature map after
+than a margin:                                                           ROI pooling and the 2048-dimensional vector after average
+                              Nc                                        pooling, respectively.
+                                      S T     S   T
+                                i=0 αi αi Φ(ci , ci )
+           Lintra (S, T ) =        Nc S T            ,         (8)
+                                     i=0 αi αi                           4. Experiments
+                                                          
+                              αiD αjD max(0, m − Φ(cD    D                  In this section, we provide comprehensive experimental
+                         
+                                                    i , cj ))
+             ′
+ Linter (D, D ) =
+                    0⩽i=j⩽Nc
+                                                                ,        results on three cross-domain detection tasks with distinct
+                                                       
+                                             αiD αjD
+                                         
+                                                                         domain shift, including Normal to Foggy, Synthetic to Real
+                                 0⩽i=j⩽Nc
+                                                                (9)      and Cross Camera Adaptation.
+                             1
+     Lda = Lintra (S, T ) +     Linter (S, S)                            4.1. Experimental Setup
+                             3                                (10)
+                   + Linter (S, T ) + Linter (T , T ) ,                      Training details. In all experiments, unless otherwise
+ where Φ(x, x′ ) = ||x − x′ ||2 calculates the Euclidean dis-            speciﬁed, all of the training and test images are resized such
+tance between two prototypes, and {cSi }N           T Nc
+                                            i=0 , {ci }i=0 de-
+                                              c
+                                                                         that their shorter side has 600 pixels. During training, for
+note the prototypes of source and target domain. D and D′                each image, 128 anchors are sampled with a positive to neg-
+represent two domains from which pairs of prototypes be-                 ative ratio of 1 : 3. ResNet-50 [14] pre-trained on ImageNet
+longing to different categories are taken. m is the margin               [36] serves as the base architecture. We adopt the SGD opti-
+term which is ﬁxed as 1.0 in all experiments. In the total               mizer (initial learning rate: 0.001, momentum: 0.9, weight
+domain adaptation loss Lda , all pairwise relations between              decay: 5 × 10−4 ) to train our model. The number of to-
+two domains’ prototypes are considered.                                  tal training epoch is set as 20, and the learning rate warm-
+
+
+
+
+                                                                      12359
+          Table 1. Experimental results (%) of Normal to Foggy cross-domain detection task, Cityscapes → Foggy Cityscapes.
+              Methods                person     rider     car     truck      bus     train    motorcycle      bicycle        mAP
+            Source-only               26.9      38.2     35.6      18.3     32.4     9.6          25.8         28.6          26.9
+              DA [5]                  29.2      40.4     43.4      19.7     38.3     28.5         23.7         32.7          32.0
+           DivMatch [18]              31.8      40.5     51.0      20.9     41.8     34.3         26.6         32.4          34.9
+            SW-DA [38]                31.8      44.3     48.9      21.0     43.8     28.0         28.9         35.8          35.3
+            SC-DA [55]                33.8      42.1     52.1      26.8     42.5     26.5         29.2         34.5          35.9
+             MTOR [2]                 30.6      41.4     44.0      21.9     38.6     40.6         28.3         35.6          35.1
+      GPA (RPN Alignment)             32.5      43.1     53.3      22.7     41.4     40.8         29.4         36.4          37.4
+     GPA (RCNN Alignment)             33.5      44.8     52.6      26.0     41.2     37.6         29.8         35.2          37.6
+    GPA (Two-stage Alignment)         32.9      46.7     54.1      24.7     45.7     41.1         32.4         38.7          39.5
+
+
+up strategy [14] is used in the ﬁrst 200 iterations of train-        our approach under three conﬁgurations all surpasses exist-
+ing. Without speciﬁc notation, the class-balancing hyper-            ing methods. In particular, an increase of 3.6% on mAP
+parameter γ is set as 2.0, and the IoU-based adjacency ma-           is achieved by Two-stage Alignment. The results showcase
+trix deﬁned in Eq. 2 is adopted. For evaluation, we report           that, under the domain shift caused by local fog noise, the
+mean average precisions (mAP) with a threshold of 0.5.               proposed graph-based region aggregation can effectively
+    In our experiments, two NVIDIA GeForce 1080 Ti                   alleviate such noise and extract critical instance-level fea-
+GPUs are used for training, and we select the batch size             tures. Take a closer look at per-category performance, our
+of 12 to ﬁt GPU memory, i.e. 6 images per GPU, consisting            approach achieves highest AP on most sample-scarce cat-
+of 3 labeled samples from source domain and 3 unlabeled              egories, i.e. rider, bus, train and motorcycle. This phe-
+samples from target domain. Our method is implemented                nomenon illustrates the effectiveness of Class-imbalance-
+with the PyTorch [31] deep learning framework.                       aware Adaptation Training on balancing the domain adap-
+    Performance comparison. We compare our approach                  tation process among different classes.
+with state-of-the-art methods to verify its effectiveness. Our
+method is evaluated under three conﬁgurations correspond-            4.3. Synthetic to Real
+ing to RPN Alignment (λ1 = 1.0, λ2 = 0.0), RCNN Align-                   Datasets. In this experiment, SIM 10k [16] dataset is
+ment (λ1 = 0.0, λ2 = 1.0) and Two-stage Alignment                    employed as source domain. SIM 10k dataset is collected
+(λ1 = 1.0, λ2 = 1.0). Former works, DA [5], DivMatch                 from the computer game Grand Theft Auto V (GTA5), and
+[18], SW-DA [38], SC-DA [55] and MTOR [2] are intro-                 it contains 10,000 images. Cityscapes [6] dataset serves as
+duced for comparison. For the sake of fair comparison, we            target domain, and experimental results are reported on its
+employ ResNet-50 as the backbone for all these methods. In           validation split.
+speciﬁc, we re-evaluate the performance of DA, DivMatch,                 Results. Table 2 reports the performance of our ap-
+SW-DA and SC-DA using their source code with default                 proach compared with other works on two datasets’ com-
+conﬁguration, and the performance of MTOR in original                mon category, car. The Two-stage Alignment conﬁguration
+paper is reported for the lack of source code.                       of our approach obtains the highest AP (47.6%) over all
+                                                                     methods. The domain shift of this task is mainly brought
+4.2. Normal to Foggy                                                 by distinct image styles. In such case, in order to achieve
+   Datasets. In this experiment, Cityscapes [6] and Foggy            satisfactory performance, it’s important to produce discrim-
+Cityscapes [39] dataset serve as source and target domain,           inative features between foreground and background on tar-
+respectively. Cityscapes dataset contains 2,975 training im-         get domain. We think that, in our framework, such goal is
+ages and 500 validation images, and we follow the operation          realized through constraining inter-class separability in the
+in [5] to get the detection annotations. Foggy Cityscapes            Class-reweighted Contrastive Loss.
+dataset simulates fog on real scenes through rendering the
+                                                                     4.4. Cross Camera Adaptation
+images from Cityscapes, and it shares the same annotations
+with Cityscapes dataset. The results are reported on the val-           Datasets. In this part, we want to explore the adaptation
+idation set of Foggy Cityscapes.                                     between real-world datasets under different camera setups.
+   Results. In Table 1, the comparisons between our ap-              KITTI [8] dataset serves as source domain, and it contains
+proach and other cross-domain detection methods are pre-             7,481 training images. Cityscapes [6] dataset is utilized as
+sented on eight categories. Source-only denotes the base-            target domain, and its validation set is used for evaluation.
+line Faster R-CNN trained with only source domain data.                 Results. The results of various methods on two datasets’
+From the table, it can be observed that the performance of           common category, car, are presented in Table 3. In this
+
+
+
+
+                                                                 12360
+Table 2. Experimental results (%) of Synthetic to Real cross-        Table 3. Experimental results (%) of Cross Camera Adaptation
+domain detection task, SIM 10k → Cityscapes.                         task, KITTI → Cityscapes.
+                 Methods                       car AP                                  Methods                         car AP
+               Source-only                       34.6                                Source-only                        37.6
+                 DA [5]                          41.9                                  DA [5]                           41.8
+              DivMatch [18]                      43.9                               DivMatch [18]                       42.7
+               SW-DA [38]                        44.6                                SW-DA [38]                         43.2
+               SC-DA [55]                        45.1                                SC-DA [55]                         43.6
+                MTOR [2]                         46.6                          GPA (RPN Alignment)                      46.9
+          GPA (RPN Alignment)                    45.1                         GPA (RCNN Alignment)                      46.1
+         GPA (RCNN Alignment)                    44.8                        GPA (Two-stage Alignment)                  47.9
+        GPA (Two-stage Alignment)                47.6
+                                                                     Table 4. Ablation study on different manners to construct relation
+                                                                     graph. (“ED”: Euclidean distance, “LP”: learnable parameter.)
+task, all three conﬁgurations of our approach exceed exist-
+                                                                            ED             IoU            LP            car AP
+ing works with a notable margin, in particular, 4.3% per-
+formance gain achieved by Two-stage Alignment. In cross                                                                  45.0
+camera adaptation tasks, due to the difference of camera se-                                                            46.1
+tups, abundant patterns exist in instances. In our method,                                                             43.2
+the multi-modal information reﬂected by various instances                                                               47.6
+is integrated into prototype representations, such that the di-                                                        43.6
+verse patterns within a speciﬁc category are considered dur-
+ing domain adaptation, which promises the superior perfor-
+mance of our approach.                                                   Effect of two-stage alignment. In this part, we demon-
+                                                                     strate the effectiveness of two-stage alignment. In different
+                                                                     cross-domain detection tasks, as shown in Table 1, 2 and
+5. Analysis                                                          3, three conﬁgurations of the proposed approach are evalu-
+   In this section, we provide more in-depth analysis of our         ated. Two single-stage conﬁgurations possess similar per-
+approach to validate the effectiveness of major components           formance, and two-stage alignment surpasses them with a
+with both quantitative and qualitative results.                      clear margin. These results illustrate that two-stage align-
+                                                                     ment boosts domain adaptation via a progressive alignment
+5.1. Ablation Study                                                  manner, i.e. from coarse-grained foreground alignment to
+                                                                     ﬁne-grained per-category alignment.
+   Effect of relation graph. In Table 4, we analyze a key
+component, i.e. the relation graph, on the task SIM 10k →            5.2. Sensitivity Analysis
+Cityscapes. The ﬁrst row directly uses the original region
+proposals produced by RPN to compute prototypes, and it                  Sensitivity of trade-off parameters λ1 , λ2 . In this ex-
+serves as the baseline. In the second row, we use an Eu-             periment, we validate our approach’s sensitivity to λ1 and
+clidean distance based relation graph deﬁned in Eq. 1, in            λ2 which trade off between detection and domain adapta-
+which σ is set as 15.0 so as to keep the sparsity of derived         tion loss. Figure 5(a) shows model’s performance under
+relation graph same as the one deﬁned by IoU. Comparing              different λ1 (λ2 ) values when the other parameter λ2 (λ1 )
+the second and fourth row, it can be observed that the con-          is ﬁxed, and all results are evaluated on the task SIM 10k
+ﬁguration using IoU based relation graph performs better,            → Cityscapes. From the line chart, it can be observed that
+which illustrates that region proposals’ size information is         the performance on target domain is not sensitive to both pa-
+essential for relation graph construction.                           rameters when they vary from 0.25 to 2.0, and apparent per-
+   In the third and ﬁfth row, we append the learnable pa-            formance gain is obtained compared with RCNN Alignment
+rameter matrix to Eqs. 3, 4, which forms the conventional            (λ1 = 0) and RPN Alignment (λ2 = 0). This phenomenon
+formula of graph convolution. After introducing such learn-          illustrates that the two-stage alignment can achieve satisfac-
+able parameter matrix, compared with the parameter-free              tory results on a wide range of trade-off parameters.
+counterparts in the second and fourth row, apparent perfor-              Sensitivity of class-balancing parameter γ. In this
+mance decay occurs. We suppose that such phenomenon                  part, we discuss the selection of parameter γ which bal-
+can be ascribed to the lack of explicit supervisory signal on        ances the domain adaptation process among different cat-
+the branch of domain adaptation learning, which makes it             egories. In Figure 5(b), we plot the performance of mod-
+hard to learn a proper feature transformation.                       els trained with different γ value on the task Cityscapes →
+
+
+
+
+                                                                  12361
+                              (a) Source-only                                                                    (b) DA                                (c) GPA (Two-stage Alignment)
+                   Figure 4. The detection results on the task SIM 10k → Cityscapes, in which Source-only, DA [5] and our method are evaluated.
+
+             49
+                                       AP( 1 ),       =1.0
+                                                                           40                                                  Source background   Source car   Target background   Target car
+                                                  2                                                     mAP( )
+                                                                           39
+             48                        AP( 2 ),   1
+                                                      =1.0
+                                                                           38
+car AP (%)
+
+
+
+
+             47
+                                                                 mAP (%)
+
+
+
+
+                                                                           37
+             46                                                            36
+                                                                           35
+                                                                                                                        RPN
+
+
+
+
+             45
+                                                                           34
+             44                                                            33
+               0       0.5    1         1.5                  2                  0   1   2       3   4            5
+                             1 /   2
+                               D                                                            E
+Figure 5. Sensitivity analysis of trade-off parameters λ1 , λ2 (left)
+and class-balancing parameter γ (right).
+                                                                                                                        RCNN
+
+
+
+
+Foggy Cityscapes. The highest mAP on target domain is
+achieved when the value of γ is around 2.0, which means
+that, under such condition, the weight assignment among
+different classes beneﬁts domain adaptation most.                                                                                    (a) Source-only            (b) GPA (Two-stage Alignment)
+                                                                                                                        Figure 6. The t-SNE [28] visualization of feature embeddings pro-
+                                                                                                                        duced by RPN and RCNN, in which Source-only model and our
+5.3. Visualization                                                                                                      method are employed for feature extraction.
+    Visualization of two-stage feature. In Figure 6, we                                                                 6. Conclusion
+utilize t-SNE [28] to visualize the feature distribution
+of source and target domain on the task SIM 10k →                                                                           In this paper, we propose the Graph-induced Prototype
+Cityscapes, in which the feature embeddings of both RPN                                                                 Alignment (GPA) framework for cross-domain detection.
+and RCNN phase are used for visualization. Compared with                                                                In the framework, the critical information of each instance is
+the Source-only model, after conducting RPN and RCNN                                                                    aggregated through graph-based message propagation, and
+alignment, the features of the same category in two domains                                                             prototype representations are derived for category-level do-
+are better aligned, and different categories’ features are sep-                                                         main alignment. Furthermore, we harmonize the process
+arated more clearly. This visually veriﬁes that the proposed                                                            of adaptation training through Class-reweighted Contrastive
+method boosts feature alignment on both stages.                                                                         Loss. Extensive experiments and analytical studies demon-
+                                                                                                                        strate the prominent performance of our approach.
+   Qualitative detection results. Figure 4 displays some
+typical detection results on the task SIM 10k → Cityscapes,                                                             7. Acknowledgement
+in which Source-only, DA [5] and our approach are evalu-
+ated. As shown in the ﬁgure, the Source-only model can                                                                     This work was supported by National Science Foun-
+poorly localize objects. DA [5] predicts bounding box more                                                              dation of China (61976137, U1611461, U19B2035) and
+accurately, but it incorrectly classiﬁes the garbage can as a                                                           STCSM(18DZ1112300). This work was also supported by
+car, and produces some false positives. Our model success-                                                              National Key Research and Development Program of China
+fully inhibits false positives, and it is able to localize objects                                                      (2016YFB1001003). Authors would like to appreciate the
+precisely even when severe occlusion occurs.                                                                            Student Innovation Center of SJTU for providing GPUs.
+
+
+
+
+                                                                                                                     12362
+References                                                              [15] Judy Hoffman, Eric Tzeng, Taesung Park, Jun-Yan Zhu,
+                                                                             Phillip Isola, Kate Saenko, Alexei A. Efros, and Trevor Dar-
+ [1] Konstantinos Bousmalis, Nathan Silberman, David Dohan,                  rell. Cycada: Cycle-consistent adversarial domain adap-
+     Dumitru Erhan, and Dilip Krishnan. Unsupervised pixel-                  tation. In International Conference on Machine Learning,
+     level domain adaptation with generative adversarial net-                2018.
+     works. In IEEE Conference on Computer Vision and Pattern
+                                                                        [16] Matthew Johnson-Roberson, Charles Barto, Rounak Mehta,
+     Recognition, 2017.
+                                                                             Sharath Nittur Sridhar, Karl Rosaen, and Ram Vasudevan.
+ [2] Qi Cai, Yingwei Pan, Chong-Wah Ngo, Xinmei Tian, Lingyu                 Driving in the matrix: Can virtual worlds replace human-
+     Duan, and Ting Yao. Exploring object relation in mean                   generated annotations for real world tasks? In IEEE Inter-
+     teacher for cross-domain detection. In IEEE Conference on               national Conference on Robotics and Automation, 2017.
+     Computer Vision and Pattern Recognition, 2019.
+                                                                        [17] Mehran Khodabandeh, Arash Vahdat, Mani Ranjbar, and
+ [3] Chaoqi Chen, Weiping Xie, Wenbing Huang, Yu Rong,
+                                                                             William G. Macready. A robust learning approach to domain
+     Xinghao Ding, Yue Huang, Tingyang Xu, and Junzhou
+                                                                             adaptive object detection. In IEEE International Conference
+     Huang. Progressive feature alignment for unsupervised do-
+                                                                             on Computer Vision, 2019.
+     main adaptation. In IEEE Conference on Computer Vision
+     and Pattern Recognition, 2019.                                     [18] Taekyung Kim, Minki Jeong, Seunghyeon Kim, Seokeon
+                                                                             Choi, and Changick Kim. Diversify and match: A domain
+ [4] Liang-Chieh Chen, George Papandreou, Iasonas Kokkinos,
+                                                                             adaptive representation learning paradigm for object detec-
+     Kevin Murphy, and Alan L. Yuille. Semantic image seg-
+                                                                             tion. In IEEE Conference on Computer Vision and Pattern
+     mentation with deep convolutional nets and fully connected
+                                                                             Recognition, 2019.
+     crfs. In International Conference on Learning Representa-
+     tions, 2015.                                                       [19] Thomas N. Kipf and Max Welling. Semi-supervised classi-
+                                                                             ﬁcation with graph convolutional networks. In International
+ [5] Yuhua Chen, Wen Li, Christos Sakaridis, Dengxin Dai, and
+                                                                             Conference on Learning Representations, 2017.
+     Luc Van Gool. Domain adaptive faster R-CNN for object de-
+     tection in the wild. In IEEE Conference on Computer Vision         [20] Alex Krizhevsky, Ilya Sutskever, and Geoffrey E. Hinton.
+     and Pattern Recognition, 2018.                                          Imagenet classiﬁcation with deep convolutional neural net-
+                                                                             works. In Advances in Neural Information Processing Sys-
+ [6] Marius Cordts, Mohamed Omran, Sebastian Ramos, Timo
+                                                                             tems, 2012.
+     Rehfeld, Markus Enzweiler, Rodrigo Benenson, Uwe
+     Franke, Stefan Roth, and Bernt Schiele. The cityscapes             [21] Tsung-Yi Lin, Piotr Dollár, Ross B. Girshick, Kaiming He,
+     dataset for semantic urban scene understanding. In IEEE                 Bharath Hariharan, and Serge J. Belongie. Feature pyramid
+     Conference on Computer Vision and Pattern Recognition,                  networks for object detection. In IEEE Conference on Com-
+     2016.                                                                   puter Vision and Pattern Recognition, 2017.
+ [7] Yaroslav Ganin and Victor S. Lempitsky. Unsupervised do-           [22] Tsung-Yi Lin, Priya Goyal, Ross B. Girshick, Kaiming He,
+     main adaptation by backpropagation. In International Con-               and Piotr Dollár. Focal loss for dense object detection. In
+     ference on Machine Learning, 2015.                                      IEEE International Conference on Computer Vision, 2017.
+ [8] Andreas Geiger, Philip Lenz, and Raquel Urtasun. Are we            [23] Jinxian Liu, Bingbing Ni, Caiyuan Li, Jiancheng Yang, and
+     ready for autonomous driving? the KITTI vision benchmark                Qi Tian. Dynamic points agglomeration for hierarchical
+     suite. In IEEE Conference on Computer Vision and Pattern                point sets learning. In IEEE International Conference on
+     Recognition, 2012.                                                      Computer Vision, 2019.
+ [9] Ross B. Girshick. Fast R-CNN. In IEEE International Con-           [24] Wei Liu, Dragomir Anguelov, Dumitru Erhan, Christian
+     ference on Computer Vision, 2015.                                       Szegedy, Scott E. Reed, Cheng-Yang Fu, and Alexander C.
+[10] Ross B. Girshick, Jeff Donahue, Trevor Darrell, and Jitendra            Berg. SSD: single shot multibox detector. In European Con-
+     Malik. Rich feature hierarchies for accurate object detection           ference on Computer Vision, 2016.
+     and semantic segmentation. In IEEE Conference on Com-              [25] Mingsheng Long, Yue Cao, Jianmin Wang, and Michael I.
+     puter Vision and Pattern Recognition, 2014.                             Jordan. Learning transferable features with deep adaptation
+[11] Arthur Gretton, Karsten M. Borgwardt, Malte J. Rasch,                   networks. In International Conference on Machine Learn-
+     Bernhard Schölkopf, and Alexander J. Smola. A kernel two-              ing, 2015.
+     sample test. Journal of Machine Learning Research, 13:723–         [26] Mingsheng Long, Zhangjie Cao, Jianmin Wang, and
+     773, 2012.                                                              Michael I. Jordan. Conditional adversarial domain adapta-
+[12] Raia Hadsell, Sumit Chopra, and Yann LeCun. Dimensional-                tion. In Advances in Neural Information Processing Systems,
+     ity reduction by learning an invariant mapping. In IEEE Con-            2018.
+     ference on Computer Vision and Pattern Recognition, 2006.          [27] Xinhong Ma, Tianzhu Zhang, and Changsheng Xu. GCAN:
+[13] Kaiming He, Georgia Gkioxari, Piotr Dollár, and Ross B.                graph convolutional adversarial network for unsupervised
+     Girshick. Mask R-CNN. In IEEE International Conference                  domain adaptation. In IEEE Conference on Computer Vision
+     on Computer Vision, 2017.                                               and Pattern Recognition, 2019.
+[14] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.             [28] Laurens Van Der Maaten and Geoffrey Hinton. Visualizing
+     Deep residual learning for image recognition. In IEEE Con-              data using t-sne. Journal of Machine Learning Research,
+     ference on Computer Vision and Pattern Recognition, 2016.               9(2605):2579–2605, 2008.
+
+
+
+
+                                                                     12363
+[29] Massimiliano Mancini, Samuel Rota Bulò, Barbara Caputo,         [44] Eric Tzeng, Judy Hoffman, Ning Zhang, Kate Saenko, and
+     and Elisa Ricci. Adagraph: Unifying predictive and continu-           Trevor Darrell. Deep domain confusion: Maximizing for
+     ous domain adaptation through graphs. In IEEE Conference              domain invariance. CoRR, abs/1412.3474, 2014.
+     on Computer Vision and Pattern Recognition, 2019.                [45] Xiaolong Wang and Abhinav Gupta. Videos as space-time
+[30] Yingwei Pan, Ting Yao, Yehao Li, Yu Wang, Chong-Wah                   region graphs. In European Conference on Computer Vision,
+     Ngo, and Tao Mei. Transferrable prototypical networks for             2018.
+     unsupervised domain adaptation. In IEEE Conference on            [46] Shaoan Xie, Zibin Zheng, Liang Chen, and Chuan Chen.
+     Computer Vision and Pattern Recognition, 2019.                        Learning semantic representations for unsupervised domain
+[31] Adam Paszke, Sam Gross, Soumith Chintala, Gregory                     adaptation. In International Conference on Machine Learn-
+     Chanan, Edward Yang, Zachary DeVito, Zeming Lin, Al-                  ing, 2018.
+     ban Desmaison, Luca Antiga, and Adam Lerer. Automatic            [47] Minghao Xu, Jian Zhang, Bingbing Ni, Teng Li, Chengjie
+     differentiation in pytorch. In NeurIPS Workshop, 2017.                Wang, Qi Tian, and Wenjun Zhang. Adversarial domain
+[32] Zhongyi Pei, Zhangjie Cao, Mingsheng Long, and Jianmin                adaptation with domain mixup. CoRR, abs/1912.01805,
+     Wang. Multi-adversarial domain adaptation. In AAAI Con-               2019.
+     ference on Artificial Intelligence, 2018.                        [48] Hongliang Yan, Yukang Ding, Peihua Li, Qilong Wang,
+[33] Joseph Redmon, Santosh Kumar Divvala, Ross B. Girshick,               Yong Xu, and Wangmeng Zuo. Mind the class weight bias:
+     and Ali Farhadi. You only look once: Uniﬁed, real-time ob-            Weighted maximum mean discrepancy for unsupervised do-
+     ject detection. In IEEE Conference on Computer Vision and             main adaptation. In IEEE Conference on Computer Vision
+     Pattern Recognition, 2016.                                            and Pattern Recognition, 2017.
+[34] Joseph Redmon and Ali Farhadi. YOLO9000: better, faster,         [49] Hongliang Yan, Yukang Ding, Peihua Li, Qilong Wang,
+     stronger. In IEEE Conference on Computer Vision and Pat-              Yong Xu, and Wangmeng Zuo. Mind the class weight bias:
+     tern Recognition, 2017.                                               Weighted maximum mean discrepancy for unsupervised do-
+[35] Shaoqing Ren, Kaiming He, Ross B. Girshick, and Jian Sun.             main adaptation. In IEEE Conference on Computer Vision
+     Faster R-CNN: towards real-time object detection with re-             and Pattern Recognition, 2017.
+     gion proposal networks. In Advances in Neural Information        [50] Sijie Yan, Yuanjun Xiong, and Dahua Lin. Spatial tempo-
+     Processing Systems, 2015.                                             ral graph convolutional networks for skeleton-based action
+[36] Olga Russakovsky, Jia Deng, Hao Su, Jonathan Krause, San-             recognition. In AAAI Conference on Artificial Intelligence,
+     jeev Satheesh, Sean Ma, Zhiheng Huang, Andrej Karpa-                  2018.
+     thy, Aditya Khosla, Michael S. Bernstein, Alexander C.           [51] Yichao Yan, Qiang Zhang, Bingbing Ni, Wendong Zhang,
+     Berg, and Fei-Fei Li. Imagenet large scale visual recogni-            Minghao Xu, and Xiaokang Yang. Learning context graph
+     tion challenge. International Journal of Computer Vision,             for person search. In IEEE Conference on Computer Vision
+     115(3):211–252, 2015.                                                 and Pattern Recognition, 2019.
+[37] Kuniaki Saito, Donghyun Kim, Stan Sclaroff, Trevor Dar-          [52] Yichao Yan, Ning Zhuang, Bingbing Ni, Jian Zhang, Ming-
+     rell, and Kate Saenko. Semi-supervised domain adaptation              hao Xu, Qiang Zhang, Zhang Zheng, Shuo Cheng, Qi Tian,
+     via minimax entropy. In IEEE International Conference on              Yi Xu, Xiaokang Yang, and Wenjun Zhang. Fine-grained
+     Computer Vision, 2019.                                                video captioning via graph-based multi-granularity interac-
+[38] Kuniaki Saito, Yoshitaka Ushiku, Tatsuya Harada, and Kate             tion learning. IEEE Transactions on Pattern Analysis and
+     Saenko. Strong-weak distribution alignment for adaptive ob-           Machine Intelligence, 2019.
+     ject detection. In IEEE Conference on Computer Vision and        [53] Jason Yosinski, Jeff Clune, Yoshua Bengio, and Hod Lipson.
+     Pattern Recognition, 2019.                                            How transferable are features in deep neural networks? In
+[39] Christos Sakaridis, Dengxin Dai, and Luc Van Gool. Seman-             Advances in Neural Information Processing Systems, 2014.
+     tic foggy scene understanding with synthetic data. Interna-      [54] Weichen Zhang, Wanli Ouyang, Wen Li, and Dong Xu. Col-
+     tional Journal of Computer Vision, 126(9):973–992, 2018.              laborative and adversarial network for unsupervised domain
+[40] Swami Sankaranarayanan, Yogesh Balaji, Carlos D. Castillo,            adaptation. In IEEE Conference on Computer Vision and
+     and Rama Chellappa. Generate to adapt: Aligning domains               Pattern Recognition, 2018.
+     using generative adversarial networks. In IEEE Conference        [55] Xinge Zhu, Jiangmiao Pang, Ceyuan Yang, Jianping Shi, and
+     on Computer Vision and Pattern Recognition, 2018.                     Dahua Lin. Adapting object detectors via selective cross-
+[41] Jian Shen, Yanru Qu, Weinan Zhang, and Yong Yu. Wasser-               domain alignment. In IEEE Conference on Computer Vision
+     stein distance guided representation learning for domain              and Pattern Recognition, 2019.
+     adaptation. In AAAI Conference on Artificial Intelligence,
+     2018.
+[42] Baochen Sun and Kate Saenko. Deep CORAL: correlation
+     alignment for deep domain adaptation. In ECCV Workshop,
+     2016.
+[43] Eric Tzeng, Judy Hoffman, Kate Saenko, and Trevor Darrell.
+     Adversarial discriminative domain adaptation. In IEEE Con-
+     ference on Computer Vision and Pattern Recognition, 2017.
+
+
+
+
+                                                                   12364
+

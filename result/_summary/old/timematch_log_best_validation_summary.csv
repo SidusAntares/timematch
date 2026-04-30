@@ -1,0 +1,13 @@
+﻿Task,BestValidationMacroF1,BestTestMacroF1IfAny,SourceLog
+FR1 -> FR2,0.6975,0.6914,run_timematch_30TXT_gpu1.log
+FR1 -> DK1,,,
+FR1 -> AT1,0.6835,0.6436,run_timematch_30TXT_gpu1.log
+FR2 -> FR1,,,
+FR2 -> DK1,,,
+FR2 -> AT1,0.6230,0.6045,run_timematch_31TCJ_gpu2.log
+DK1 -> FR1,,,
+DK1 -> FR2,0.4274,0.4194,run_timematch_32VNH_gpu0.log
+DK1 -> AT1,0.6112,0.5909,run_timematch_32VNH_gpu0.log
+AT1 -> FR1,0.7025,0.6747,run_timematch_33UVP_gpu3.log
+AT1 -> FR2,,,
+AT1 -> DK1,0.5751,0.5512,run_timematch_33UVP_gpu3.log

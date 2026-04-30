@@ -1,0 +1,1026 @@
+              BAPA-Net: Boundary Adaptation and Prototype Alignment for
+                        Cross-domain Semantic Segmentation
+
+                   Yahao Liu Jinhong Deng Xinchen Gao Wen Li * Lixin Duan
+            Data Intelligence Group, University of Electronic Science and Technology of China
+                         {lyhaolive, jhdeng1997, gxc0327, liwenbnu, lxduan}@gmail.com
+
+
+
+                           Abstract
+
+   Existing cross-domain semantic segmentation methods
+usually focus on the overall segmentation results of whole
+objects but neglect the importance of object boundaries.
+In this work, we find that the segmentation performance
+can be considerably boosted if we treat object boundaries
+properly. For that, we propose a novel method called
+BAPA-Net, which is based on a convolutional neural net-
+work via Boundary Adaptation and Prototype Alignment,                             (a)                                 (b)
+under the unsupervised domain adaptation setting. Specif-                GT              UDA                 GT              UDA
+ically, we first construct additional images by pasting ob-
+jects from source images to target images, and we de-
+velop a so-called boundary adaptation module to weigh
+each pixel based on its distance to the nearest boundary
+pixel of those pasted source objects. Moreover, we pro-
+pose another prototype alignment module to reduce the
+domain mismatch by minimizing distances between the                               (c)                                 (d)
+class prototypes of the source and target domains, where
+                                                                  Figure 1. Comparisons between (a) the ground truth annotations
+boundaries are removed to avoid domain confusion dur-
+                                                                  and (b) the segmentation result of an existing unsupervised domain
+ing prototype calculation. By integrating the boundary
+                                                                  adaptation method [57] of a sample target image. It is obvious that
+adaptation and prototype alignment, we are able to train          the segmentation results of boundary pixels are worse than the in-
+a discriminative and domain-invariant model for cross-            ner pixels (e.g., the inner part of the rider in (c) and the vegetation
+domain semantic segmentation. We conduct extensive ex-            in (d) are predicted perfectly, while the boundary pixels are not).
+periments on the benchmark datasets of urban scenes (i.e.,
+GTA5→Cityscapes and SYNTHIA→Cityscapes). And the
+promising results clearly show the effectiveness of our           images and accurate annotations to train high-performance
+BAPA-Net method over existing state-of-the-art for cross-         models. Compared with image recognition, semantic seg-
+domain semantic segmentation. Our implementation is               mentation is more complex and aims at classifying each
+available at https://github.com/manmanjun/BAPA-Net.               pixel in an image. Therefore, collecting the annotations for
+                                                                  segmentation is an extremely expensive and laborious pro-
+                                                                  cess (e.g., 90 minutes per image for Cityscapes [7]).
+1. Introduction                                                      A natural alternative is to collect the well-annotated syn-
+                                                                  thetic data from the simulation platform where it can auto-
+    Because of the powerful representation ability of deep
+                                                                  matically render the various scenes (e.g., sunny, rain, foggy
+convolutional neural networks [26], it has deeply boosted
+                                                                  street) with a much lower cost. For example, [43] builds
+the performance of the computer vision tasks including im-
+                                                                  a large-scale urban scene dataset obtained from the GTA5
+age recognition [45, 21], object detection [16, 32], seman-
+                                                                  video game. However, the trained model on such syn-
+tic segmentation [33, 63, 3], etc. They all require plentiful
+                                                                  thetic data will suffer from a significant performance drop
+  * The corresponding author                                      as there exists a considerable domain discrepancy between
+
+
+
+                                                                8801
+source and target domains. A variety of unsupervised do-               • We conduct extensive experiments on the benchmark
+main adaptation methods are proposed to maximally elim-                  settings for urban scenes (i.e., GTA5→Cityscapes and
+inate the domain discrepancy through adversarial feature                 SYNTHIA→Cityscapes), and the experimental results
+learning [22, 6, 13], entropy minimization [52, 53, 5], self-            demonstrate the effectiveness of our proposed method.
+training [65, 66, 31, 11], etc.
+    However, we observe that current state-of-the-art meth-       2. Related Work
+ods often focus on the overall segmentation results of whole
+                                                                  Unsupervised domain adaptation. Conventional machine
+objects but neglect the importance of object boundaries.
+                                                                  learning algorithms rely on a hypothesis that the training
+Taking the Fig. 1 as an example, some pixels along the
+                                                                  and testing data are drawn from the same distribution. How-
+boundaries of the person and tree are wrongly classified.
+                                                                  ever, this hypothesis typically does not hold in practice. The
+The reason is that the near-boundary pixels and inner-object
+                                                                  unsupervised domain adaptation methods [1, 23] are pro-
+pixels are different, as the receptive field of the bound-
+                                                                  posed to address this issue by eliminating the domain dis-
+ary sample might contain pixels from other classes, mak-
+                                                                  crepancy between source and target domains. Many previ-
+ing near-boundary pixels difficult to classify. This becomes
+                                                                  ous works try to minimize the Maximum Mean Discrep-
+even worse in the Unsupervised Domain Adaptation (UDA)
+                                                                  ancy [20, 36, 34], KL-divergence [47], optimal transport
+scenario, where a considerable distribution mismatch exists
+                                                                  distance [8, 9], etc. Recent methods aim to improve the do-
+between source and target domains.
+                                                                  main adaptability of deep neural networks via adversarial
+    Therefore, the segmentation performance can be con-
+                                                                  training [35, 62]. Other methods include subspace align-
+siderably boosted if we treat object boundaries prop-
+                                                                  ment [17], geodesic flow kernel [18], transfer multiple ker-
+erly.    To achieve this, we propose a novel method
+                                                                  nel learning [14], etc.
+called Boundary Adaptation and Prototype Alignment Net-
+                                                                  Semantic segmentation. As a pixel-level prediction task,
+work (BAPA-Net). Specifically, we first construct addi-
+                                                                  semantic segmentation energizes many visual applications
+tional images by pasting objects from source images to tar-
+                                                                  such as medical diagnosis, autonomous driving, security.
+get images, and we develop a so-called boundary adap-
+                                                                  In 2014, Long [33] proposed the Fully Convolutional Net-
+tation module to weigh each pixel based on its distance
+                                                                  work (FCN) that replaces the fully connected layer by fully
+to the nearest boundary pixel of those pasted source ob-
+                                                                  convolutional layer so that the network can directly out-
+jects. Moreover, we propose another prototype alignment
+                                                                  put the segmented mask map. With the development of
+module to reduce the domain mismatch by minimizing dis-
+                                                                  dilated convolution [12], Deeplab [3, 4] and PSPNet [63]
+tances between the class prototypes of the source and tar-
+                                                                  propose to capture more contextual information of images
+get domains, where boundaries are removed to avoid do-
+                                                                  through multi-scale feature fusion. Recently, the research
+main confusion during prototype calculation. By inte-
+                                                                  community pays more attention to the construction of the
+grating the boundary adaptation and prototype alignment,
+                                                                  context-based attention mechanism and computational effi-
+we are able to train a discriminative and domain-invariant
+                                                                  ciency, such as RANet [56], EMANet [29]. In addition, the
+model for cross-domain semantic segmentation. The pro-
+                                                                  fine-grained segmentation of category boundaries [2, 28]
+posed method outperforms the state-of-the-art counterparts
+                                                                  has become one of the most challenging difficulties in cur-
+by a large margin on the benchmarks of GTA5→Cityscapes
+                                                                  rent semantic segmentation tasks. In this work, we utilize
+and SYNTHIA→Cityscapes respectively, which verifies the
+                                                                  DeepLab V2 [3] with ResNet101 [21] as our baseline archi-
+effectiveness of our BAPA-Net.
+                                                                  tectures for semantic segmentation.
+    The main contributions of our work can be summarized
+                                                                  Cross-domain semantic segmentation. Due to the annota-
+as follows:
+                                                                  tions for semantic segmentation are costly and non-trivial to
+  • We reveal a critical finding that existing cross-domain       acquire by human labor, how to use models trained on sim-
+    semantic segmentation methods neglect the impor-              ulated images to achieve good performance in real scenes
+    tance of object boundary. Thus we propose a novel             has gradually become a hot research topic. To address
+    approach called Boundary Adaptation and Proto-                the domain shift problem, style transfer [15, 19, 42] has
+    type Alignment (BAPA-Net) to maximally exploit the            been used to align domain distribution on input layer (i.e.,
+    boundary properly.                                            pixel space). Besides, GAN [50, 38, 37, 13, 6, 54, 25]
+                                                                  related works have been used to align domain distribu-
+  • We develop a so-called boundary adaptation module to          tion on feature and output space, respectively. [19] pro-
+    weigh each pixel around the boundary and a new pro-           poses a progressive adaptation method to alleviate the do-
+    totype alignment module to build more reliable proto-         main shift by controlling the degree of style translation
+    types by removing the domain confused boundaries so           from the source domain to the target domain. [50] lever-
+    that the domain mismatch between source and target            ages a discriminator to distinguish the outputs from the seg-
+    domains can be reduced effectively.                           mentation network with different domain inputs so that the
+
+
+
+                                                                8802
+                                                                        troids of two domains in the feature space in order to learn
+                                                                        domain-invariant features.
+                                                                           Simultaneously improving both abilities in one model is
+                    +                     =                             not easy, since they often depend on each other. For exam-
+                                                                        ple, the generated boundary samples should also be domain-
+                                                                        invariant. Otherwise, the segmentation model might be bi-
+        !"                     !#                     !$                ased. Also, when aligning the prototypes, since the target
+Figure 2. Illustration of the CutMix operation. The orange parts        domain images are unlabeled and only pseudo-labels can be
+are the pasted pixels from the source image. In this work, we cut       used, the unreliable boundary samples should be excluded.
+all the pixels of half classes from the labeled source images Xs ,      We present the details of our BAPA-Net on addressing these
+and paste them to the unlabeled target image Xt to construct the        issues in the following. The overall structure is shown in
+mixed image Xm .                                                        Fig. 3.
+
+                                                                        3.1. Boundary Adaptation
+model can minimize the domain discrepancy. [39, 40] use
+                   +
+the image-level category                  = target image
+                            information about                               As aforementioned, correctly predicting the boundary
+to construct curriculums for the domain adaptation prob-                samples is challenging for the cross-domain semantic seg-
+lem. In addition, some methods originating from semi-                   mentation task. Therefore, we propose to enhance the
+supervised learning are also used to address this prob-                 model’s discriminability by enforcing the model to focus
+lem, such as entropy minimization [52, 53], self-supervised             more on the boundary samples.
+training [65, 66, 31, 64, 54, 58, 24, 41, 27]. Recently, [49]               However, in the cross-domain semantic segmentation
+utilizes the CutMix data augmentation method to address                 task, only images in the source domain are annotated, and
+the cross-domain semantic segmentation. Different from                  the images in the target domain are totally unlabeled. While
+those works, we provide a new perspective from the bound-            (d)we  are able to find boundary samples in source images ac-
+                                                                        cording to their labels, it is not desirable to enforce the
+ary adaptation and prototype alignment to address the cross-
+domain semantic segmentation problem.                                   model to focus on these samples, since this would inevitably
+                                                                        make the model to be biased to the source domain. To
+                                                                        this end, we propose to employ the recent proposed CutMix
+3. Methodology
+                                                                        method [60] to generate domain-mixed boundary samples.
+   In this section, we explain our proposed approach                    Domain-mixed boundary sample generation. The Cut-
+BAPA-Net in detail. Given a labeled source domain and                   Mix employs a cut-paste data augmentation strategy for se-
+an unlabeled target domain, our goal is to learn a robust se-           mantic segmentation. In particular, they expand the training
+mantic segmentation model that works well not only for the              set by randomly mixing a labeled image and an unlabeled
+source domain but also for the target domain. Formally, let             image. At each time, they cut all the pixels of some random
+us denote DS = {Xs , Ys } as the source domain training                 classes from the labeled images, and paste them to the unla-
+samples, where Xs = {Xsi |N   s                  i Ns
+                            i=1 } and Ys = {Ys |i=1 }, each
+                                                                        beled image, and append the mixed image into the training
+Xs is a source image, Ys ∈ C, C = {1, ..., C} is the corre-             set to train the segmentation model.
+sponding pixel-level annotation with C being the number of                  Formally, given a labeled source image Xs and an unla-
+class. Accordingly, we denote DT = {Xt } as the target do-              beled target image Xt , let us denote Mmask as the selection
+main, and Xt = {Xti |Ni=1 } where each Xt is a target image
+                        t                                               indicator for the pixels of randomly selected half classes
+                                                                                           (h,w)
+for which the annotation is unavailable.                                in Xs , where Mmask = 1 if the pixel, located at the h-th
+   A good cross-domain semantic segmentation model                      row and w-th column, belongs to the selected classes, and
+                                                                           (h,w)
+should be both discriminative and domain-invariant. Good                Mmask = 0 otherwise. The mixed image can be presented
+discriminability means the model is able to distinguish sam-            as:
+ples from different classes, especially for boundary sam-
+ples. And the domain-invariant ability ensures the model                         \begin {split} \begin {array}{l} X_{m}=M_{mask} \odot X_{s}+(1-M_{mask}) \odot X_{t} , \label {eq:mixed} \end {array} \end {split}    (1)
+performs well on both domains.
+   For this purpose, we propose a Boundary Adaptation and               where ⊙ is the point-wise multiplication on each color
+Prototype Alignment Network (BAPA-Net) to enhance the                   channel of the image. See Fig. 2 for the illustration of the
+segmentation model on both abilities. On the one hand, we               CutMix operation.
+propose a boundary adaptation approach, in which we gen-                    To assign labels to the mixed image Xm , [49] employ a
+erate additional boundary samples and enhance the model                 Mean Teacher (MT) [48] model to assign pseudo-labels to
+discriminability. On the other hand, we design a prototype              the target image. In particular, they feed the target image Xt
+adaptation approach to minimize the class prototype cen-                to the teacher segmentation model to obtain its pseudo-label
+
+
+
+                                                                     8803
+                                                                                                                                                                                                                                                                                                                                                             Class 1
+                                                                                                     PA                                                                                                                                                                                                                                                      Class 2
+
+                                                                                                                                                                                                                                                                                                                                        …
+                                                                                   ℱ                                     ℱ                                                      𝑀                                                                                                                                                                            Class C-1
+
+                                                                                                                                                                                                                                                                                                                                                             Class C
+
+
+                                                                                                                                                                                                                                                          𝑀
+
+                                                                                                                                                                                                                                                                                                                𝒑
+                                                                                                                                                                         𝒔       𝒃
+    𝑋
+                                                                                                                                                                                                                                                                                                                                                             Class 1
+
+                                                                                                                                                                                                                                                                                                                                                             Class 2
+
+                                                                                                                                                                                                                    𝒎                                                                                                                   …
+                                                                                                                                                                                                                                                                                                                                                             Class C-1
+
+                                                                                                                                                                                                                                                                                                                                                             Class C
+   𝑋
+                                                                                                                                                                         Boundary Adaptation
+                                                                                                                                                                                                                                                                                          Prototype Alignment
+                                                                                                                                                                                (BA)
+                                                                                                                                                                                                                                                                                                  (PA)
+
+Figure 3. Overview of our proposed Boundary Adaptation and Prototype Alignment Network (BAPA-Net). The data flows of the source
+and mixed images are denoted by green and red lines respectively. The source image and the mixed image are used to optimize the semantic
+segmentation loss under the supervision of source ground truth and the mixed pseudo labels (i.e., Ls and Lm in Eq. (9)). Our boundary
+adaptation module leverages the distance map Md to reweight the cross-entropy loss for mixed image (i.e., Lb ). The prototype alignment
+module reduces the domain mismatch by minimizing the distance of class prototypes between source image Xs and mixed images Xm
+with boundary removal (i.e., Lp ). We train our BAPA-Net in an end-to-end manner.
+
+Ŷt , then the labels for the mixed image Xm can be obtained                                                                                                             the segmentation loss. Specifically, we first calculate a dis-
+using the same cut-paste operator:                                                                                                                                       tance map to describe the distance of each pixel to its near-
+                                                                                                                                                                         est cut-paste boundary. Let us denote Xb as all the pixels
+          \begin {split} \begin {array}{l} {Y}_{m}=M_{mask} \odot {Y}_{s}+(1-M_{mask}) \odot \hat {Y}_{t} , \label {eq:mixed_label} \end {array} \end {split}    (2)     exactly located at the cut-paste boundary. Given a pixel lo-
+                                                                                                                                                                                                                             (h,w)
+                                                                                                                                                                         cated at coordinate (h, w) of Xm , denoted as Xm , its
+After obtaining (Xm , Ym ), [49] uses both the original                                                                                                                  distance map value can be calculated as:
+source images and the mixed images to train the seman-
+tic segmentation model with the cross-entropy loss. Please                                                                                                                                                    \begin {split} M_d^{(h, w)} = \min _{x \in \mathcal {X}_b} {d}(X_m^{(h, w)}, x), \label {eq:distance_map} \end {split}                                   (3)
+refer to [49] for the details.
+    We employ CutMix for boundary adaptation to produce                                                                                                                  where d(·, ·) is the Euclidean distance of the coordinates of
+the so-called domain-mixed boundary samples. The proce-                                                                                                                  two pixels.
+dure is as follows: We first randomly paste some source                                                                                                                    Then, the boundary weight map Mb can be obtained as:
+objects to target images, and the pixels next to the do-
+main boundaries of the pasted objects are from different
+domains and often from different classes. When extracting                                                                                                                             \begin {split} M_b = \left (1 -\frac {M_{d}}{\max (M_{d})}\right )\odot \mathbbm {1}\left [{M}_{d} < \lambda _{d}\right ], \label {eq:boundary_weight} \end {split}              (4)
+features using convolutional neural networks, the receptive
+fields of those pixels may cover parts of the adjacent source                                                                                                            where max(Md ) denotes the maximum value of Md , and
+and target objects, making the extracted features contain                                                                                                                1[·] is an indicator function. In other words, we consider
+mixed information from both domains. We believe those                                                                                                                    only pixels with distances smaller than λd , and samples
+domain-mixed features are important for cross-domain se-                                                                                                                 with smaller distances will gain higher weights. Thus, we
+mantic segmentation. Therefore, we pay special attention                                                                                                                 can calculate the boundary enhancement loss Lb as:
+by giving higher weights to optimize those boundary sam-
+ples during model training, and gradually the domain-mixed
+boundary samples will become domain-invariant and help                                                                                                                             \mathcal {L}_{\text {b}} = \frac {1}{HW}\sum \limits ^{H, W}{M}_{b} \odot \mathcal {L}_{ce}(X_{m}^{(h, w)}, \hat {Y}_{m}^{(h, w)}), \label {eq:boundary_loss}                       (5)
+alleviate the cross-domain issue.
+Boundary enhancement loss. With the generated domain-                                                                                                                    where the Lce is the standard cross-entropy loss.
+mixed boundary samples, we are ready to enhance the
+                                                                                                                                                                         3.2. Prototype Alignment
+model discriminability by enforcing the segmentation to fo-
+cus on those samples. Since we feed the mixed image Xm                                                                                                                      We have employed domain-invariant samples to enhance
+as a whole to train the model, we thus calculate a weight                                                                                                                the discriminability of the segmentation model. However,
+map Mb to assign higher weights to boundary samples in                                                                                                                   the source and mixed images may still exist a mismatch in
+
+
+
+                                                                                                                                                                       8804
+the feature space. Therefore we propose to reduce the dis-                                                                                                  Algorithm 1 Framework of BAPA-Net.
+tribution mismatch with prototype alignment.                                                                                                                Input: Source domain dataset DS , target domain dataset
+    We follow the strategy in recent prototype alignment                                                                                                        DT , the CutMix mask Mmask , student network Gstd =
+works [46, 55, 57]. In particular, they calculate class pro-                                                                                                    Cstd ◦ Estd where Cstd is the segmentation classifier
+totypes using source and target domain images and then                                                                                                          and Estd is the feature extractor, teacher network Gtea
+reduce the distance between the corresponding classes of                                                                                                        whose weights are updated by using the EMA (expo-
+source and target domains. For the unlabeled target do-                                                                                                         nential moving average) of Gstd , and maximum num-
+main images, the pseudo-labels predicted by the segmen-                                                                                                         ber iteration N .
+tation model are used to compute the target prototypes.                                                                                                     Output: The final student model Gstd
+    In our scenario, we use the mixed images as a substi-                                                                                                    1: Initialize network parameters for Gstd with MSCOCO
+tute for the target images for prototype alignment. The                                                                                                         pre-trained weights, and make the parameters of Gtea
+reasons are two folds. First, aligning prototypes of source                                                                                                     same as Gstd
+images and mixed images are able to reduce the distribu-                                                                                                     2: while N ̸= 0 do
+tion mismatch of source and target domains. We are aware                                                                                                     3:     Xs , Ys ∼ DS
+that the prototypes calculated from mixed images would be                                                                                                    4:     Xt ∼ DT
+different from those from target images. In fact, they are                                                                                                   5:     Ŷt ← Gtea (Xt )
+more like a kind of intermediate domain prototypes. How-                                                                                                     6:     Xm , Ym ← using Eq. (1) (2)
+ever, when prototypes of source images and mixed images                                                                                                      7:     Mb ← using Eq. (3) (4) to calculate boundary map
+are well aligned, it immediately implies the prototypes of                                                                                                   8:     Fs ← Estd (Xs ), Fm ← Estd (Xm )
+source images and target images are aligned, too. Sec-                                                                                                       9:     pcm , pcs ← using Eq. (6) (7) to calculate prototype
+ond, since we have used mixed images for enhancing our                                                                                                          for target and source domains
+model, it is expected to make more confident predictions on                                                                                                 10:     L ← using Eq. (9)
+the mixed images than the target images. Using mixed im-                                                                                                    11:     Compute ∇L by backpropagation and update pa-
+ages as a substitute for the target images would also produce                                                                                                   rameters of Gstd
+high-quality prototypes for alignment.                                                                                                                      12:     Gtea ← EMA (Gtea , Gstd )
+    However, the boundary pixels in the mixed images are                                                                                                    13:     N ←N −1
+difficult to be correctly predicted. As a result, using fea-                                                                                                14: end while
+tures of all pixels may introduce noise to the prototypes,                                                                                                  15: return Gstd
+which possibly harms the prototype alignment. Therefore,
+we propose to improve the prototype alignment by exclud-
+ing the boundary examples.                                                                                                                                  in a training batch, let us denote by fs , ỹs , ys as its fea-
+    To obtain the target domain prototypes, we follow the                                                                                                   ture vector, the predicted label and the ground truth label,
+same strategy as in [57] except that we exclude the bound-                                                                                                  respectively. We then can define set of the correctly predict
+ary examples that may introduce noise to the target class                                                                                                   features for the c-th class as Fsc = {fs |ỹs = c and ys = c},
+prototypes. We denote by fm , ỹm as the feature vector and                                                                                                 then the prototype of the c-th class can be calculated as:
+the predicted label of a pixel from a mixed image. To ensure
+the robustness of the prototypes, we also need to exclude the                                                                                                                                         \begin {split}\\p _s^c = \frac {1}{|\cF _s^c|} \sum _{\f _s \in \cF _s^c} \f _{s} . \label {eq:prototype_source} \end {split}    (7)
+boundary examples. Then the set of validate features for the
+                 c
+c-th class as Fm    = {fm |ỹm = c and Md > λd }, where
+Md is its distance to the boundary calculated with Eq. (3),                                                                                                    To align the prototypes of two domains, we follow [57]
+and λd is the threshold for filtering boundary examples in                                                                                                  to maintain a prototype bank for source images and then
+Eq. (4). Then, the prototype of the c-th class for the mixed                                                                                                align the prototypes of mixed images to the prototypes in
+image can be calculated as:                                                                                                                                 the bank. The prototype bank consists of a fixed number of
+                                                                                                                                                            prototypes for each class, which are updated at every mini-
+                                                                                                                                                            batch in a first-in-first-out manner. Let us denote pcs,i as the
+                   \begin {split}\\p _m^c = \frac {1}{|\cF _m^c|} \sum _{\f _m \in \cF _m^c} \f _{m} . \end {split} \label {eq:prototype_mixed}    (6)     i-th prototype for the c-th class in the bank. we minimize
+                                                                                                                                                            the ℓ1 distance between each prototype from the mixed im-
+                                                                                                                                                            ages with the closest prototypes of the same class in the
+   The prototypes for the source domain can be similarly
+                                                                                                                                                            bank, which can be formulated as:
+calculated. Due to the ground truth labels are available
+for source domain, we do not exclude the boundary. Con-
+cretely, we average the features belonging to the correct                                                                                                                   \begin {split} \mathcal {L}_{p}= \sum _{c=1}^C \min _{i}\left \|\p _{m}^{c}-\p _{s,i}^{c}\right \|_{1} . \label {eq:prototype_loss} \end {split}            (8)
+predicted region for one class as its prototype in a train-
+ing batch. Given any source pixel from the source images
+
+
+
+                                                                                                                                                          8805
+3.3. Overall Model                                                                                                                                                                          works [52, 19, 30, 31, 66, 64, 59, 57, 58, 54, 49, 41], us-
+                                                                                                                                                                                            ing DeepLab-v2 [3] as our base segmentation model and
+   Following [49], both source images and mixed images
+                                                                                                                                                                                            ResNet101 [21] as our backbone. The backbone is pre-
+are used to train the segmentation network based on the MT
+                                                                                                                                                                                            trained on ImageNet [10] and MSCOCO [32]. The Stochas-
+model. Moreover, we additionally optimize the boundary
+                                                                                                                                                                                            tic Gradient Descent (SGD) with Nesterov acceleration is
+enhancement loss in Eq. (5) and the prototype alignment
+                                                                                                                                                                                            used as the optimizer, and the initial learning rate is set to
+loss in Eq. (8) to improve the discrimination and domain-
+                                                                                                                                                                                            2.5×10−4 , which is then decreased using polynomial decay
+invariant abilities of the segmentation model. The overall
+                                                                                                                                                                                            with exponent 0.9 [3]. The weight decay and momentum
+objective of our BAPA-Net can be written as:
+                                                                                                                                                                                            are set to 5 × 10−4 and 0.9, respectively. We resize source
+               \begin {split} \mathcal {L}=\mathcal {L}_{s} + \mathcal {L}_{m} + \lambda _{b}\mathcal {L}_{b} + \lambda _{p}\mathcal {L}_{p} \label {eq:final_loss} \end {split}    (9)     images to 760×1,280 and target images to 512×1,024, then
+                                                                                                                                                                                            we extract random crops of size 512×512 in both source
+where Ls and Lm are the cross-entropy loss for the source                                                                                                                                   and target images. When calculating the prototype, we use
+and mixed images, respectively, and λb and λp are two                                                                                                                                       the output of last layer in ResNet101. The batch size is set
+tradeoff parameters. The implementation of BAPA-Net is                                                                                                                                      to 2, i.e, 2 source images and 2 target images in a mini-
+presented in Algorithm 1.                                                                                                                                                                   batch, and we obtain the final model after 250k iterations.
+                                                                                                                                                                                            We empirically set λd = 4, λb = 4 and λp = 0.005 for our
+4. Experiments                                                                                                                                                                              experiments. We implement our method using PyTorch on
+                                                                                                                                                                                            an Nvidia GeForce RTX 2080Ti.
+4.1. Experimental Setup
+   Following the common experimental setup for cross-                                                                                                                                       4.2. Comparisons with the State-of-the-arts
+domain semantic segmentation [50, 37, 38, 51, 52, 61,
+                                                                                                                                                                                                The previous cross-domain semantic segmentation
+66, 64], we evaluate our method on two synthetic-to-real
+                                                                                                                                                                                            methods are mainly divided into three categories: 1) meth-
+scenarios, namely GTA5 to Cityscapes and SYNTHIA to
+                                                                                                                                                                                            ods based on adversarial training including AdvEnt [52],
+Cityscapes. In both experiments, Cityscapes is regarded as
+                                                                                                                                                                                            BDL [30] and FADA [54], 2) methods based on self-
+the target domain, while GTA5 and SYNTHIA are regarded
+                                                                                                                                                                                            training including PyCDA [31], CRST [66], R-MRNet [64],
+as the source domain, respectively.
+                                                                                                                                                                                            UDADT [57] and IAST [41], and 3) methods based on
+  • Cityscapes [7] is a popular semantic segmentation                                                                                                                                       data augmentation including DLOW [19], FDA [59] and
+    benchmark dataset for autonomous driving. The                                                                                                                                           DACS [49]. Table 1 and 2 show the comparisons with
+    dataset is labeled with 19 classes. It consists of 2,975                                                                                                                                the state-of-the-arts domain adaptation methods for se-
+    images in the training set and 500 images in the val-                                                                                                                                   mantic segmentation of the three types of methods re-
+    idation set. We use the training set without labels as                                                                                                                                  spectively on the GTA5 → Cityscapes and SYNTHIA →
+    the unlabeled target domain and the 500 images in the                                                                                                                                   Cityscapes setting. All the models are based on DeepLab
+    validation set for evaluation.                                                                                                                                                          V2 and ResNet101 as their backbone, except the Py-
+  • GTA5 [43] is a large-scale synthetic dataset consist-                                                                                                                                   CDA [31] which is based on PSPNet [63]. For the GTA5 →
+    ing of 24,966 images rendered from a computer game                                                                                                                                      Cityscapes, our proposed approach achieves 57.4%, which
+    called Grand Theft Auto V (GTA5). Each image has                                                                                                                                        outperforms existing state-of-the-arts methods with signif-
+    the size of 1,912 × 1,052 which are annotated with the                                                                                                                                  icant margins of 5.3% ∼ 15.1% mIoU. For the task from
+    same 19 classes in Cityscapes.                                                                                                                                                          SYNTHIA → Cityscapes, we report the mIoU on 16 classes
+                                                                                                                                                                                            and 13 classes (excluding “wall”, “fence”, “pole”). Our
+  • SYNTHIA [44] is also a synthetic dataset for semantic                                                                                                                                   method improves the performance about 3.5% ∼ 12.1%
+    segmentation task. And its subset named SYNTHIA-                                                                                                                                        and 4.2% ∼ 13.2% on 16 classes and 13 classes, respec-
+    RAND-CITYSCAPES includes a collection of 9,400                                                                                                                                          tively. And we achieve 53.3% and 61.2% respectively, both
+    photo-realistic images, which has 16 common classes                                                                                                                                     of them outperforming the corresponding results of base-
+    with Cityscapes.                                                                                                                                                                        line methods with large margins. This clearly validates the
+Evaluation metric. We use Intersection over Union (IoU)                                                                                                                                     effectiveness of our method.
+as the evaluation metric. For each class, we compute it by                                                                                                                                      We also present qualitative examples of the segmenta-
+the formula IoU = T P +FT PP +F N , in which TP, FP and                                                                                                                                     tion results of our methods in Fig 4. The results from the
+FN are defined in the confusion matrix as the numbers of                                                                                                                                    “Source Only” and the original CutMix (DACS) are in-
+true positive, false positive and false negative pixels, re-                                                                                                                                cluded for comparison. Both of our BAPA-Net and DACS
+spectively. In addition, we compute the mean of IoUs (i.e.,                                                                                                                                 exhibit superior segmentation results compared with the
+mIoU) over all classes.                                                                                                                                                                     “Source Only” baseline and our BAPA-Net achieves even
+Implementation details. In our experiments, we fol-                                                                                                                                         better performance than the DACS. We attribute this to the
+low the widely used implementation protocol in previous                                                                                                                                     usage of BA and PA module for improving the discrimi-
+
+
+
+                                                                                                                                                                                          8806
+                Table 1. The mIoUs (in %) for GTA5 → Cityscapes. The ResNet-101 is used as the backbone network.
+
+
+
+
+                                                                                                                                                                      e
+                                                                                     rra n
+
+
+
+
+                                                                                                                                                                   cl
+                                                                                           tio
+                          bu k
+
+
+
+
+                                                                                                                                                                cy
+                                     g
+                                   al
+
+                                  in
+
+
+
+
+                                                                                                            on
+                                                                                        in
+                                                                                        ta
+
+
+
+
+                                                                                                                                                              or
+                              ew
+
+
+
+
+                                 e
+
+
+
+
+                                                                                                                                     ck
+                             ild
+
+
+
+
+                                                                                                                    er
+                                                                                      ge
+                                                                            t
+
+
+
+
+                                                                                                                                                     in
+                             nc
+
+                             le
+                               l
+
+
+
+
+                                                                                                                                                            ke
+                                                                           n
+
+
+
+
+                                                                                                          rs
+                                                                      h
+
+
+
+
+                                                                                                                                                            ot
+                 ad
+
+
+
+
+                            al
+
+
+
+
+                                                                                     y
+
+
+
+
+                                                                                                                                              s
+                                                                                                                           r
+                        s id
+
+
+
+
+                                                                       sig
+
+
+
+
+                                                                                                                   rid
+
+
+
+
+                                                                                                                                  tru
+                                                                  lig
+
+
+
+
+                                                                                                                                                  tra
+                          po
+
+
+
+
+                                                                                                                                           bu
+                                                                                                         pe
+                                                                                  ve
+
+
+
+
+                                                                                  sk
+
+
+
+
+                                                                                                                          ca
+                          fe
+
+
+
+
+                                                                                                                                                          m
+
+                                                                                                                                                          bi
+                          w
+
+
+
+
+                                                                                  te
+ Method                                                                                                                                                                   mIoU
+                ro
+ Source          63.3   15.7     59.4     8.6    15.2   18.3      26.9     15.0    80.5    15.3   73.0   51.0      17.8   59.7    28.2     33.1   3.5     23.2    16.7    32.9
+ AdvEnt [52]     89.4   33.1     81.0    26.6    26.8   27.2      33.5     24.7    83.9    36.7   78.8   58.7      30.5   84.8    38.5     44.5   1.7     31.6    32.4    45.5
+ DLOW [19]       87.1   33.5     80.5    24.5    13.2   29.8      29.5     26.6    82.6    26.7   81.8   55.9      25.3   78.0    33.5     38.7   0.0     22.9    34.5    42.3
+ BDL [30]        91.0   44.7     84.2    34.6    27.6   30.2      36.0     36.0    85.0    43.6   83.0   58.6      31.6   83.3    35.3     49.7   3.3     28.8    35.6    48.5
+ PyCDA [31]      90.5   36.3     84.4    32.4    28.7   34.6      36.4     31.5    86.8    37.9   78.5   62.3      21.5   85.6    27.9     34.8   18.0    22.9    49.3    47.4
+ CRST [66]       91.0   55.4     80.0    33.7    21.4   37.3      32.9     24.5    85.0    34.1   80.8   57.7      24.6   84.1    27.8     30.1   26.9    26.0    42.3    47.1
+ R-MRNet [64]    90.4   31.2     85.1    36.9    25.6   37.5      48.8     48.5    85.3    34.8   81.1   64.4      36.8   86.3    34.9     52.2    1.7    29.0    44.6    50.3
+ FDA [59]        92.5   53.3     82.4    26.5    27.6   36.4      40.6     38.9    82.3    39.8   78.0   62.6      34.4   84.9    34.1     53.1   16.9    27.7    46.4    50.5
+ UDADT [57]      90.6   44.7     84.8    34.3    28.7   31.6      35.0     37.6    84.7    43.3   85.3   57.0      31.5   83.8    42.6     48.5   1.9     30.4    39.0    49.2
+ LDRDA [58]      90.8   41.4     84.7    35.1    27.5   31.2      38.0     32.8    85.6    42.1   84.9   59.6      34.4   85.0    42.8     52.7   3.4     30.9    38.1    49.5
+ FADA [54]       92.5   47.5     85.1    37.6    32.8   33.4      33.8     18.4    85.3    37.7   83.5   63.2      39.7   87.5    32.9     47.8   1.6     34.9    39.5    49.2
+ DACS [49]       89.9   39.7     87.9    30.7    39.5   38.5      46.4     52.8    88.0    44.0   88.8   67.2      35.8   84.5    45.7     50.2    0.0    27.3    34.0    52.1
+ IAST [41]       93.8   57.8     85.1    39.5    26.7   26.2      43.1     34.7    84.9    32.9   88.0   62.6      29.0   87.3    39.2     49.6   23.2    34.7    39.6    51.5
+ Ours            94.4   61.0     88.0    26.8    39.9   38.3      46.1     55.3    87.8    46.1   89.4   68.8      40.0   90.2    60.4     59.0   0.00    45.1    54.2    57.4
+
+Table 2. The mIoUs (in %) for SYNTHIA → Cityscapes. mIoU* denotes the mean IoU over 13 classes excluding those marked with *.
+Classes not evaluated are replaced by ’-’. The ResNet-101 is used as the backbone network.
+
+
+
+
+                                                                                                                                                 ke le
+                                                                                                  n
+
+
+
+
+                                                                                                                                                        c
+                                                                                              tio
+                                 k
+
+
+
+
+                                                                                                                                                     cy
+                                           g
+                                 al
+
+                                        in
+
+
+
+
+                                                            *
+
+
+
+
+                                                                                                              on
+                                                                                            ta
+
+
+
+
+                                                                                                                                                   or
+                               ew
+
+
+
+
+                                                                  *
+                                                l*
+
+                                                        ce
+                                      ld
+
+
+
+
+                                                                                                                     er
+                                                                                            ge
+                                                                             ht
+                                                                  le
+
+
+
+
+                                                                              n
+
+
+
+
+                                                                                                          rs
+
+
+
+
+                                                                                                                                                ot
+                  ad
+
+
+
+
+                                              al
+
+
+
+
+                                                                                                    y
+
+
+
+
+                                                                                                                                       s
+                                                        n
+                                     i
+
+
+
+
+                                                                                                                              r
+                         sid
+
+
+
+
+                                                                          sig
+
+
+
+
+                                                                                                                   rid
+                                                                          lig
+                                                                po
+                                  bu
+
+
+
+
+                                                                                                                                    bu
+                                                                                                         pe
+                                                                                          ve
+
+                                                                                                  sk
+
+
+
+
+                                                                                                                           ca
+                                                     fe
+
+
+
+
+                                                                                                                                            m
+
+                                                                                                                                              bi
+                                             w
+
+
+
+
+ Method                                                                                                                                                       mIoU* mIoU
+                 ro
+
+
+
+
+ Source          36.3     14.6    68.8        9.2     0.2       24.4       5.6     9.1    69.0    79.4   52.5      11.3    49.8      9.5     11.0 20.7         33.7 29.5
+ AdvEnt [52]     85.6     42.2    79.7        8.7     0.4       25.9       5.4     8.1    80.4    84.1   57.9      23.8    73.3     36.4     14.2 33.0         48.0 41.2
+ BDL [30]        86.0     46.7    80.3         -       -         -        14.1    11.6    79.2    81.3   54.1      27.9    73.7     42.2     25.7 45.3         51.4  -
+ PyCDA [31]      75.5     30.9    83.3       20.8     0.7       32.7      27.3    33.5    84.7    85.0   64.1      25.4    85.0     45.2     21.2 32.0         53.3 46.7
+ CRST [66]       67.7     32.2    73.9       10.7     1.6       37.4      22.2    31.2    80.8    80.5   60.8      29.1    82.8     25.0     19.4 45.3         50.1 43.8
+ R-MRNet [64]    87.6     41.9    83.1       14.7     1.7       36.2      31.3    19.9    81.6    80.6   63.0      21.8    86.2     40.7     23.6 53.1         54.9 47.9
+ FDA [59]        79.3     35.0    73.2         -       -         -        19.9    24.0    61.7    82.6   61.4      31.1    83.9     40.8     38.4 51.1         52.5  -
+ UDADT [57]      83.0     44.0    80.3         -       -         -        17.1    15.8    80.5    81.8   59.9      33.1    70.2     37.3     28.5 45.8         52.1  -
+ LDRDA [58]      85.1     44.5    81.0         -       -         -        16.4    15.2    80.1    84.8   59.4      31.9    73.2     41.0     32.6 44.7         53.1  -
+ FADA [54]       84.5     40.1    83.1        4.8     0.0       34.3      20.1    27.2    84.8    84.0   53.5      22.6    85.4     43.7     26.8 27.8         52.5 45.2
+ DACS [49]       80.6     25.1    81.9       21.5     2.9       37.2      22.7    24.0    83.7    90.8   67.6      38.3    82.9     38.9     28.5 47.6         54.8 48.3
+ IAST [41]       81.9     41.5    83.3       17.7     4.6       32.3      30.9    28.8    83.4    85.0   65.5      30.8    86.5     38.2     33.1 52.7         57.0 49.8
+ Ours            91.7     53.8    83.9       22.4     0.8       34.9      30.5    42.8    86.6    88.2   66.0      34.1    86.6     51.3     29.4 50.5         61.2 53.3
+
+
+native and domain-invariant abilities of the segmentation                                  line for comparison. We conduct the ablation studies by re-
+model. For example, by using the boundary enhancement                                      moving different components. As shown in Table 3, despite
+loss, our BAPA-Net generally predicts the boundary more                                    baseline CutMix already achieves quite competitive perfor-
+precisely than DACS (see predicted the bikes and cars in                                   mance, our proposed boundary adaptation and prototype
+the 1-st and 2-nd rows). Moreover, our BAPA-Net also does                                  alignment modules still gain large improvements, reaching
+better at distinguishing road and sidewalk than DACS (see                                  56.4% (w/o PA) and 55.8% (w/o BA) mIoU, respectively.
+the 4-th, 5-th and 6-th rows), possibly because the proto-                                 By integrating both modules, our final BAPA-Net achieves
+type alignment helps to reduce the domain distribution mis-                                an improvement of 5.3% over the baseline. These large im-
+match.                                                                                     provements clearly validate that both of our modules play
+                                                                                           an important role in cross-domain semantic segmentation.
+4.3. Ablation Studies
+                                                                                           The impact of boundary removal in PA. In Section 3.2,
+   In this section, we conduct the ablation experiments in                                 we propose to calculate prototype that better reflects the
+the setting of GTA5 → Cityscapes.                                                          class information for mixed images by excluding the fea-
+Effects of different components. We validate the individ-                                  tures of boundary samples. Here we conduct an additional
+ual effects of our Boundary Adaptation (BA) and Prototype                                  experiment for comparison by not removing these bound-
+Alignment (PA) modules. The results are summarized in                                      ary samples, i.e, all pixel features are used for producing
+Table 3. We include the original CutMix model as a base-                                   the prototypes for the mixed images. For a clear compari-
+
+
+
+                                                                                     8807
+              (a) Target Image     (b) Ground Truth            (c) Source Only        (d) DACS             (e) Ours
+Figure 4. Qualitative segmentation results on the GTA5 → Cityscapes domain adaptation task. We present (a) Target Image, (b) Ground
+Truth, (c) Source Only, (d) DACS [49], (e) Ours.
+
+
+Table 3. Ablation Studies on effects of different components             Table 4. The impact of removing boundary samples in prototype
+                 Model               mIoU       ∆                        alignment
+               Baseline[49]          52.1                                                                    mIoU       ∆
+             BAPA-Net w/o BA         55.7      3.6↑                               w/o boundary removal       52.6
+             BAPA-Net w/o PA         56.4      4.3↑                               with boundary removal      55.7     3.1↑
+                BAPA-Net             57.4      5.3↑
+                                                                         ary Adaptation and Prototype Alignment Network (BAPA-
+son, we consider the prototype alignment module only and
+                                                                         Net), where we tackle the cross-domain semantic segmen-
+do not use the Boundary Adaptation (BA) module in exper-
+                                                                         tation problem from two aspects. On the one hand, we em-
+iments. From Table 4, we observe that the PA module with-
+                                                                         ploy the newly developed boundary adaptation strategy to
+out using boundary removal leads to a performance drop of
+                                                                         focus more on the domain-mixed boundary samples, which
+3.1% than the proposed PA module. This clearly verifies
+                                                                         are constructed based on CutMix and contain information
+our motivation that the boundary samples could mislead the
+                                                                         from both the source and target domains. On the other hand,
+prototype calculation in the mixed images.
+                                                                         we design a prototype alignment module to reduce domain
+                                                                         mismatch by minimizing the distance between class pro-
+5. Conclusion                                                            totypes of the two domains, where boundary samples are
+                                                                         ignored here to avoid domain confusion during the proto-
+    In this paper, we address the problem of cross-domain
+                                                                         type calculation. Experiments on GTA5→Cityscapes and
+semantic segmentation. We reveal a critical finding that pre-
+                                                                         SYNTHIA→Cityscapes clearly validate the effectiveness
+vious works often neglect the importance of object bound-
+                                                                         of our BAPA-Net.
+aries while paying much attention to the overall segmen-
+tation results of whole objects. We empirically find that                Acknowledgement: This work is partially supported by the
+if we treat the object boundary properly, the segmenta-                  Major Project for New Generation of AI under Grant No.
+tion performance can be considerably improved. Based on                  2018AAA0100400 and China Postdoctoral Science Foun-
+the observation, we present a novel method called Bound-                 dation (NO. 2019TQ0051).
+
+
+
+                                                                      8808
+References                                                            [13] Liang Du, Jingang Tan, Hongye Yang, Jianfeng Feng, Xi-
+                                                                           angyang Xue, Qibao Zheng, Xiaoqing Ye, and Xiaolin
+ [1] Karsten M Borgwardt, Arthur Gretton, Malte J Rasch, Hans-             Zhang. SSF-DAN: Separated semantic feature based domain
+     Peter Kriegel, Bernhard Schölkopf, and Alex J Smola. Inte-           adaptation network for semantic segmentation. In Proceed-
+     grating structured biological data by kernel maximum mean             ings of the IEEE/CVF International Conference on Com-
+     discrepancy. Bioinformatics, 22(14):e49–e57, 2006.                    puter Vision (ICCV), October 2019.
+ [2] Francesco Caliva, Claudia Iriondo, Alejandro Morales Mar-        [14] Lixin Duan, Ivor W. Tsang, and Dong Xu. Domain trans-
+     tinez, Sharmila Majumdar, and Valentina Pedoia. Distance              fer multiple kernel learning. IEEE Transactions on Pattern
+     map loss penalty term for semantic segmentation. In Interna-          Analysis and Machine Intelligence, 34(3):465–479, 2012.
+     tional Conference on Medical Imaging with Deep Learning–
+                                                                      [15] Aysegul Dundar, Ming-Yu Liu, Ting-Chun Wang, John
+     Extended Abstract Track, 2019.
+                                                                           Zedlewski, and Jan Kautz. Domain stylization: A strong,
+ [3] Liang-Chieh Chen, George Papandreou, Iasonas Kokkinos,
+                                                                           simple baseline for synthetic to real image domain adapta-
+     Kevin Murphy, and Alan L. Yuille. Deeplab: Semantic im-
+                                                                           tion. arXiv preprint arXiv:1807.09384, 2018.
+     age segmentation with deep convolutional nets, atrous con-
+                                                                      [16] Mark Everingham, Luc Van Gool, Christopher KI Williams,
+     volution, and fully connected crfs. IEEE Transactions on
+                                                                           John Winn, and Andrew Zisserman. The pascal visual object
+     Pattern Analysis and Machine Intelligence, 40(4):834–848,
+                                                                           classes (voc) challenge. International journal of computer
+     2018.
+                                                                           vision, 88(2):303–338, 2010.
+ [4] Liang-Chieh Chen, George Papandreou, Florian Schroff, and
+                                                                      [17] Basura Fernando, Amaury Habrard, Marc Sebban, and Tinne
+     Hartwig Adam. Rethinking atrous convolution for seman-
+                                                                           Tuytelaars. Unsupervised visual domain adaptation using
+     tic image segmentation. arXiv preprint arXiv:1706.05587,
+                                                                           subspace alignment. In Proceedings of the IEEE Interna-
+     2017.
+                                                                           tional Conference on Computer Vision (ICCV), December
+ [5] Minghao Chen, Hongyang Xue, and Deng Cai. Do-
+                                                                           2013.
+     main adaptation for semantic segmentation with maximum
+     squares loss. In Proceedings of the IEEE/CVF International       [18] Boqing Gong, Yuan Shi, Fei Sha, and Kristen Grauman.
+     Conference on Computer Vision (ICCV), October 2019.                   Geodesic flow kernel for unsupervised domain adaptation.
+                                                                           In 2012 IEEE Conference on Computer Vision and Pattern
+ [6] Yuhua Chen, Wen Li, Xiaoran Chen, and Luc Van Gool.
+                                                                           Recognition, pages 2066–2073, 2012.
+     Learning semantic segmentation from synthetic data: A geo-
+     metrically guided input-output adaptation approach. In Pro-      [19] Rui Gong, Wen Li, Yuhua Chen, and Luc Van Gool. Dlow:
+     ceedings of the IEEE/CVF Conference on Computer Vision                Domain flow for adaptation and generalization. In Proceed-
+     and Pattern Recognition (CVPR), June 2019.                            ings of the IEEE/CVF Conference on Computer Vision and
+ [7] Marius Cordts, Mohamed Omran, Sebastian Ramos, Timo                   Pattern Recognition (CVPR), June 2019.
+     Rehfeld, Markus Enzweiler, Rodrigo Benenson, Uwe                 [20] Arthur Gretton, Karsten M. Borgwardt, Malte J. Rasch,
+     Franke, Stefan Roth, and Bernt Schiele. The cityscapes                Bernhard Schölkopf, and Alexander Smola. A kernel
+     dataset for semantic urban scene understanding. In Proceed-           two-sample test. Journal of Machine Learning Research,
+     ings of the IEEE Conference on Computer Vision and Pattern            13(25):723–773, 2012.
+     Recognition (CVPR), June 2016.                                   [21] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.
+ [8] Nicolas Courty, Rémi Flamary, Devis Tuia, and Alain Rako-            Deep residual learning for image recognition. In Proceed-
+     tomamonjy. Optimal transport for domain adaptation. IEEE              ings of the IEEE Conference on Computer Vision and Pattern
+     Transactions on Pattern Analysis and Machine Intelligence,            Recognition (CVPR), June 2016.
+     39(9):1853–1865, 2017.                                           [22] Judy Hoffman, Dequan Wang, Fisher Yu, and Trevor Darrell.
+ [9] Bharath Bhushan Damodaran, Benjamin Kellenberger, Remi                Fcns in the wild: Pixel-level adversarial and constraint-based
+     Flamary, Devis Tuia, and Nicolas Courty. DeepJDOT: Deep               adaptation. arXiv preprint arXiv:1612.02649, 2016.
+     joint distribution optimal transport for unsupervised domain     [23] Jiayuan Huang, Arthur Gretton, Karsten Borgwardt, Bern-
+     adaptation. In Proceedings of the European Conference on              hard Schölkopf, and Alex Smola. Correcting sample selec-
+     Computer Vision (ECCV), September 2018.                               tion bias by unlabeled data. In B. Schölkopf, J. Platt, and T.
+[10] Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li,                Hoffman, editors, Advances in Neural Information Process-
+     and Li Fei-Fei. Imagenet: A large-scale hierarchical image            ing Systems, volume 19. MIT Press, 2007.
+     database. In 2009 IEEE Conference on Computer Vision and         [24] Jiaxing Huang, Shijian Lu, Dayan Guan, and Xiaobing
+     Pattern Recognition, pages 248–255, 2009.                             Zhang. Contextual-relation consistent domain adaptation for
+[11] Jinhong Deng, Wen Li, Yuhua Chen, and Lixin Duan. Unbi-               semantic segmentation. In The European Conference on
+     ased mean teacher for cross-domain object detection. In Pro-          Computer Vision (ECCV), 2020.
+     ceedings of the IEEE/CVF Conference on Computer Vision           [25] Minsu Kim, Sunghun Joung, Seungryong Kim, Jungin Park,
+     and Pattern Recognition (CVPR), pages 4091–4101, June                 Ig-Jae Kim, and K. Sohn. Cross-domain grouping and align-
+     2021.                                                                 ment for domain adaptive semantic segmentation. In AAAI,
+[12] Carl Doersch, Abhinav Gupta, and Alexei A. Efros. Un-                 2021.
+     supervised visual representation learning by context predic-     [26] Alex Krizhevsky, Ilya Sutskever, and Geoffrey E Hinton.
+     tion. In Proceedings of the IEEE International Conference             Imagenet classification with deep convolutional neural net-
+     on Computer Vision (ICCV), December 2015.                             works. In F. Pereira, C. J. C. Burges, L. Bottou, and K. Q.
+
+
+
+
+                                                                    8809
+     Weinberger, editors, Advances in Neural Information Pro-          [39] Fengmao Lv, Tao Liang, Xiang Chen, and Guosheng Lin.
+     cessing Systems, volume 25. Curran Associates, Inc., 2012.             Cross-domain semantic segmentation via domain-invariant
+[27] Guangrui Li, Guoliang Kang, Wu Liu, Yunchao Wei, and Yi                interactive relation transfer. In Proceedings of the IEEE/CVF
+     Yang. Content-consistent matching for domain adaptive se-              Conference on Computer Vision and Pattern Recognition
+     mantic segmentation. In The European Conference on Com-                (CVPR), June 2020.
+     puter Vision (ECCV), 2020.                                        [40] Fengmao Lv, Guosheng Lin, Peng Liu, Guowu Yang,
+[28] Xiangtai Li, Xia Li, Li Zhang, Cheng Guangliang, Jianping              Sinno Jialin Pan, and Lixin Duan. Weakly-supervised cross-
+     Shi, Zhouchen Lin, Yunhai Tong, and Shaohua Tan. Improv-               domain road scene segmentation via multi-level curriculum
+     ing semantic segmentation via decoupled body and edge su-              adaptation. IEEE Transactions on Circuits and Systems for
+     pervision. In ECCV, 2020.                                              Video Technology, pages 1–1, 2020.
+[29] Xia Li, Zhisheng Zhong, Jianlong Wu, Yibo Yang, Zhouchen          [41] Ke Mei, Chuang Zhu, Jiaqi Zou, and Shanghang Zhang. In-
+     Lin, and Hong Liu. Expectation-maximization attention net-             stance adaptive self-training for unsupervised domain adap-
+     works for semantic segmentation. In Proceedings of the                 tation. In The European Conference on Computer Vision
+     IEEE/CVF International Conference on Computer Vision                   (ECCV), 2020.
+     (ICCV), October 2019.                                             [42] Fabio Pizzati, Raoul de Charette, Michela Zaccaria, and
+[30] Yunsheng Li, Lu Yuan, and Nuno Vasconcelos. Bidirectional              Pietro Cerri. Domain bridge for unpaired image-to-image
+     learning for domain adaptation of semantic segmentation.               translation and unsupervised domain adaptation. In Proceed-
+     In The IEEE Conference on Computer Vision and Pattern                  ings of the IEEE/CVF Winter Conference on Applications of
+     Recognition (CVPR), June 2019.                                         Computer Vision (WACV), March 2020.
+[31] Qing Lian, Fengmao Lv, Lixin Duan, and Boqing Gong.               [43] Stephan R. Richter, Vibhav Vineet, Stefan Roth, and Vladlen
+     Constructing self-motivated pyramid curriculums for cross-             Koltun. Playing for data: Ground truth from computer
+     domain semantic segmentation: A non-adversarial approach.              games. In Bastian Leibe, Jiri Matas, Nicu Sebe, and Max
+     In The IEEE International Conference on Computer Vision                Welling, editors, European Conference on Computer Vision
+     (ICCV), October 2019.                                                  (ECCV), volume 9906 of LNCS, pages 102–118. Springer
+[32] Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays,               International Publishing, 2016.
+     Pietro Perona, Deva Ramanan, Piotr Dollár, and C Lawrence
+                                                                       [44] German Ros, Laura Sellart, Joanna Materzynska, David
+     Zitnick. Microsoft coco: Common objects in context. In
+                                                                            Vazquez, and Antonio M. Lopez. The synthia dataset: A
+     European conference on computer vision, pages 740–755.
+                                                                            large collection of synthetic images for semantic segmenta-
+     Springer, 2014.
+                                                                            tion of urban scenes. In Proceedings of the IEEE Conference
+[33] Jonathan Long, Evan Shelhamer, and Trevor Darrell. Fully
+                                                                            on Computer Vision and Pattern Recognition (CVPR), June
+     convolutional networks for semantic segmentation. In Pro-
+                                                                            2016.
+     ceedings of the IEEE Conference on Computer Vision and
+     Pattern Recognition (CVPR), June 2015.                            [45] Karen Simonyan and Andrew Zisserman. Very deep convo-
+                                                                            lutional networks for large-scale image recognition. In Inter-
+[34] Mingsheng Long, Yue Cao, Jianmin Wang, and Michael I.
+                                                                            national Conference on Learning Representations, 2015.
+     Jordan. Learning transferable features with deep adaptation
+     networks. In Proceedings of the 32nd International Confer-        [46] Jake Snell, Kevin Swersky, and Richard Zemel. Prototypical
+     ence on Machine Learning, ICML 2015, Lille, France, 6-11               networks for few-shot learning. In I. Guyon, U. V. Luxburg,
+     July 2015, pages 97–105, 2015.                                         S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R.
+[35] Mingsheng Long, ZHANGJIE CAO, Jianmin Wang, and                        Garnett, editors, Advances in Neural Information Processing
+     Michael I Jordan. Conditional adversarial domain adapta-               Systems, volume 30. Curran Associates, Inc., 2017.
+     tion. In S. Bengio, H. Wallach, H. Larochelle, K. Grauman,        [47] Masashi Sugiyama, Shinichi Nakajima, Hisashi Kashima,
+     N. Cesa-Bianchi, and R. Garnett, editors, Advances in Neu-             Paul Buenau, and Motoaki Kawanabe. Direct importance
+     ral Information Processing Systems, volume 31. Curran As-              estimation with model selection and its application to covari-
+     sociates, Inc., 2018.                                                  ate shift adaptation. In J. Platt, D. Koller, Y. Singer, and S.
+[36] Mingsheng Long, Jianmin Wang, Guiguang Ding, Jiaguang                  Roweis, editors, Advances in Neural Information Processing
+     Sun, and Philip S. Yu. Transfer feature learning with joint            Systems, volume 20. Curran Associates, Inc., 2008.
+     distribution adaptation. In Proceedings of the IEEE Inter-        [48] Antti Tarvainen and Harri Valpola. Mean teachers are bet-
+     national Conference on Computer Vision (ICCV), December                ter role models: Weight-averaged consistency targets im-
+     2013.                                                                  prove semi-supervised deep learning results. In I. Guyon,
+[37] Yawei Luo, Ping Liu, Tao Guan, Junqing Yu, and Yi Yang.                U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vish-
+     Significance-aware information bottleneck for domain adap-             wanathan, and R. Garnett, editors, Advances in Neural Infor-
+     tive semantic segmentation. In The IEEE International Con-             mation Processing Systems, volume 30. Curran Associates,
+     ference on Computer Vision (ICCV), October 2019.                       Inc., 2017.
+[38] Yawei Luo, Liang Zheng, Tao Guan, Junqing Yu, and Yi              [49] Wilhelm Tranheden, Viktor Olsson, Juliano Pinto, and
+     Yang. Taking a closer look at domain shift: Category-                  Lennart Svensson. DACS: Domain adaptation via cross-
+     level adversaries for semantics consistent domain adaptation.          domain mixed sampling. In Proceedings of the IEEE/CVF
+     In The IEEE Conference on Computer Vision and Pattern                  Winter Conference on Applications of Computer Vision
+     Recognition (CVPR), June 2019.                                         (WACV), pages 1379–1389, January 2021.
+
+
+
+
+                                                                     8810
+[50] Yi-Hsuan Tsai, Wei-Chih Hung, Samuel Schulter, Ki-                          Proceedings of the IEEE/CVF Conference on Computer Vi-
+     hyuk Sohn, Ming-Hsuan Yang, and Manmohan Chandraker.                        sion and Pattern Recognition (CVPR), June 2019.
+     Learning to adapt structured output space for semantic seg-            [63] Hengshuang Zhao, Jianping Shi, Xiaojuan Qi, Xiaogang
+     mentation. In The IEEE Conference on Computer Vision and                    Wang, and Jiaya Jia. Pyramid scene parsing network. In Pro-
+     Pattern Recognition (CVPR), June 2018.                                      ceedings of the IEEE Conference on Computer Vision and
+[51] Yi-Hsuan Tsai, Kihyuk Sohn, Samuel Schulter, and Manmo-                     Pattern Recognition (CVPR), July 2017.
+     han Chandraker. Domain adaptation for structured output                [64] Zhedong Zheng and Yi Yang. Rectifying pseudo label learn-
+     via discriminative patch representations. In The IEEE Inter-                ing via uncertainty estimation for domain adaptive seman-
+     national Conference on Computer Vision (ICCV), October                      tic segmentation. International Journal of Computer Vision,
+     2019.                                                                       129(4):1106–1120, 2021.
+[52] Tuan-Hung Vu, Himalaya Jain, Maxime Bucher, Matthieu                   [65] Yang Zou, Zhiding Yu, BVK Kumar, and Jinsong Wang.
+     Cord, and Patrick Perez. ADVENT: Adversarial entropy                        Unsupervised domain adaptation for semantic segmentation
+     minimization for domain adaptation in semantic segmenta-                    via class-balanced self-training. In Proceedings of the Eu-
+     tion. In The IEEE Conference on Computer Vision and Pat-                    ropean conference on computer vision (ECCV), pages 289–
+     tern Recognition (CVPR), June 2019.                                         305, 2018.
+[53] Tuan-Hung Vu, Himalaya Jain, Maxime Bucher, Matthieu                   [66] Yang Zou, Zhiding Yu, Xiaofeng Liu, B.V.K. Vijaya Kumar,
+     Cord, and Patrick Perez. DADA: Depth-aware domain adap-                     and Jinsong Wang. Confidence regularized self-training. In
+     tation in semantic segmentation. In The IEEE International                  Proceedings of the IEEE/CVF International Conference on
+     Conference on Computer Vision (ICCV), October 2019.                         Computer Vision (ICCV), October 2019.
+[54] Haoran Wang, Tong Shen, Wei Zhang, Lingyu Duan, and
+     Tao Mei. Classes matter: A fine-grained adversarial ap-
+     proach to cross-domain semantic segmentation. In The Eu-
+     ropean Conference on Computer Vision (ECCV), 2020.
+[55] Kaixin Wang, Jun Hao Liew, Yingtian Zou, Daquan Zhou,
+     and Jiashi Feng. PANet: Few-shot image semantic seg-
+     mentation with prototype alignment. In Proceedings of the
+     IEEE/CVF International Conference on Computer Vision
+     (ICCV), October 2019.
+[56] Ziqin Wang, Jun Xu, Li Liu, Fan Zhu, and Ling Shao.
+     RANet: Ranking attention network for fast video object seg-
+     mentation. In Proceedings of the IEEE/CVF International
+     Conference on Computer Vision (ICCV), October 2019.
+[57] Zhonghao Wang, Mo Yu, Yunchao Wei, Rogerio Feris, Jin-
+     jun Xiong, Wen-mei Hwu, Thomas S. Huang, and Honghui
+     Shi. Differential treatment for stuff and things: A simple un-
+     supervised domain adaptation method for semantic segmen-
+     tation. In The IEEE/CVF Conference on Computer Vision
+     and Pattern Recognition (CVPR), June 2020.
+[58] Jinyu Yang, Weizhi An, Sheng Wang, Xinliang Zhu, Xin-
+     liang Yan, and Junzhou Huang. Label-driven reconstruction
+     for domain adaptation in semantic segmentation. In The Eu-
+     ropean Conference on Computer Vision (ECCV), 2020.
+[59] Yanchao Yang and Stefano Soatto. FDA: Fourier domain
+     adaptation for semantic segmentation. In Proceedings of
+     the IEEE/CVF Conference on Computer Vision and Pattern
+     Recognition (CVPR), June 2020.
+[60] Sangdoo Yun, Dongyoon Han, Seong Joon Oh, Sanghyuk
+     Chun, Junsuk Choe, and Youngjoon Yoo. Cutmix: Regular-
+     ization strategy to train strong classifiers with localizable fea-
+     tures. In Proceedings of the IEEE/CVF International Con-
+     ference on Computer Vision (ICCV), October 2019.
+[61] Yiheng Zhang, Zhaofan Qiu, Ting Yao, Dong Liu, and Tao
+     Mei. Fully convolutional adaptation networks for seman-
+     tic segmentation. In Proceedings of the IEEE Conference
+     on Computer Vision and Pattern Recognition (CVPR), June
+     2018.
+[62] Yabin Zhang, Hui Tang, Kui Jia, and Mingkui Tan. Domain-
+     symmetric networks for adversarial domain adaptation. In
+
+
+
+
+                                                                          8811
+

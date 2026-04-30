@@ -1,0 +1,13 @@
+Task,Timematch_shift_aug_macro_f1_percent,Previous_timematch_macro_f1_percent,Delta_vs_previous_percent_points,Previous_result_available
+FR1 -> FR2,69.8,67.84,1.96,yes
+FR1 -> AT1,63.3,64.36,-1.06,yes
+FR1 -> DK1,51.0,NA,NA,no
+FR2 -> FR1,61.1,NA,NA,no
+FR2 -> DK1,37.0,NA,NA,no
+FR2 -> AT1,53.3,60.45,-7.15,yes
+DK1 -> FR1,45.2,47.27,-2.07,yes
+DK1 -> FR2,43.8,42.33,1.47,yes
+DK1 -> AT1,51.6,43.35,8.25,yes
+AT1 -> FR1,66.2,66.41,-0.21,yes
+AT1 -> FR2,61.2,NA,NA,no
+AT1 -> DK1,55.8,55.12,0.68,yes
