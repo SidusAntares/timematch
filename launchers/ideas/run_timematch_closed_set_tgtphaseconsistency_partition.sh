@@ -12,7 +12,7 @@ run_task() {
   SOURCE="$source" TARGET="$target" DATA_ROOT="$DATA_ROOT" \
     TARGET_STRUCT_TRADE_OFF="${TARGET_STRUCT_TRADE_OFF:-0.05}" \
     TARGET_STRUCT_WARMUP_EPOCHS="${TARGET_STRUCT_WARMUP_EPOCHS:-2}" \
-    bash "$SCRIPT_DIR/run_timematch_closed_set_tgtphasecompact.sh"
+    bash "$SCRIPT_DIR/run_timematch_closed_set_tgtphaseconsistency.sh"
 }
 
 if [[ "$PARTITION" == "A" ]]; then

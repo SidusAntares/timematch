@@ -10,7 +10,7 @@ TARGET="${TARGET:-france/30TXT/2017}"
 SOURCE_TILE="$(echo "$SOURCE" | cut -d'/' -f2)"
 TARGET_TILE="$(echo "$TARGET" | cut -d'/' -f2)"
 SOURCE_MODEL="${SOURCE_MODEL:-pseltae_${SOURCE_TILE}_closedset_noshift}"
-TIMEMATCH_MODEL="${TIMEMATCH_MODEL:-timematch_${SOURCE_TILE}_to_${TARGET_TILE}_closedset_noshift_tgtphasecompact_p5}"
+TIMEMATCH_MODEL="${TIMEMATCH_MODEL:-timematch_${SOURCE_TILE}_to_${TARGET_TILE}_closedset_noshift_tgtphaseconsistency_p5}"
 TARGET_STRUCT_TRADE_OFF="${TARGET_STRUCT_TRADE_OFF:-0.05}"
 TARGET_STRUCT_WARMUP_EPOCHS="${TARGET_STRUCT_WARMUP_EPOCHS:-2}"
 
@@ -35,7 +35,7 @@ python train.py \
   --target "$TARGET" \
   --eval
 
-# TimeMatch + target-domain phase compactness on high-confidence pseudo labels
+# TimeMatch + target-domain phase consistency without pseudo labels
 python train.py \
   --data_root "$DATA_ROOT" \
   --closed_set True \
@@ -43,7 +43,7 @@ python train.py \
   -e "$TIMEMATCH_MODEL" \
   --source "$SOURCE" \
   --target "$TARGET" \
-  timematchtgtphasecompact \
+  timematchtgtphaseconsistency \
   --weights "outputs/$SOURCE_MODEL" \
   --target_struct_trade_off "$TARGET_STRUCT_TRADE_OFF" \
   --target_struct_warmup_epochs "$TARGET_STRUCT_WARMUP_EPOCHS"
