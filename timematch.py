@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from dataset import PixelSetData
 from evaluation import validation
-from ideas.target_phase_compactness import compute_target_phase_compactness_loss
+from ideas.target_phase_consistency import compute_target_phase_consistency_loss
 from transforms import (
     Normalize,
     RandomSamplePixels,
@@ -160,17 +160,23 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             if (
                 target_struct_trade_off > 0.0
                 and epoch >= target_struct_warmup_epochs
-                and target_update_count >= 2
             ):
-                spatial_feats_target = student.spatial_encoder(
-                    pixels_t[pseudo_mask],
-                    mask_t[pseudo_mask],
-                    extra_t[pseudo_mask],
+                with torch.no_grad():
+                    teacher_spatial_feats_weak = teacher.spatial_encoder(
+                        pixels_t_weak,
+                        mask_t_weak,
+                        extra_t_weak,
+                    )
+                student_spatial_feats_strong = student.spatial_encoder(
+                    pixels_t,
+                    mask_t,
+                    extra_t,
                 )
-                target_struct_loss, target_struct_logs = compute_target_phase_compactness_loss(
-                    spatial_feats_target,
-                    position_t[pseudo_mask],
-                    pseudo_targets[pseudo_mask],
+                target_struct_loss, target_struct_logs = compute_target_phase_consistency_loss(
+                    teacher_spatial_feats_weak,
+                    position_t_weak + target_to_source_shift,
+                    student_spatial_feats_strong,
+                    position_t,
                 )
                 loss = loss + target_struct_trade_off * target_struct_loss
 
