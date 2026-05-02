@@ -12,7 +12,6 @@ from tqdm import tqdm
 
 from dataset import PixelSetData
 from evaluation import validation
-from ideas.source_phase_compactness import compute_source_phase_compactness_loss
 from transforms import (
     Normalize,
     RandomSamplePixels,
@@ -128,13 +127,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             pixels_t, mask_t, position_t, extra_t = to_cuda(sample_target_strong, device)
             logits_target = None
             loss_target = 0.0
-            loss_struct = 0.0
-            source_phase_logs = None
             if config.domain_specific_bn:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
-                source_spatial_feats = student.spatial_encoder(pixels_s, mask_s, extra_s)
-                source_temporal_feats = student.temporal_encoder(source_spatial_feats, position_s + source_to_target_shift)
-                logits_source = student.decoder(source_temporal_feats)
+                logits_source = student.forward(pixels_s, mask_s, position_s + source_to_target_shift, extra_s)
                 if len(torch.nonzero(pseudo_mask)) >= 2:  # at least 2 examples required for BN
                     _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
                     logits_target = student.forward(pixels_t[pseudo_mask], mask_t[pseudo_mask], position_t[pseudo_mask], extra_t[pseudo_mask])
@@ -145,22 +140,13 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 mask = torch.cat([mask_s, mask_t[pseudo_mask]])
                 position = torch.cat([position_s + source_to_target_shift, position_t[pseudo_mask]])
                 extra = torch.cat([extra_s, extra_t[pseudo_mask]])
-                spatial_feats = student.spatial_encoder(pixels, mask, extra)
-                temporal_feats = student.temporal_encoder(spatial_feats, position)
-                logits = student.decoder(temporal_feats)
-                source_spatial_feats = spatial_feats[:config.batch_size]
+                logits = student.forward(pixels, mask, position, extra)
                 logits_source, logits_target = logits[:config.batch_size], logits[config.batch_size:]
 
             loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
-            if config.method == 'timematch_srcphasecompact':
-                loss_struct, source_phase_logs = compute_source_phase_compactness_loss(
-                    source_spatial_feats,
-                    position_s,
-                    source_labels,
-                )
-            loss = loss_source + config.trade_off * loss_target + loss_struct
+            loss = loss_source + config.trade_off * loss_target
 
             # compute loss and backprop
             optimizer.zero_grad()
@@ -181,11 +167,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 writer.add_scalar("train/loss", loss_meter.val, global_step)
                 writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
                 writer.add_scalar("train/target_updates", len(torch.nonzero(pseudo_mask)), global_step)
-                if source_phase_logs is not None:
-                    writer.add_scalar("train/source_phase_compactness_loss", source_phase_logs["compactness_loss"], global_step)
-                    for key, value in source_phase_logs.items():
-                        if key != "compactness_loss":
-                            writer.add_scalar(f"train/{key}", value, global_step)
 
             global_step += 1
 
