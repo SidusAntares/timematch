@@ -97,6 +97,8 @@ def main(config):
             writer = SummaryWriter(log_dir=f'{config.tensorboard_log_dir}_fold{fold_num}', purge_step=0)
             if config.method == 'timematch':
                 train_timematch(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
+            elif config.method == 'timematchtgtphasecompact':
+                train_timematch(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'dann':
                 train_dann(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'mmd':
@@ -378,6 +380,28 @@ if __name__ == '__main__':
     timematch.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT'])
     timematch.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
     timematch.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
+
+    # TimeMatch + target phase compactness on high-confidence pseudo labels
+    timematchtgtphasecompact = subparsers.add_parser('timematchtgtphasecompact')
+    timematchtgtphasecompact.add_argument('--weights', type=str, help='path to source trained model weights')
+    timematchtgtphasecompact.add_argument('--lr', default=0.0001, type=float, help='Learning rate')
+    timematchtgtphasecompact.add_argument("--pseudo_threshold", default=0.9, type=float, help='confidence threshold for assigning pseudo labels')
+    timematchtgtphasecompact.add_argument("--ema_decay", default=0.9999, type=float, help='decay rate for mean teacher')
+    timematchtgtphasecompact.add_argument("--trade_off", type=float, default=2.0, help='weight for unsupervised loss')
+    timematchtgtphasecompact.add_argument("--target_struct_trade_off", type=float, default=0.05, help='weight for target phase compactness loss')
+    timematchtgtphasecompact.add_argument("--target_struct_warmup_epochs", type=int, default=2, help='epochs to wait before enabling target phase compactness')
+    timematchtgtphasecompact.add_argument("--estimate_shift", type=bool_flag, default=True, help='whether to account for temporal shift')
+    timematchtgtphasecompact.add_argument('--epochs', default=20, type=int, help='Number of epochs per fold')
+    timematchtgtphasecompact.add_argument("--steps_per_epoch", type=int, default=500, help='n steps per epoch')
+    timematchtgtphasecompact.add_argument("--balance_source", type=bool_flag, default=True, help='class balanced batches for source')
+    timematchtgtphasecompact.add_argument("--use_focal_loss", type=bool_flag, default=True, help='use focal loss or cross entropy')
+    timematchtgtphasecompact.add_argument("--shift_source", type=bool_flag, default=True, help='whether to apply temporal shift to source data')
+    timematchtgtphasecompact.add_argument("--sample_size", type=int, default=100, help='number of batches to sample for estimating shift')
+    timematchtgtphasecompact.add_argument("--max_temporal_shift", type=int, default=60, help='maximum temporal shift to consider')
+    timematchtgtphasecompact.add_argument("--domain_specific_bn", type=bool_flag, default=True, help='whether to use domain specific batch normalization')
+    timematchtgtphasecompact.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT'])
+    timematchtgtphasecompact.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
+    timematchtgtphasecompact.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
 
     # Source-only + source phase compactness regularization
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')

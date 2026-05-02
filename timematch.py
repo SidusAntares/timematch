@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 from dataset import PixelSetData
 from evaluation import validation
+from ideas.target_phase_compactness import compute_target_phase_compactness_loss
 from transforms import (
     Normalize,
     RandomSamplePixels,
@@ -69,6 +70,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
     target_iter = iter(cycle(target_loader))
     min_shift, max_shift = -config.max_temporal_shift, config.max_temporal_shift
     target_to_source_shift = 0
+    target_struct_trade_off = getattr(config, "target_struct_trade_off", 0.0)
+    target_struct_warmup_epochs = getattr(config, "target_struct_warmup_epochs", 0)
 
     # To evaluate how well we estimate class distribution
     target_labels = target_loader_no_aug.dataset.get_labels()
@@ -120,6 +123,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 teacher_preds = F.softmax(teacher.forward(pixels_t_weak, mask_t_weak, position_t_weak + target_to_source_shift, extra_t_weak), dim=1)
             pseudo_conf, pseudo_targets = torch.max(teacher_preds, dim=1)
             pseudo_mask = pseudo_conf > config.pseudo_threshold
+            target_update_count = int(pseudo_mask.sum().item())
 
             # Update student on shifted source data and pseudo-labeled target data
             pixels_s, mask_s, position_s, extra_s = to_cuda(sample_source, device)
@@ -130,23 +134,45 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             if config.domain_specific_bn:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
                 logits_source = student.forward(pixels_s, mask_s, position_s + source_to_target_shift, extra_s)
-                if len(torch.nonzero(pseudo_mask)) >= 2:  # at least 2 examples required for BN
+                if target_update_count >= 2:  # at least 2 examples required for BN
                     _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
                     logits_target = student.forward(pixels_t[pseudo_mask], mask_t[pseudo_mask], position_t[pseudo_mask], extra_t[pseudo_mask])
             else:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
-                _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
-                pixels = torch.cat([pixels_s, pixels_t[pseudo_mask]])
-                mask = torch.cat([mask_s, mask_t[pseudo_mask]])
-                position = torch.cat([position_s + source_to_target_shift, position_t[pseudo_mask]])
-                extra = torch.cat([extra_s, extra_t[pseudo_mask]])
-                logits = student.forward(pixels, mask, position, extra)
-                logits_source, logits_target = logits[:config.batch_size], logits[config.batch_size:]
+                if target_update_count > 0:
+                    _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
+                    pixels = torch.cat([pixels_s, pixels_t[pseudo_mask]])
+                    mask = torch.cat([mask_s, mask_t[pseudo_mask]])
+                    position = torch.cat([position_s + source_to_target_shift, position_t[pseudo_mask]])
+                    extra = torch.cat([extra_s, extra_t[pseudo_mask]])
+                    logits = student.forward(pixels, mask, position, extra)
+                    logits_source, logits_target = logits[:config.batch_size], logits[config.batch_size:]
+                else:
+                    logits_source = student.forward(pixels_s, mask_s, position_s + source_to_target_shift, extra_s)
 
             loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
             loss = loss_source + config.trade_off * loss_target
+
+            target_struct_logs = {}
+            target_struct_loss = None
+            if (
+                target_struct_trade_off > 0.0
+                and epoch >= target_struct_warmup_epochs
+                and target_update_count >= 2
+            ):
+                spatial_feats_target = student.spatial_encoder(
+                    pixels_t[pseudo_mask],
+                    mask_t[pseudo_mask],
+                    extra_t[pseudo_mask],
+                )
+                target_struct_loss, target_struct_logs = compute_target_phase_compactness_loss(
+                    spatial_feats_target,
+                    position_t[pseudo_mask],
+                    pseudo_targets[pseudo_mask],
+                )
+                loss = loss + target_struct_trade_off * target_struct_loss
 
             # compute loss and backprop
             optimizer.zero_grad()
@@ -166,7 +192,14 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             if step % config.log_step == 0:
                 writer.add_scalar("train/loss", loss_meter.val, global_step)
                 writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
-                writer.add_scalar("train/target_updates", len(torch.nonzero(pseudo_mask)), global_step)
+                writer.add_scalar("train/target_updates", target_update_count, global_step)
+                writer.add_scalar(
+                    "train/target_struct_loss",
+                    0.0 if target_struct_loss is None else float(target_struct_loss.detach().item()),
+                    global_step,
+                )
+                for name, value in target_struct_logs.items():
+                    writer.add_scalar(f"train/{name}", value, global_step)
 
             global_step += 1
 
