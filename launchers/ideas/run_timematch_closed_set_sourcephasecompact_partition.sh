@@ -10,7 +10,7 @@ run_task() {
   local source="$1"
   local target="$2"
   SOURCE="$source" TARGET="$target" DATA_ROOT="$DATA_ROOT" \
-    bash "$SCRIPT_DIR/run_timematch_closed_set_srcphasecompact.sh"
+    bash "$SCRIPT_DIR/run_timematch_closed_set_sourcephasecompact.sh"
 }
 
 if [[ "$PARTITION" == "A" ]]; then

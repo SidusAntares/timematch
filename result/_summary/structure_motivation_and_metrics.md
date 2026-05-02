@@ -839,3 +839,179 @@ For the next method-definition stage:
   - interpretable
   - phase-specific
   - directly convertible into optimization targets
+
+## 9. Result Analysis: `srcphasecompact_p5`
+
+This section records the first direct method test built from the source self-structure analysis:
+
+- experiment family: `srcphasecompact_p5`
+- training condition: **closed-set**
+- augmentation condition: **no shift aug**
+
+This version means:
+
+- keep the original TimeMatch framework
+- add a source-only `phase compactness` auxiliary loss during adaptation
+- use a hard-coded **uniform 5-phase** partition
+
+### 9.1 Baseline and comparison target
+
+The comparison baseline is the established closed-set TimeMatch `no shift aug` result:
+
+- [timematch_closed_set_noshift_macro_f1_summary.csv](C:\Code\dev\PythonProject\timematch\result\_summary\timematch_closed_set_noshift_macro_f1_summary.csv)
+
+The experimental outputs are:
+
+- `outputs/timematch_*_closedset_noshift_srcphasecompact_p5`
+
+### 9.2 Per-task result table
+
+| Task | Closed-set TimeMatch baseline macro-F1 | `srcphasecompact_p5` macro-F1 | Delta |
+| --- | ---: | ---: | ---: |
+| `FR1 -> FR2` | `0.794553` | `0.793402` | `-0.001151` |
+| `FR1 -> AT1` | `0.813570` | `0.823265` | `+0.009695` |
+| `FR1 -> DK1` | `0.658140` | `0.658065` | `-0.000076` |
+| `FR2 -> FR1` | `0.651328` | `0.654655` | `+0.003326` |
+| `FR2 -> AT1` | `0.654543` | `0.645831` | `-0.008712` |
+| `FR2 -> DK1` | `0.515613` | `0.515697` | `+0.000083` |
+| `DK1 -> FR1` | `0.568280` | `0.588170` | `+0.019890` |
+| `DK1 -> FR2` | `0.453078` | `0.452302` | `-0.000776` |
+| `DK1 -> AT1` | `0.670296` | `0.674335` | `+0.004039` |
+| `AT1 -> FR1` | `0.714281` | `0.712590` | `-0.001691` |
+| `AT1 -> FR2` | `0.621411` | `0.610871` | `-0.010541` |
+| `AT1 -> DK1` | `0.748338` | `0.733314` | `-0.015023` |
+
+### 9.3 Overall average
+
+- baseline average macro-F1: `0.655286`
+- `srcphasecompact_p5` average macro-F1: `0.655208`
+- average delta: `-0.000078`
+
+So the overall result is:
+
+> the first `source phase compactness` regularizer is **not globally ineffective**, but it also does **not** produce a stable overall gain.
+
+### 9.4 Best gains and largest regressions
+
+Largest gains:
+
+- `DK1 -> FR1`: `+0.019890`
+- `FR1 -> AT1`: `+0.009695`
+- `DK1 -> AT1`: `+0.004039`
+
+Largest regressions:
+
+- `AT1 -> DK1`: `-0.015023`
+- `AT1 -> FR2`: `-0.010541`
+- `FR2 -> AT1`: `-0.008712`
+
+This means the method is **not collapsing everywhere**.
+
+It helps some source-target pairs clearly, but hurts others clearly.
+
+### 9.5 Source-wise average behavior
+
+Average delta grouped by source domain:
+
+| Source domain | Mean delta over its 3 targets |
+| --- | ---: |
+| `FR1` | `+0.002823` |
+| `FR2` | `-0.001768` |
+| `DK1` | `+0.007718` |
+| `AT1` | `-0.009085` |
+
+This source-wise view is especially important.
+
+It suggests:
+
+- the regularizer is **source-sensitive**
+- it is **not** a universal gain applied equally to every source
+
+In particular:
+
+- `DK1` as a source benefits most
+- `AT1` as a source suffers most
+
+### 9.6 What this result means
+
+Two conclusions are already fairly clear.
+
+#### A. The direction is real
+
+Because some tasks improve substantially, especially:
+
+- `DK1 -> FR1`
+- `FR1 -> AT1`
+- `DK1 -> AT1`
+
+the source self-structure idea cannot be dismissed as empty noise.
+
+The result supports:
+
+- source-domain phase compactness can provide a meaningful inductive bias
+
+#### B. The current hard-coded version is too blunt
+
+At the same time, the average result being almost unchanged means the current implementation is too coarse.
+
+This first version uses:
+
+- one global `lambda`
+- one fixed 5-phase partition
+- one fixed phase-weight pattern
+- the same compactness pressure for every source domain
+
+The evidence now suggests this is too uniform.
+
+More likely:
+
+- some source domains are weak enough to benefit from stronger compactness shaping
+- some source domains are already strong and get over-constrained
+
+### 9.7 Why this happened
+
+The most plausible explanation is the one already anticipated during method discussion:
+
+- the extra loss is computed only on source samples
+- but it is applied inside the shared adaptation model
+- so the encoder is pushed toward a source-specific compact representation
+
+If that push is helpful, transfer improves.
+
+If that push over-specializes the source structure, the target representation can be dragged in the wrong direction.
+
+So this version exposes a real tension:
+
+> a source self-structure loss can help, but a globally hard source compactness objective can also become a source-specific bias.
+
+### 9.8 Practical judgment on this experiment
+
+This experiment should be judged as:
+
+- **useful**
+- **informative**
+- but **not yet a stable final method**
+
+It answered an important question:
+
+> yes, `source phase compactness` is worth treating as a method ingredient
+
+But it also answered a second question:
+
+> no, the first global hard-coded implementation is not the right final form
+
+### 9.9 Immediate next-step implication
+
+The main implication is not to abandon compactness.
+
+It is to make compactness **more selective and more conservative**.
+
+The most natural next refinements are:
+
+1. reduce `lambda`
+2. keep only the strongest phases such as `p2` and `p3`
+3. avoid treating all source domains as if they should receive the same compactness pressure
+
+So the current reading is:
+
+> source-domain self-structure regularization has value, but it should be used as a **targeted source-sensitive bias**, not as a one-size-fits-all global penalty.

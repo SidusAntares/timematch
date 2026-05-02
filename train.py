@@ -20,6 +20,7 @@ from competitors.mmd.train_mmd import train_mmd
 from competitors.alda.train_alda import train_alda
 from dataset import PixelSetData, create_evaluation_loaders, create_train_loader
 from evaluation import evaluation, validation
+from ideas.train_source_phase_compactness import train_supervised_source_phase_compactness
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
 from timematch import train_timematch
 from transforms import Normalize, RandomSamplePixels, RandomSampleTimeSteps, ToTensor, RandomTemporalShift, Identity
@@ -94,7 +95,7 @@ def main(config):
             #         continue
 
             writer = SummaryWriter(log_dir=f'{config.tensorboard_log_dir}_fold{fold_num}', purge_step=0)
-            if config.method in ['timematch', 'timematch_srcphasecompact']:
+            if config.method == 'timematch':
                 train_timematch(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'dann':
                 train_dann(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
@@ -104,6 +105,8 @@ def main(config):
                 train_jumbot(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'alda':
                 train_alda(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
+            elif config.method == 'sourcephasecompact':
+                train_supervised_source_phase_compactness(model, config, writer, splits, val_loader, device, best_model_path)
             else:
                 train_supervised(model, config, writer, splits, val_loader, device, best_model_path)
 
@@ -295,7 +298,7 @@ if __name__ == '__main__':
     parser.add_argument('--closed_set', default=False, type=bool_flag, help='exclude unknown / out-of-class parcels')
 
     # Training configuration
-    parser.add_argument('--epochs', default=100, type=int, help='Number of epochs per fold')
+    parser.add_argument('--epochs', default=30, type=int, help='Number of epochs per fold')
     parser.add_argument('--batch_size', default=128, type=int, help='Batch size')
     parser.add_argument('--lr', default=1e-3, type=float, help='Learning rate')
     parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight decay rate')
@@ -376,25 +379,8 @@ if __name__ == '__main__':
     timematch.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
     timematch.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
 
-    # TimeMatch + source phase compactness regularization
-    timematch_srcphasecompact = subparsers.add_parser('timematch_srcphasecompact')
-    timematch_srcphasecompact.add_argument('--weights', type=str, help='path to source trained model weights')
-    timematch_srcphasecompact.add_argument('--lr', default=0.0001, type=float, help='Learning rate')
-    timematch_srcphasecompact.add_argument("--pseudo_threshold", default=0.9, type=float, help='confidence threshold for assigning pseudo labels')
-    timematch_srcphasecompact.add_argument("--ema_decay", default=0.9999, type=float, help='decay rate for mean teacher')
-    timematch_srcphasecompact.add_argument("--trade_off", type=float, default=2.0, help='weight for unsupervised loss')
-    timematch_srcphasecompact.add_argument("--estimate_shift", type=bool_flag, default=True, help='whether to account for temporal shift')
-    timematch_srcphasecompact.add_argument('--epochs', default=20, type=int, help='Number of epochs per fold')
-    timematch_srcphasecompact.add_argument("--steps_per_epoch", type=int, default=500, help='n steps per epoch')
-    timematch_srcphasecompact.add_argument("--balance_source", type=bool_flag, default=True, help='class balanced batches for source')
-    timematch_srcphasecompact.add_argument("--use_focal_loss", type=bool_flag, default=True, help='use focal loss or cross entropy')
-    timematch_srcphasecompact.add_argument("--shift_source", type=bool_flag, default=True, help='whether to apply temporal shift to source data')
-    timematch_srcphasecompact.add_argument("--sample_size", type=int, default=100, help='number of batches to sample for estimating shift')
-    timematch_srcphasecompact.add_argument("--max_temporal_shift", type=int, default=60, help='maximum temporal shift to consider')
-    timematch_srcphasecompact.add_argument("--domain_specific_bn", type=bool_flag, default=True, help='whether to use domain specific batch normalization')
-    timematch_srcphasecompact.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT'])
-    timematch_srcphasecompact.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
-    timematch_srcphasecompact.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
+    # Source-only + source phase compactness regularization
+    sourcephasecompact = subparsers.add_parser('sourcephasecompact')
 
     cfg = parser.parse_args()
 

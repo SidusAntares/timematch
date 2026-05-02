@@ -1,5 +1,34 @@
 # Candidate Method Mainlines for Structure-Based Time-Series UDA
 
+## Status Note (2026-05-01)
+
+This file is a **method-candidate history document**, not the current single-source-of-truth for implementation status.
+
+Several parts below describe:
+
+- earlier candidate rankings
+- earlier prototype-centered priorities
+- and the first adaptation-stage `srcphasecompact_p5` probe
+
+Those sections are still useful historically, but the current status is now:
+
+1. the project motivation has been corrected toward **source-domain self-structure**
+2. the strongest source-side analysis signals are:
+   - `phase compactness`
+   - `phase margin`
+3. the first adaptation-stage probe `srcphasecompact_p5` showed:
+   - the idea is meaningful
+   - but a global hard source compactness regularizer is too blunt
+4. the cleaner current implementation direction is:
+   - improve source-domain self-structure first
+   - then initialize ordinary TimeMatch from that improved source model
+
+So when this file conflicts with newer records, prefer:
+
+- [structure_motivation_and_metrics.md](C:\Code\dev\PythonProject\timematch\result\_summary\structure_motivation_and_metrics.md)
+
+for the latest analysis-based judgment.
+
 ## Why this document exists
 - The current project has already shown that **prototype-level category structure** explains transfer performance better than global discrepancy metrics such as MMD/CORAL.
 - Therefore, the next method should not be chosen by intuition alone, but by asking:
@@ -339,3 +368,189 @@ It refines it:
 - the earlier prototype lines still matter:
   - but more as components inside a phase-aware design
   - than as the full next method by themselves
+
+---
+
+## Retrospective Implementation Note: `srcphasecompact_p5`
+
+This section records the **first implemented source-domain self-structure regularizer** that was actually run as:
+
+- `timematch_*_closedset_noshift_srcphasecompact_p5`
+
+This version should be treated as an **exploratory implementation record**, not the final recommended formulation.
+
+### What this version was trying to test
+
+The phase-metric analysis had already shown that:
+
+- `source phase compactness` is the strongest source self-structure signal
+- informative phases are not equally useful
+- a source domain with tighter within-class phase structure is more likely to transfer well
+
+So the first concrete question became:
+
+> if we directly regularize source-domain phase-wise compactness during adaptation, can we improve downstream closed-set TimeMatch?
+
+### Where the loss was attached in the framework
+
+This first version was attached **inside the TimeMatch training stage**, not in source-only pretraining.
+
+The logic was:
+
+1. keep the original TimeMatch training objective
+2. extract source-batch time-step features from the shared `PSE` / spatial encoder
+3. compute a source-only phase compactness loss on those features
+4. add that loss to the total training loss as a small auxiliary regularizer
+
+So the total optimization target became:
+
+```text
+L_total = L_TimeMatch + L_src_phase_compactness
+```
+
+with:
+
+```text
+L_src_phase_compactness = lambda_compact * sum_k w_k * L_compact^(k)
+```
+
+This means:
+
+- the additional supervision came only from **source labeled samples**
+- but it was applied during the **domain adaptation stage**
+- and gradients updated the same shared encoder used by TimeMatch
+
+### Which features were used
+
+The regularizer was built on the **PSE time-step feature curve**, not on:
+
+- the pooled `LTAE` sequence embedding
+- and not on the final decoder logits
+
+For a source sample `i`, let:
+
+```text
+H_i = [h_i^(1), h_i^(2), ..., h_i^(T)]
+```
+
+where `h_i^(t)` is the `PSE` output at time step `t`.
+
+This choice was made because the source self-structure analysis itself was phase-based and time-step-based, so the most faithful implementation should regularize the same structural carrier.
+
+### How the phase representation was built
+
+This first version used a **hard-coded uniform 5-phase split**.
+
+If the sequence has `T` valid encoded time steps, split the time axis into:
+
+- `p1`
+- `p2`
+- `p3`
+- `p4`
+- `p5`
+
+with contiguous equal-length windows up to rounding.
+
+For each sample `i` and phase `k`, compute the phase feature by averaging time-step PSE features inside that phase:
+
+```text
+z_i^(k) = mean_{t in T_k} h_i^(t)
+```
+
+where `T_k` is the set of time indices belonging to phase `k`.
+
+### How the compactness loss was computed
+
+For each phase `k` and class `c`, compute the phase-wise class center:
+
+```text
+mu_c^(k) = (1 / N_c) * sum_{i: y_i = c} z_i^(k)
+```
+
+Then define the phase-wise within-class compactness penalty:
+
+```text
+L_compact^(k) = (1 / N) * sum_i || z_i^(k) - mu_{y_i}^(k) ||_2^2
+```
+
+This loss becomes small when:
+
+- same-class source samples form tighter clusters
+- especially inside a specific temporal phase
+
+### How the phase weights were chosen
+
+This version did **not** learn phase weights.
+
+Instead, phase weights were hard-coded from the earlier `uniform 5-phase` correlation analysis, using the absolute strength of:
+
+- `source_phase_compactness_p1`
+- `source_phase_compactness_p2`
+- `source_phase_compactness_p3`
+- `source_phase_compactness_p4`
+- `source_phase_compactness_p5`
+
+The normalized weights used were:
+
+```text
+p1 = 0.2472
+p2 = 0.2318
+p3 = 0.2127
+p4 = 0.1578
+p5 = 0.1466
+```
+
+So this first implementation emphasized:
+
+- `p1`
+- `p2`
+- `p3`
+
+more than:
+
+- `p4`
+- `p5`
+
+### Hyperparameters used in this version
+
+This exploratory version used:
+
+- partition type: `uniform`
+- phase count: `5`
+- extra loss: `source phase compactness` only
+- `lambda_compact = 0.05`
+- training condition: `closed-set`
+- augmentation condition: `no shift aug`
+
+No extra margin loss was added in this version.
+
+### Why this design was chosen
+
+This design was chosen because it was the **smallest direct test** of the source self-structure hypothesis:
+
+- use the strongest source self-structure indicator already found by analysis
+- regularize the same temporal feature carrier used in the analysis
+- avoid introducing clustering, dynamic boundaries, margin mining, or target-side extra machinery
+
+So the purpose of `srcphasecompact_p5` was not to be the final method, but to answer:
+
+> does source-domain phase compactness act as a useful inductive bias at all?
+
+### What limitation this version had
+
+This version mixed two ideas together:
+
+- source-domain self-structure motivation
+- and adaptation-stage shared-encoder optimization
+
+That means it could improve some transfer tasks, but it could also pull the target representation in a source-specific direction.
+
+This is why later discussion shifted toward a cleaner formulation:
+
+- first improve source-domain self-structure in source-only training
+- then use the improved source model to initialize ordinary TimeMatch
+
+So `srcphasecompact_p5` should be read as:
+
+- a valid first probe
+- but not yet the best-isolated implementation of the method motivation

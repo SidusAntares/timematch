@@ -1,5 +1,33 @@
 # Project Progress Summary
 
+## Status Note (2026-05-01)
+
+This file contains several intermediate judgments from an earlier stage.
+
+In particular, parts of this file still reflect:
+
+- older closed-set baseline numbers
+- a stronger emphasis on source-target structure gap than the current motivation allows
+- a pre-implementation belief that the next mainline should directly become adaptation-stage phase-aware structure alignment
+
+The current project status is now more specific:
+
+1. the main motivation should be **source-domain self-structure**, not source-target gap alone
+2. the strongest source-side indicators are:
+   - `phase compactness`
+   - `phase margin`
+3. the first direct implementation `srcphasecompact_p5` showed:
+   - source self-structure regularization is not useless
+   - but a global hard-coded adaptation-stage compactness penalty is too coarse
+4. the cleaner next step is now:
+   - source-only self-structure shaping first
+   - then ordinary TimeMatch initialization from that source model
+
+For the latest numeric baseline and source-phase analysis, prefer:
+
+- [timematch_closed_set_noshift_macro_f1_summary.csv](C:\Code\dev\PythonProject\timematch\result\_summary\timematch_closed_set_noshift_macro_f1_summary.csv)
+- [structure_motivation_and_metrics.md](C:\Code\dev\PythonProject\timematch\result\_summary\structure_motivation_and_metrics.md)
+
 ## Current scope
 - Main baseline has moved from the original open-set setting to a **closed-set** setting.
 - PRA remains a single-pair validation track centered on `FR1 -> DK1`.
