@@ -8,7 +8,15 @@ from ideas.source_phase_compactness import (
     SourcePhaseWeightTracker,
     compute_source_phase_compactness_loss,
 )
-from transforms import Identity, Normalize, RandomSamplePixels, RandomSampleTimeSteps, RandomTemporalShift, ToTensor
+from transforms import (
+    Identity,
+    Normalize,
+    RandomSamplePixels,
+    RandomSampleTimeSteps,
+    RandomTemporalShift,
+    ToTensor,
+    build_source_structure_transform,
+)
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda
 
@@ -30,6 +38,11 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         RandomSamplePixels(config.num_pixels),
         RandomSampleTimeSteps(config.seq_length),
         RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
+        build_source_structure_transform(
+            kind=getattr(config, "source_structure_transform", "none"),
+            strength=getattr(config, "source_structure_strength", 0.0),
+            phase_count=getattr(config, "source_structure_phase_count", 5),
+        ),
         Normalize(),
         ToTensor(),
     ])

@@ -23,7 +23,15 @@ from evaluation import evaluation, validation
 from ideas.train_source_phase_compactness import train_supervised_source_phase_compactness
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
 from timematch import train_timematch
-from transforms import Normalize, RandomSamplePixels, RandomSampleTimeSteps, ToTensor, RandomTemporalShift, Identity
+from transforms import (
+    Normalize,
+    RandomSamplePixels,
+    RandomSampleTimeSteps,
+    ToTensor,
+    RandomTemporalShift,
+    Identity,
+    build_source_structure_transform,
+)
 from utils import label_utils
 from utils.focal_loss import FocalLoss
 from utils.metrics import overall_classification_report
@@ -132,6 +140,16 @@ def main(config):
 def get_num_trainable_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+
+def maybe_source_structure_transform(config, dataset_name):
+    if dataset_name != config.source:
+        return Identity()
+    return build_source_structure_transform(
+        kind=getattr(config, "source_structure_transform", "none"),
+        strength=getattr(config, "source_structure_strength", 0.0),
+        phase_count=getattr(config, "source_structure_phase_count", 5),
+    )
+
 def get_dataset_size(data_root, dataset):
     dir = os.path.join(data_root, dataset)
     return len([name for name in os.listdir(os.path.join(dir, 'data')) if name.endswith('.zarr')])
@@ -141,17 +159,18 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
     best_f1 = 0
+    dataset_name = config.source
+    if config.train_on_target:
+        dataset_name = config.target
 
     train_transform = transforms.Compose([
         RandomSamplePixels(config.num_pixels),
         RandomSampleTimeSteps(config.seq_length),
         RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
+        maybe_source_structure_transform(config, dataset_name),
         Normalize(),
         ToTensor(),
     ])
-    dataset_name = config.source
-    if config.train_on_target:
-        dataset_name = config.target
 
     dataset = PixelSetData(
         config.data_root,
@@ -318,6 +337,24 @@ if __name__ == '__main__':
     parser.add_argument('--with_shift_aug', default=False, type=bool_flag, help='whether to apply random temporal shift augmentation')
     parser.add_argument('--shift_aug_p', default=1.0, type=float, help='probability to apply temporal shift augmentation')
     parser.add_argument('--max_shift_aug', default=60, type=int, help='highest shift to apply for temporal shift augmentation')
+    parser.add_argument(
+        '--source_structure_transform',
+        default='none',
+        choices=['none', 'temporal_deviation_scale', 'phase_center_blend', 'middle_phase_deviation_boost'],
+        help='rule-based source-only data transform applied before normalization',
+    )
+    parser.add_argument(
+        '--source_structure_strength',
+        default=0.0,
+        type=float,
+        help='strength of the source-only structure transform; sign and range depend on transform type',
+    )
+    parser.add_argument(
+        '--source_structure_phase_count',
+        default=5,
+        type=int,
+        help='phase count used by phase-aware source-only structure transforms',
+    )
 
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')
