@@ -40,6 +40,16 @@ def parse_args():
     parser.add_argument("--data_root", default="/data/user/DBL/timematch_data", type=str)
     parser.add_argument("--outputs_root", default="outputs", type=str)
     parser.add_argument(
+        "--experiment_suffix",
+        default="",
+        type=str,
+        help=(
+            "Optional suffix appended to the canonical TimeMatch experiment name. "
+            "Example: '_sourcephasecompact_p5' targets "
+            "'timematch_<SRC>_to_<TGT>_closedset_noshift_sourcephasecompact_p5'."
+        ),
+    )
+    parser.add_argument(
         "--output_csv",
         default="result/baseline_analysis/open_set_transfer_metrics_recomputed.csv",
         type=str,
@@ -266,6 +276,7 @@ def interpolate_curve(curve, positions, grid_size):
 @torch.no_grad()
 def extract_domain_statistics(model, loader, device, num_classes, temporal_grid_size, max_acf_lag, phase_only=False):
     feature_batches = [] if not phase_only else None
+    raw_feature_batches = [] if not phase_only else None
     label_batches = [] if not phase_only else None
     acf_sum = None
     acf_count = 0
@@ -278,6 +289,7 @@ def extract_domain_statistics(model, loader, device, num_classes, temporal_grid_
     raw_global_curve_count = 0
     ndvi_values = [[] for _ in range(num_classes)] if not phase_only else None
     time_feature_sq_norm_sums = None
+    raw_time_feature_sq_norm_sums = None if not phase_only else None
 
     for sample in tqdm(loader, desc="Extracting", leave=False):
         labels = sample["label"]
@@ -323,6 +335,12 @@ def extract_domain_statistics(model, loader, device, num_classes, temporal_grid_
                 temporal_grid_size,
                 dtype=torch.float32,
             )
+        if not phase_only and raw_time_feature_sq_norm_sums is None:
+            raw_time_feature_sq_norm_sums = torch.zeros(
+                num_classes,
+                temporal_grid_size,
+                dtype=torch.float32,
+            )
 
         for batch_idx in range(spatial_feats.shape[0]):
             class_id = int(labels[batch_idx].item())
@@ -343,10 +361,13 @@ def extract_domain_statistics(model, loader, device, num_classes, temporal_grid_
                     positions_cpu[batch_idx].numpy(),
                     temporal_grid_size,
                 )
-                raw_curve_sums[class_id] += torch.from_numpy(raw_interpolated)
+                raw_interpolated_tensor = torch.from_numpy(raw_interpolated)
+                raw_curve_sums[class_id] += raw_interpolated_tensor
                 raw_curve_counts[class_id] += 1
-                raw_global_curve_sum += torch.from_numpy(raw_interpolated)
+                raw_global_curve_sum += raw_interpolated_tensor
                 raw_global_curve_count += 1
+                raw_time_feature_sq_norm_sums[class_id] += raw_interpolated_tensor.pow(2).sum(dim=1)
+                raw_feature_batches.append(raw_interpolated_tensor.flatten().unsqueeze(0))
 
                 red = raw_series[batch_idx, :, 2]
                 nir = raw_series[batch_idx, :, 6]
@@ -367,6 +388,7 @@ def extract_domain_statistics(model, loader, device, num_classes, temporal_grid_
             acf_count += batch_size
 
     features = torch.cat(feature_batches, dim=0).float() if not phase_only else None
+    raw_features = torch.cat(raw_feature_batches, dim=0).float() if not phase_only else None
     labels = torch.cat(label_batches, dim=0).long() if not phase_only else None
     acf_mean = acf_sum / max(acf_count, 1) if not phase_only else None
 
@@ -389,9 +411,11 @@ def extract_domain_statistics(model, loader, device, num_classes, temporal_grid_
     else:
         raw_mean_curves = None
         global_raw_curve = None
+        raw_features = None
 
     return {
         "features": features,
+        "raw_features": raw_features,
         "labels": labels,
         "acf": acf_mean,
         "mean_curves": mean_curves,
@@ -402,6 +426,7 @@ def extract_domain_statistics(model, loader, device, num_classes, temporal_grid_
         "ndvi_values": ndvi_values,
         "positions": domain_positions,
         "time_feature_sq_norm_sums": time_feature_sq_norm_sums,
+        "raw_time_feature_sq_norm_sums": raw_time_feature_sq_norm_sums,
     }
 
 
@@ -500,23 +525,31 @@ def compute_phase_curve_distances(source_stats, target_stats):
     return results
 
 
-def compute_source_curve_spread(domain_stats):
-    valid_classes = torch.nonzero(domain_stats["curve_counts"] > 0, as_tuple=False).flatten()
+def compute_curve_spread_from_keys(domain_stats, curve_key="mean_curves", count_key="curve_counts"):
+    valid_classes = torch.nonzero(domain_stats[count_key] > 0, as_tuple=False).flatten()
     if len(valid_classes) < 2:
         return float("nan")
-    curves = domain_stats["mean_curves"][valid_classes].reshape(len(valid_classes), -1)
+    curves = domain_stats[curve_key][valid_classes].reshape(len(valid_classes), -1)
     return float(torch.pdist(curves, p=2).mean().item())
 
 
-def compute_source_curve_activity_range(domain_stats):
-    valid_classes = torch.nonzero(domain_stats["curve_counts"] > 0, as_tuple=False).flatten()
+def compute_source_curve_spread(domain_stats):
+    return compute_curve_spread_from_keys(domain_stats, curve_key="mean_curves", count_key="curve_counts")
+
+
+def compute_curve_activity_range_from_keys(domain_stats, curve_key="mean_curves", count_key="curve_counts"):
+    valid_classes = torch.nonzero(domain_stats[count_key] > 0, as_tuple=False).flatten()
     if len(valid_classes) == 0:
         return float("nan")
     activity = []
     for class_id in valid_classes.tolist():
-        curve = domain_stats["mean_curves"][class_id]
+        curve = domain_stats[curve_key][class_id]
         activity.append(torch.norm(curve.max(dim=0).values - curve.min(dim=0).values, p=2))
     return float(torch.stack(activity).mean().item())
+
+
+def compute_source_curve_activity_range(domain_stats):
+    return compute_curve_activity_range_from_keys(domain_stats, curve_key="mean_curves", count_key="curve_counts")
 
 
 def compute_source_fisher_ratio(features, labels, eps=1e-6):
@@ -535,6 +568,26 @@ def compute_source_fisher_ratio(features, labels, eps=1e-6):
 
     ratio = between / (within + eps)
     return float(ratio.item())
+
+
+def compute_domain_curve_spread(domain_stats):
+    return compute_source_curve_spread(domain_stats)
+
+
+def compute_domain_curve_activity_range(domain_stats):
+    return compute_source_curve_activity_range(domain_stats)
+
+
+def compute_raw_curve_spread(domain_stats):
+    return compute_curve_spread_from_keys(domain_stats, curve_key="raw_mean_curves", count_key="raw_curve_counts")
+
+
+def compute_raw_curve_activity_range(domain_stats):
+    return compute_curve_activity_range_from_keys(domain_stats, curve_key="raw_mean_curves", count_key="raw_curve_counts")
+
+
+def compute_domain_fisher_ratio(features, labels, eps=1e-6):
+    return compute_source_fisher_ratio(features, labels, eps=eps)
 
 
 def compute_global_curve_shift_mse(source_stats, target_stats):
@@ -625,15 +678,39 @@ def compute_source_ndvi_q90_metrics(source_stats):
     return float(np.mean(ranges)), float(np.std(ranges))
 
 
-def compute_source_class_curve_variance_mean(source_stats):
-    valid_classes = torch.nonzero(source_stats["raw_curve_counts"] > 0, as_tuple=False).flatten()
+def compute_domain_ndvi_q90_metrics(domain_stats):
+    return compute_source_ndvi_q90_metrics(domain_stats)
+
+
+def compute_class_curve_variance_mean_from_keys(domain_stats, curve_key="raw_mean_curves", count_key="raw_curve_counts"):
+    valid_classes = torch.nonzero(domain_stats[count_key] > 0, as_tuple=False).flatten()
     if len(valid_classes) == 0:
         return float("nan")
     variances = []
     for class_id in valid_classes.tolist():
-        curve = source_stats["raw_mean_curves"][class_id]
+        curve = domain_stats[curve_key][class_id]
         variances.append(torch.var(curve, dim=0, unbiased=False).mean())
     return float(torch.stack(variances).mean().item())
+
+
+def compute_source_class_curve_variance_mean(source_stats):
+    return compute_class_curve_variance_mean_from_keys(
+        source_stats,
+        curve_key="raw_mean_curves",
+        count_key="raw_curve_counts",
+    )
+
+
+def compute_domain_class_curve_variance_mean(domain_stats):
+    return compute_source_class_curve_variance_mean(domain_stats)
+
+
+def compute_encoded_class_curve_variance_mean(domain_stats):
+    return compute_class_curve_variance_mean_from_keys(
+        domain_stats,
+        curve_key="mean_curves",
+        count_key="curve_counts",
+    )
 
 
 def moving_average_1d(values, window):
@@ -646,8 +723,14 @@ def moving_average_1d(values, window):
     return smoothed.view(-1)
 
 
-def compute_source_time_structure_statistics(source_stats, eps=1e-6):
-    valid_classes = torch.nonzero(source_stats["curve_counts"] > 0, as_tuple=False).flatten()
+def compute_time_structure_statistics_from_keys(
+    domain_stats,
+    curve_key="mean_curves",
+    count_key="curve_counts",
+    sq_norm_key="time_feature_sq_norm_sums",
+    eps=1e-6,
+):
+    valid_classes = torch.nonzero(domain_stats[count_key] > 0, as_tuple=False).flatten()
     if len(valid_classes) < 2:
         return {
             "separability_curve": torch.empty(0, dtype=torch.float32),
@@ -656,9 +739,9 @@ def compute_source_time_structure_statistics(source_stats, eps=1e-6):
             "between_curve": torch.empty(0, dtype=torch.float32),
         }
 
-    counts = source_stats["curve_counts"][valid_classes].float()
-    mean_curves = source_stats["mean_curves"][valid_classes]
-    mean_sq_norm = source_stats["time_feature_sq_norm_sums"][valid_classes] / counts.unsqueeze(1)
+    counts = domain_stats[count_key][valid_classes].float()
+    mean_curves = domain_stats[curve_key][valid_classes]
+    mean_sq_norm = domain_stats[sq_norm_key][valid_classes] / counts.unsqueeze(1)
     mean_norm_sq = mean_curves.pow(2).sum(dim=2)
     radius_sq = (mean_sq_norm - mean_norm_sq).clamp_min(0.0)
 
@@ -689,6 +772,16 @@ def compute_source_time_structure_statistics(source_stats, eps=1e-6):
         "within_curve": torch.stack(within_vals),
         "between_curve": torch.stack(between_vals),
     }
+
+
+def compute_source_time_structure_statistics(source_stats, eps=1e-6):
+    return compute_time_structure_statistics_from_keys(
+        source_stats,
+        curve_key="mean_curves",
+        count_key="curve_counts",
+        sq_norm_key="time_feature_sq_norm_sums",
+        eps=eps,
+    )
 
 
 def _segment_cost_prefix(values):
@@ -749,11 +842,24 @@ def find_optimal_phase_boundaries(values, phase_count, min_phase_len):
     return boundaries
 
 
-def infer_structure_driven_phase_splits(source_stats, phase_count=3, min_phase_len=3, smooth_window=3):
-    stats = compute_source_time_structure_statistics(source_stats)
+def infer_structure_driven_phase_splits_from_keys(
+    domain_stats,
+    curve_key="mean_curves",
+    count_key="curve_counts",
+    sq_norm_key="time_feature_sq_norm_sums",
+    phase_count=3,
+    min_phase_len=3,
+    smooth_window=3,
+):
+    stats = compute_time_structure_statistics_from_keys(
+        domain_stats,
+        curve_key=curve_key,
+        count_key=count_key,
+        sq_norm_key=sq_norm_key,
+    )
     separability_curve = stats["separability_curve"]
     if separability_curve.numel() == 0:
-        return np.array_split(np.arange(source_stats["mean_curves"].shape[1]), phase_count), stats
+        return np.array_split(np.arange(domain_stats[curve_key].shape[1]), phase_count), stats
 
     margin_curve = stats["margin_curve"]
     compactness_curve = 1.0 / (stats["within_curve"] + 1e-6)
@@ -796,8 +902,20 @@ def infer_structure_driven_phase_splits(source_stats, phase_count=3, min_phase_l
     return phase_splits, stats
 
 
-def infer_uniform_phase_splits(source_stats, phase_count=3):
-    total_steps = int(source_stats["mean_curves"].shape[1])
+def infer_structure_driven_phase_splits(source_stats, phase_count=3, min_phase_len=3, smooth_window=3):
+    return infer_structure_driven_phase_splits_from_keys(
+        source_stats,
+        curve_key="mean_curves",
+        count_key="curve_counts",
+        sq_norm_key="time_feature_sq_norm_sums",
+        phase_count=phase_count,
+        min_phase_len=min_phase_len,
+        smooth_window=smooth_window,
+    )
+
+
+def infer_uniform_phase_splits_from_keys(domain_stats, curve_key="mean_curves", phase_count=3):
+    total_steps = int(domain_stats[curve_key].shape[1])
     phase_splits = np.array_split(np.arange(total_steps), phase_count)
     boundary_stats = {}
     running = 0
@@ -807,15 +925,43 @@ def infer_uniform_phase_splits(source_stats, phase_count=3):
     return phase_splits, boundary_stats
 
 
-def compute_source_phase_self_structure_metrics(source_stats, phase_partition_mode="structure", phase_count=3, eps=1e-6):
+def infer_uniform_phase_splits(source_stats, phase_count=3):
+    return infer_uniform_phase_splits_from_keys(source_stats, curve_key="mean_curves", phase_count=phase_count)
+
+
+def compute_phase_self_structure_metrics_from_keys(
+    domain_stats,
+    prefix,
+    curve_key="mean_curves",
+    count_key="curve_counts",
+    sq_norm_key="time_feature_sq_norm_sums",
+    phase_partition_mode="structure",
+    phase_count=3,
+    eps=1e-6,
+):
     phase_names = [f"p{i}" for i in range(1, phase_count + 1)]
     metrics = {}
     if phase_partition_mode == "uniform":
-        phase_splits, boundary_stats = infer_uniform_phase_splits(source_stats, phase_count=phase_count)
-        time_stats = compute_source_time_structure_statistics(source_stats)
+        phase_splits, boundary_stats = infer_uniform_phase_splits_from_keys(
+            domain_stats,
+            curve_key=curve_key,
+            phase_count=phase_count,
+        )
+        time_stats = compute_time_structure_statistics_from_keys(
+            domain_stats,
+            curve_key=curve_key,
+            count_key=count_key,
+            sq_norm_key=sq_norm_key,
+        )
         time_stats.update(boundary_stats)
     else:
-        phase_splits, time_stats = infer_structure_driven_phase_splits(source_stats, phase_count=phase_count)
+        phase_splits, time_stats = infer_structure_driven_phase_splits_from_keys(
+            domain_stats,
+            curve_key=curve_key,
+            count_key=count_key,
+            sq_norm_key=sq_norm_key,
+            phase_count=phase_count,
+        )
     separability_curve = time_stats["separability_curve"]
     margin_curve = time_stats["margin_curve"]
     within_curve = time_stats["within_curve"]
@@ -832,18 +978,70 @@ def compute_source_phase_self_structure_metrics(source_stats, phase_partition_mo
         margin = margin_curve[phase_indices].mean()
         compactness = 1.0 / (within_curve[phase_indices].mean() + eps)
 
-        metrics[f"source_phase_separability_{phase_name}"] = float(separability.item())
-        metrics[f"source_phase_margin_{phase_name}"] = float(margin.item())
-        metrics[f"source_phase_compactness_{phase_name}"] = float(compactness.item())
+        metrics[f"{prefix}_separability_{phase_name}"] = float(separability.item())
+        metrics[f"{prefix}_margin_{phase_name}"] = float(margin.item())
+        metrics[f"{prefix}_compactness_{phase_name}"] = float(compactness.item())
 
     for boundary_idx in range(1, phase_count):
         default_boundary = int(sum(len(split) for split in phase_splits[:boundary_idx]))
-        metrics[f"source_phase_boundary_{boundary_idx}"] = int(
+        metrics[f"{prefix}_boundary_{boundary_idx}"] = int(
             time_stats.get(f"phase_boundary_{boundary_idx}", default_boundary)
         )
-    metrics["source_phase_partition_mode"] = phase_partition_mode
-    metrics["source_phase_count"] = int(phase_count)
+    metrics[f"{prefix}_partition_mode"] = phase_partition_mode
+    metrics[f"{prefix}_count"] = int(phase_count)
     return metrics
+
+
+def compute_source_phase_self_structure_metrics(source_stats, phase_partition_mode="structure", phase_count=3, eps=1e-6):
+    return compute_phase_self_structure_metrics_from_keys(
+        source_stats,
+        prefix="source_phase",
+        curve_key="mean_curves",
+        count_key="curve_counts",
+        sq_norm_key="time_feature_sq_norm_sums",
+        phase_partition_mode=phase_partition_mode,
+        phase_count=phase_count,
+        eps=eps,
+    )
+
+
+def compute_target_phase_self_structure_metrics(target_stats, phase_partition_mode="structure", phase_count=3, eps=1e-6):
+    return compute_phase_self_structure_metrics_from_keys(
+        target_stats,
+        prefix="target_phase",
+        curve_key="mean_curves",
+        count_key="curve_counts",
+        sq_norm_key="time_feature_sq_norm_sums",
+        phase_partition_mode=phase_partition_mode,
+        phase_count=phase_count,
+        eps=eps,
+    )
+
+
+def compute_raw_source_phase_self_structure_metrics(source_stats, phase_partition_mode="structure", phase_count=3, eps=1e-6):
+    return compute_phase_self_structure_metrics_from_keys(
+        source_stats,
+        prefix="raw_source_phase",
+        curve_key="raw_mean_curves",
+        count_key="raw_curve_counts",
+        sq_norm_key="raw_time_feature_sq_norm_sums",
+        phase_partition_mode=phase_partition_mode,
+        phase_count=phase_count,
+        eps=eps,
+    )
+
+
+def compute_raw_target_phase_self_structure_metrics(target_stats, phase_partition_mode="structure", phase_count=3, eps=1e-6):
+    return compute_phase_self_structure_metrics_from_keys(
+        target_stats,
+        prefix="raw_target_phase",
+        curve_key="raw_mean_curves",
+        count_key="raw_curve_counts",
+        sq_norm_key="raw_time_feature_sq_norm_sums",
+        phase_partition_mode=phase_partition_mode,
+        phase_count=phase_count,
+        eps=eps,
+    )
 
 
 def compute_domain_ndvi_curve_mse(source_stats, target_stats):
@@ -889,12 +1087,12 @@ def iter_task_pairs():
                 yield source_tag, target_tag
 
 
-def get_experiment_name(source_dataset, target_dataset, closed_set):
+def get_experiment_name(source_dataset, target_dataset, closed_set, experiment_suffix=""):
     source_tile = source_dataset.split("/")[1]
     target_tile = target_dataset.split("/")[1]
     if closed_set:
-        return f"timematch_{source_tile}_to_{target_tile}_closedset_noshift"
-    return f"timematch_{source_tile}_to_{target_tile}"
+        return f"timematch_{source_tile}_to_{target_tile}_closedset_noshift{experiment_suffix}"
+    return f"timematch_{source_tile}_to_{target_tile}{experiment_suffix}"
 
 
 def get_fold_checkpoint_paths(outputs_root, experiment_name):
@@ -976,6 +1174,34 @@ def main():
         "source_ndvi_q90_range_mean",
         "source_ndvi_q90_range_std",
         "source_class_curve_variance_mean",
+        "target_fisher_ratio",
+        "target_curve_spread",
+        "target_curve_activity_range",
+        "target_ndvi_q90_range_mean",
+        "target_ndvi_q90_range_std",
+        "target_class_curve_variance_mean",
+        "fisher_ratio_gap",
+        "curve_spread_gap",
+        "curve_activity_range_gap",
+        "ndvi_q90_range_mean_gap",
+        "class_curve_variance_mean_gap",
+        "raw_source_fisher_ratio",
+        "raw_target_fisher_ratio",
+        "raw_source_curve_spread",
+        "raw_target_curve_spread",
+        "raw_source_curve_activity_range",
+        "raw_target_curve_activity_range",
+        "raw_source_ndvi_q90_range_mean",
+        "raw_source_ndvi_q90_range_std",
+        "raw_target_ndvi_q90_range_mean",
+        "raw_target_ndvi_q90_range_std",
+        "raw_source_class_curve_variance_mean",
+        "raw_target_class_curve_variance_mean",
+        "raw_fisher_ratio_gap",
+        "raw_curve_spread_gap",
+        "raw_curve_activity_range_gap",
+        "raw_ndvi_q90_range_mean_gap",
+        "raw_class_curve_variance_mean_gap",
         "domain_ndvi_curve_mse",
     ]
     phase_labels = [f"p{i}" for i in range(1, args.phase_count + 1)]
@@ -986,12 +1212,32 @@ def main():
                 f"source_phase_separability_{phase_label}",
                 f"source_phase_margin_{phase_label}",
                 f"source_phase_compactness_{phase_label}",
+                f"target_phase_separability_{phase_label}",
+                f"target_phase_margin_{phase_label}",
+                f"target_phase_compactness_{phase_label}",
+                f"phase_separability_gap_{phase_label}",
+                f"phase_margin_gap_{phase_label}",
+                f"phase_compactness_gap_{phase_label}",
+                f"raw_source_phase_separability_{phase_label}",
+                f"raw_source_phase_margin_{phase_label}",
+                f"raw_source_phase_compactness_{phase_label}",
+                f"raw_target_phase_separability_{phase_label}",
+                f"raw_target_phase_margin_{phase_label}",
+                f"raw_target_phase_compactness_{phase_label}",
+                f"raw_phase_separability_gap_{phase_label}",
+                f"raw_phase_margin_gap_{phase_label}",
+                f"raw_phase_compactness_gap_{phase_label}",
             ]
         )
     for source_tag, target_tag in iter_task_pairs():
         source_dataset = TAG_TO_DATASET[source_tag]
         target_dataset = TAG_TO_DATASET[target_tag]
-        experiment_name = get_experiment_name(source_dataset, target_dataset, args.closed_set)
+        experiment_name = get_experiment_name(
+            source_dataset,
+            target_dataset,
+            args.closed_set,
+            experiment_suffix=args.experiment_suffix,
+        )
         checkpoint_paths = get_fold_checkpoint_paths(outputs_root, experiment_name)
         target_f1, target_accuracy, fold_count = read_target_metrics(outputs_root, experiment_name, target_dataset)
         existing_row = existing_rows.get(row_key(source_tag, target_tag, args.closed_set))
@@ -1043,6 +1289,13 @@ def main():
                 phase_partition_mode=args.phase_partition_mode,
                 phase_count=args.phase_count,
             )
+            raw_source_phase_metrics = None
+            if not args.phase_only:
+                raw_source_phase_metrics = compute_raw_source_phase_self_structure_metrics(
+                    source_stats,
+                    phase_partition_mode=args.phase_partition_mode,
+                    phase_count=args.phase_count,
+                )
             if not args.phase_only:
                 target_stats = extract_domain_statistics(
                     model,
@@ -1052,6 +1305,16 @@ def main():
                     temporal_grid_size=args.temporal_grid_size,
                     max_acf_lag=args.max_acf_lag,
                     phase_only=False,
+                )
+                target_phase_metrics = compute_target_phase_self_structure_metrics(
+                    target_stats,
+                    phase_partition_mode=args.phase_partition_mode,
+                    phase_count=args.phase_count,
+                )
+                raw_target_phase_metrics = compute_raw_target_phase_self_structure_metrics(
+                    target_stats,
+                    phase_partition_mode=args.phase_partition_mode,
+                    phase_count=args.phase_count,
                 )
 
                 source_feats_global, source_labels_global = maybe_subsample(
@@ -1084,6 +1347,25 @@ def main():
                     source_stats, target_stats
                 )
                 source_ndvi_q90_mean, source_ndvi_q90_std = compute_source_ndvi_q90_metrics(source_stats)
+                target_ndvi_q90_mean, target_ndvi_q90_std = compute_domain_ndvi_q90_metrics(target_stats)
+                source_fisher_ratio = safe_float(existing_row.get("source_fisher_ratio")) if existing_row and safe_float(existing_row.get("source_fisher_ratio")) is not None else compute_source_fisher_ratio(
+                    source_stats["features"], source_stats["labels"]
+                )
+                target_fisher_ratio = compute_domain_fisher_ratio(target_stats["features"], target_stats["labels"])
+                raw_source_fisher_ratio = compute_domain_fisher_ratio(source_stats["raw_features"], source_stats["labels"])
+                raw_target_fisher_ratio = compute_domain_fisher_ratio(target_stats["raw_features"], target_stats["labels"])
+                source_curve_spread = safe_float(existing_row.get("source_curve_spread")) if existing_row and safe_float(existing_row.get("source_curve_spread")) is not None else compute_source_curve_spread(source_stats)
+                target_curve_spread = compute_domain_curve_spread(target_stats)
+                raw_source_curve_spread = compute_raw_curve_spread(source_stats)
+                raw_target_curve_spread = compute_raw_curve_spread(target_stats)
+                source_curve_activity_range = safe_float(existing_row.get("source_curve_activity_range")) if existing_row and safe_float(existing_row.get("source_curve_activity_range")) is not None else compute_source_curve_activity_range(source_stats)
+                target_curve_activity_range = compute_domain_curve_activity_range(target_stats)
+                raw_source_curve_activity_range = compute_raw_curve_activity_range(source_stats)
+                raw_target_curve_activity_range = compute_raw_curve_activity_range(target_stats)
+                source_class_curve_variance_mean = compute_source_class_curve_variance_mean(source_stats)
+                target_class_curve_variance_mean = compute_domain_class_curve_variance_mean(target_stats)
+                raw_source_ndvi_q90_mean, raw_source_ndvi_q90_std = compute_domain_ndvi_q90_metrics(source_stats)
+                raw_target_ndvi_q90_mean, raw_target_ndvi_q90_std = compute_domain_ndvi_q90_metrics(target_stats)
 
                 fold_metric = {
                     "mmd": safe_float(existing_row.get("mmd")) if existing_row and safe_float(existing_row.get("mmd")) is not None else compute_mmd_rbf(source_feats_global, target_feats_global),
@@ -1091,11 +1373,9 @@ def main():
                     "prototype_distance": safe_float(existing_row.get("prototype_distance")) if existing_row and safe_float(existing_row.get("prototype_distance")) is not None else proto_dist,
                     "relation_structure_distance": safe_float(existing_row.get("relation_structure_distance")) if existing_row and safe_float(existing_row.get("relation_structure_distance")) is not None else relation_dist,
                     "acf_distance": safe_float(existing_row.get("acf_distance")) if existing_row and safe_float(existing_row.get("acf_distance")) is not None else compute_acf_distance(source_stats["acf"], target_stats["acf"]),
-                    "source_curve_spread": safe_float(existing_row.get("source_curve_spread")) if existing_row and safe_float(existing_row.get("source_curve_spread")) is not None else compute_source_curve_spread(source_stats),
-                    "source_curve_activity_range": safe_float(existing_row.get("source_curve_activity_range")) if existing_row and safe_float(existing_row.get("source_curve_activity_range")) is not None else compute_source_curve_activity_range(source_stats),
-                    "source_fisher_ratio": safe_float(existing_row.get("source_fisher_ratio")) if existing_row and safe_float(existing_row.get("source_fisher_ratio")) is not None else compute_source_fisher_ratio(
-                        source_stats["features"], source_stats["labels"]
-                    ),
+                    "source_curve_spread": source_curve_spread,
+                    "source_curve_activity_range": source_curve_activity_range,
+                    "source_fisher_ratio": source_fisher_ratio,
                     "shared_classes_for_proto": shared_proto,
                     "shared_classes_for_relation": shared_rel,
                     "shared_classes_for_curves": phase_metrics["shared_classes_for_curves"],
@@ -1111,17 +1391,103 @@ def main():
                     "class_relative_curve_structure_corr": class_relative_corr,
                     "source_ndvi_q90_range_mean": source_ndvi_q90_mean,
                     "source_ndvi_q90_range_std": source_ndvi_q90_std,
-                    "source_class_curve_variance_mean": compute_source_class_curve_variance_mean(source_stats),
+                    "source_class_curve_variance_mean": source_class_curve_variance_mean,
+                    "target_fisher_ratio": target_fisher_ratio,
+                    "target_curve_spread": target_curve_spread,
+                    "target_curve_activity_range": target_curve_activity_range,
+                    "target_ndvi_q90_range_mean": target_ndvi_q90_mean,
+                    "target_ndvi_q90_range_std": target_ndvi_q90_std,
+                    "target_class_curve_variance_mean": target_class_curve_variance_mean,
+                    "fisher_ratio_gap": source_fisher_ratio - target_fisher_ratio,
+                    "curve_spread_gap": source_curve_spread - target_curve_spread,
+                    "curve_activity_range_gap": source_curve_activity_range - target_curve_activity_range,
+                    "ndvi_q90_range_mean_gap": source_ndvi_q90_mean - target_ndvi_q90_mean,
+                    "class_curve_variance_mean_gap": source_class_curve_variance_mean - target_class_curve_variance_mean,
+                    "raw_source_fisher_ratio": raw_source_fisher_ratio,
+                    "raw_target_fisher_ratio": raw_target_fisher_ratio,
+                    "raw_source_curve_spread": raw_source_curve_spread,
+                    "raw_target_curve_spread": raw_target_curve_spread,
+                    "raw_source_curve_activity_range": raw_source_curve_activity_range,
+                    "raw_target_curve_activity_range": raw_target_curve_activity_range,
+                    "raw_source_ndvi_q90_range_mean": raw_source_ndvi_q90_mean,
+                    "raw_source_ndvi_q90_range_std": raw_source_ndvi_q90_std,
+                    "raw_target_ndvi_q90_range_mean": raw_target_ndvi_q90_mean,
+                    "raw_target_ndvi_q90_range_std": raw_target_ndvi_q90_std,
+                    "raw_source_class_curve_variance_mean": source_class_curve_variance_mean,
+                    "raw_target_class_curve_variance_mean": target_class_curve_variance_mean,
+                    "raw_fisher_ratio_gap": raw_source_fisher_ratio - raw_target_fisher_ratio,
+                    "raw_curve_spread_gap": raw_source_curve_spread - raw_target_curve_spread,
+                    "raw_curve_activity_range_gap": raw_source_curve_activity_range - raw_target_curve_activity_range,
+                    "raw_ndvi_q90_range_mean_gap": raw_source_ndvi_q90_mean - raw_target_ndvi_q90_mean,
+                    "raw_class_curve_variance_mean_gap": source_class_curve_variance_mean - target_class_curve_variance_mean,
                     "domain_ndvi_curve_mse": compute_domain_ndvi_curve_mse(source_stats, target_stats),
                     "shared_classes_for_curve_structure": shared_curve_structure_classes,
                 }
                 fold_metrics.append(fold_metric)
 
-            phase_fold_metric = {field: source_phase_metrics[field] for field in phase_metric_fields}
+            phase_fold_metric = {}
+            for field in phase_metric_fields:
+                if field.startswith("source_phase_"):
+                    phase_fold_metric[field] = source_phase_metrics[field]
+                elif not args.phase_only and field.startswith("target_phase_"):
+                    phase_fold_metric[field] = target_phase_metrics[field]
+                elif not args.phase_only and field.startswith("phase_separability_gap_"):
+                    phase_name = field.split("phase_separability_gap_", 1)[1]
+                    phase_fold_metric[field] = (
+                        source_phase_metrics[f"source_phase_separability_{phase_name}"]
+                        - target_phase_metrics[f"target_phase_separability_{phase_name}"]
+                    )
+                elif not args.phase_only and field.startswith("phase_margin_gap_"):
+                    phase_name = field.split("phase_margin_gap_", 1)[1]
+                    phase_fold_metric[field] = (
+                        source_phase_metrics[f"source_phase_margin_{phase_name}"]
+                        - target_phase_metrics[f"target_phase_margin_{phase_name}"]
+                    )
+                elif not args.phase_only and field.startswith("phase_compactness_gap_"):
+                    phase_name = field.split("phase_compactness_gap_", 1)[1]
+                    phase_fold_metric[field] = (
+                        source_phase_metrics[f"source_phase_compactness_{phase_name}"]
+                        - target_phase_metrics[f"target_phase_compactness_{phase_name}"]
+                    )
+                elif field.startswith("raw_source_phase_"):
+                    phase_fold_metric[field] = (
+                        raw_source_phase_metrics[field] if raw_source_phase_metrics is not None else float("nan")
+                    )
+                elif not args.phase_only and field.startswith("raw_target_phase_"):
+                    phase_fold_metric[field] = raw_target_phase_metrics[field]
+                elif not args.phase_only and field.startswith("raw_phase_separability_gap_"):
+                    phase_name = field.split("raw_phase_separability_gap_", 1)[1]
+                    phase_fold_metric[field] = (
+                        raw_source_phase_metrics[f"raw_source_phase_separability_{phase_name}"]
+                        - raw_target_phase_metrics[f"raw_target_phase_separability_{phase_name}"]
+                    )
+                elif not args.phase_only and field.startswith("raw_phase_margin_gap_"):
+                    phase_name = field.split("raw_phase_margin_gap_", 1)[1]
+                    phase_fold_metric[field] = (
+                        raw_source_phase_metrics[f"raw_source_phase_margin_{phase_name}"]
+                        - raw_target_phase_metrics[f"raw_target_phase_margin_{phase_name}"]
+                    )
+                elif not args.phase_only and field.startswith("raw_phase_compactness_gap_"):
+                    phase_name = field.split("raw_phase_compactness_gap_", 1)[1]
+                    phase_fold_metric[field] = (
+                        raw_source_phase_metrics[f"raw_source_phase_compactness_{phase_name}"]
+                        - raw_target_phase_metrics[f"raw_target_phase_compactness_{phase_name}"]
+                    )
             for boundary_idx in range(1, args.phase_count):
                 phase_fold_metric[f"source_phase_boundary_{boundary_idx}"] = source_phase_metrics[
                     f"source_phase_boundary_{boundary_idx}"
                 ]
+                if raw_source_phase_metrics is not None:
+                    phase_fold_metric[f"raw_source_phase_boundary_{boundary_idx}"] = raw_source_phase_metrics[
+                        f"raw_source_phase_boundary_{boundary_idx}"
+                    ]
+                if not args.phase_only:
+                    phase_fold_metric[f"target_phase_boundary_{boundary_idx}"] = target_phase_metrics[
+                        f"target_phase_boundary_{boundary_idx}"
+                    ]
+                    phase_fold_metric[f"raw_target_phase_boundary_{boundary_idx}"] = raw_target_phase_metrics[
+                        f"raw_target_phase_boundary_{boundary_idx}"
+                    ]
             phase_fold_metrics.append(phase_fold_metric)
 
         phase_metrics_aggregated = aggregate_metric_dicts(phase_fold_metrics)
@@ -1162,7 +1528,14 @@ def main():
             "target_accuracy": target_accuracy,
             "source_phase_partition_mode": args.phase_partition_mode,
             "source_phase_count": args.phase_count,
+            "target_phase_partition_mode": args.phase_partition_mode,
+            "target_phase_count": args.phase_count,
+            "raw_source_phase_partition_mode": args.phase_partition_mode,
+            "raw_source_phase_count": args.phase_count,
+            "raw_target_phase_partition_mode": args.phase_partition_mode,
+            "raw_target_phase_count": args.phase_count,
             "source_samples": len(source_dataset_obj),
+            "target_samples": len(target_dataset_obj) if target_dataset_obj is not None else 0,
             "checkpoint_dir": str((outputs_root / experiment_name).resolve()),
         }
         phase_row.update({field: phase_metrics_aggregated[field] for field in phase_metric_fields})
@@ -1170,6 +1543,18 @@ def main():
             phase_row[f"source_phase_boundary_{boundary_idx}"] = phase_metrics_aggregated[
                 f"source_phase_boundary_{boundary_idx}"
             ]
+            if f"target_phase_boundary_{boundary_idx}" in phase_metrics_aggregated:
+                phase_row[f"target_phase_boundary_{boundary_idx}"] = phase_metrics_aggregated[
+                    f"target_phase_boundary_{boundary_idx}"
+                ]
+            if f"raw_source_phase_boundary_{boundary_idx}" in phase_metrics_aggregated:
+                phase_row[f"raw_source_phase_boundary_{boundary_idx}"] = phase_metrics_aggregated[
+                    f"raw_source_phase_boundary_{boundary_idx}"
+                ]
+            if f"raw_target_phase_boundary_{boundary_idx}" in phase_metrics_aggregated:
+                phase_row[f"raw_target_phase_boundary_{boundary_idx}"] = phase_metrics_aggregated[
+                    f"raw_target_phase_boundary_{boundary_idx}"
+                ]
         phase_rows.append(phase_row)
 
     if not args.phase_only:
@@ -1230,15 +1615,24 @@ def main():
         "closed_set",
         "source_phase_partition_mode",
         "source_phase_count",
+        "target_phase_partition_mode",
+        "target_phase_count",
+        "raw_source_phase_partition_mode",
+        "raw_source_phase_count",
+        "raw_target_phase_partition_mode",
+        "raw_target_phase_count",
         "num_classes",
         "fold_count",
         "timematch_experiment",
         "target_f1",
         "target_accuracy",
     ]
-    phase_auxiliary_fields = ["source_samples"]
+    phase_auxiliary_fields = ["source_samples", "target_samples"]
     for boundary_idx in range(1, args.phase_count):
         phase_auxiliary_fields.append(f"source_phase_boundary_{boundary_idx}")
+        phase_auxiliary_fields.append(f"target_phase_boundary_{boundary_idx}")
+        phase_auxiliary_fields.append(f"raw_source_phase_boundary_{boundary_idx}")
+        phase_auxiliary_fields.append(f"raw_target_phase_boundary_{boundary_idx}")
     phase_auxiliary_fields.append("checkpoint_dir")
     phase_fieldnames = phase_metadata_fields + sorted_phase_metric_fields + phase_auxiliary_fields
     with open(phase_output_csv, "w", newline="", encoding="utf-8") as handle:

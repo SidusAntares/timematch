@@ -21,6 +21,7 @@ from transforms import (
     ToTensor,
     RandomTemporalShift,
     Identity,
+    build_source_structure_transform,
 )
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda, cycle
@@ -260,6 +261,12 @@ def update_ema_variables(model, ema, decay=0.99):
 
 
 def get_data_loaders(splits, config, balance_source=True):
+    source_structure_transform = build_source_structure_transform(
+        kind=getattr(config, "source_structure_transform", "none"),
+        strength=getattr(config, "source_structure_strength", 0.0),
+        phase_count=getattr(config, "source_structure_phase_count", 5),
+    )
+
     weak_aug = transforms.Compose([
         RandomSamplePixels(config.num_pixels),
         Normalize(),
@@ -269,6 +276,7 @@ def get_data_loaders(splits, config, balance_source=True):
     strong_aug = transforms.Compose([
             RandomSamplePixels(config.num_pixels),
             RandomSampleTimeSteps(config.seq_length),
+            source_structure_transform,
             Normalize(),
             ToTensor(),
     ])

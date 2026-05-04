@@ -1,0 +1,5 @@
+family,top_metric,top_score,avg_score,metric_count
+raw-shape,raw_source_curve_spread,0.21372843171471248,0.11606982503507736,6
+raw-phase,raw_source_phase_separability_p1,0.20709515352956875,0.1100614608105466,19
+encoded-discriminability,source_ndvi_q90_range_mean,0.20139592643052498,0.09457241655466338,6
+encoded-phase,source_phase_compactness_p4,0.10980224016593523,0.03878383115388231,19
