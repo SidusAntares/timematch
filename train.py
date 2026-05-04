@@ -20,6 +20,10 @@ from competitors.mmd.train_mmd import train_mmd
 from competitors.alda.train_alda import train_alda
 from dataset import PixelSetData, create_evaluation_loaders, create_train_loader
 from evaluation import evaluation, validation
+from ideas.source_feature_reshaper import (
+    build_source_feature_reshaper,
+    forward_with_optional_source_reshaper,
+)
 from ideas.train_source_phase_compactness import train_supervised_source_phase_compactness
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
 from timematch import train_timematch
@@ -124,10 +128,24 @@ def main(config):
 
         print('Restoring best model weights for testing...')
 
-        state_dict = torch.load(best_model_path, weights_only=False)['state_dict']
+        checkpoint = torch.load(best_model_path, weights_only=False)
+        state_dict = checkpoint['state_dict']
         model.load_state_dict(state_dict)
+        source_feature_reshaper = maybe_build_source_feature_reshaper(model, config)
+        if source_feature_reshaper is not None:
+            source_feature_reshaper.to(device)
+            if 'source_feature_reshaper_state_dict' in checkpoint:
+                source_feature_reshaper.load_state_dict(checkpoint['source_feature_reshaper_state_dict'])
 
-        test_metrics = evaluation(model, test_loader, device, config.classes, mode='test')
+        test_metrics = evaluation(
+            model,
+            test_loader,
+            device,
+            config.classes,
+            mode='test',
+            source_feature_reshaper=source_feature_reshaper,
+            apply_source_feature_reshaper=(config.target == config.source and source_feature_reshaper is not None),
+        )
 
         print(f"Test result for {config.experiment_name}: accuracy={test_metrics['accuracy']:.4f}, f1={test_metrics['macro_f1']:.4f}")
         print(test_metrics['classification_report'])
@@ -150,18 +168,33 @@ def maybe_source_structure_transform(config, dataset_name):
         phase_count=getattr(config, "source_structure_phase_count", 5),
     )
 
+
+def maybe_build_source_feature_reshaper(model, config):
+    return build_source_feature_reshaper(
+        kind=getattr(config, "source_feature_reshaper", "none"),
+        feature_dim=model.spatial_encoder.output_dim,
+        strength=getattr(config, "source_feature_reshaper_strength", 0.10),
+        kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
+    )
+
 def get_dataset_size(data_root, dataset):
     dir = os.path.join(data_root, dataset)
     return len([name for name in os.listdir(os.path.join(dir, 'data')) if name.endswith('.zarr')])
 
 def train_supervised(model, config, writer, splits, val_loader, device, best_model_path):
     model.to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
     best_f1 = 0
     dataset_name = config.source
     if config.train_on_target:
         dataset_name = config.target
+
+    source_feature_reshaper = maybe_build_source_feature_reshaper(model, config)
+    params = list(model.parameters())
+    if source_feature_reshaper is not None:
+        source_feature_reshaper.to(device)
+        params += list(source_feature_reshaper.parameters())
+    optimizer = torch.optim.Adam(params, lr=config.lr, weight_decay=config.weight_decay)
 
     train_transform = transforms.Compose([
         RandomSamplePixels(config.num_pixels),
@@ -198,7 +231,15 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
             targets = sample['label'].cuda(device=device, non_blocking=True)
 
             pixels, mask, positions, extra = to_cuda(sample, device)
-            outputs = model.forward(pixels, mask, positions, extra)
+            outputs = forward_with_optional_source_reshaper(
+                model,
+                pixels,
+                mask,
+                positions,
+                extra,
+                source_feature_reshaper=source_feature_reshaper,
+                apply_source_feature_reshaper=(source_feature_reshaper is not None and dataset_name == config.source),
+            )
             loss = criterion(outputs, targets)
 
             optimizer.zero_grad()
@@ -217,7 +258,19 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
         progress_bar.close()
 
         model.eval()
-        best_f1 = validation(best_f1, best_model_path, config, criterion, device, epoch, model, val_loader, writer)
+        best_f1 = validation(
+            best_f1,
+            best_model_path,
+            config,
+            criterion,
+            device,
+            epoch,
+            model,
+            val_loader,
+            writer,
+            source_feature_reshaper=source_feature_reshaper,
+            apply_source_feature_reshaper=(config.target == config.source and source_feature_reshaper is not None),
+        )
 
 
 def create_train_val_test_folds(datasets, num_folds, num_indices, val_ratio=0.1, test_ratio=0.2):
@@ -354,6 +407,30 @@ if __name__ == '__main__':
         default=5,
         type=int,
         help='phase count used by phase-aware source-only structure transforms',
+    )
+    parser.add_argument(
+        '--source_feature_reshaper',
+        default='none',
+        choices=['none', 'residual_temporal_conv'],
+        help='source-only lightweight feature reshaper inserted between PSE and LTAE',
+    )
+    parser.add_argument(
+        '--source_feature_reshaper_strength',
+        default=0.10,
+        type=float,
+        help='initial residual strength for the source-only feature reshaper',
+    )
+    parser.add_argument(
+        '--source_feature_reshaper_kernel_size',
+        default=3,
+        type=int,
+        help='odd temporal kernel size used by the source-only feature reshaper',
+    )
+    parser.add_argument(
+        '--source_feature_reshaper_reg_trade_off',
+        default=0.05,
+        type=float,
+        help='weight for identity/stat-preserving regularization of the source-only feature reshaper',
     )
 
     # Specific parameters for each training method
