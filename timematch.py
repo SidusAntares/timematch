@@ -14,6 +14,11 @@ from dataset import PixelSetData
 from evaluation import validation
 from ideas.target_phase_compactness import compute_target_phase_compactness_loss
 from ideas.target_phase_consistency import compute_target_phase_consistency_loss
+from ideas.source_feature_reshaper import (
+    build_source_feature_reshaper,
+    compute_source_feature_reshaper_regularization,
+    forward_with_optional_source_reshaper,
+)
 from transforms import (
     Normalize,
     RandomSamplePixels,
@@ -50,11 +55,23 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
     # Setup model
     pretrained_path = f"{config.weights}/fold_{fold_num}"
-    pretrained_weights = torch.load(f"{pretrained_path}/model.pt", weights_only=False)["state_dict"]
+    pretrained_checkpoint = torch.load(f"{pretrained_path}/model.pt", weights_only=False)
+    pretrained_weights = pretrained_checkpoint["state_dict"]
     student.load_state_dict(pretrained_weights)
     teacher = deepcopy(student)
     student.to(device)
     teacher.to(device)
+
+    source_feature_reshaper = build_source_feature_reshaper(
+        kind=getattr(config, "source_feature_reshaper", "none"),
+        feature_dim=student.spatial_encoder.output_dim,
+        strength=getattr(config, "source_feature_reshaper_strength", 0.10),
+        kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
+    )
+    if source_feature_reshaper is not None:
+        source_feature_reshaper.to(device)
+        if "source_feature_reshaper_state_dict" in pretrained_checkpoint:
+            source_feature_reshaper.load_state_dict(pretrained_checkpoint["source_feature_reshaper_state_dict"])
 
     # Training setup
     global_step, best_f1 = 0, 0
@@ -65,7 +82,10 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
     steps_per_epoch = config.steps_per_epoch
 
-    optimizer = torch.optim.Adam(student.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+    params = list(student.parameters())
+    if source_feature_reshaper is not None:
+        params += list(source_feature_reshaper.parameters())
+    optimizer = torch.optim.Adam(params, lr=config.lr, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs * steps_per_epoch, eta_min=0)
 
     source_iter = iter(cycle(source_loader))
@@ -114,6 +134,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
         student.train()
         teacher.eval()  # don't update BN or use dropout for teacher
+        if source_feature_reshaper is not None:
+            source_feature_reshaper.train()
 
         all_labels, all_pseudo_labels, all_pseudo_mask = [], [], []
         for step in progress_bar:
@@ -133,29 +155,58 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             pixels_t, mask_t, position_t, extra_t = to_cuda(sample_target_strong, device)
             logits_target = None
             loss_target = 0.0
+            reshaper_loss = pixels_s.sum() * 0.0
+            reshaper_logs = {}
             if config.domain_specific_bn:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
-                logits_source = student.forward(pixels_s, mask_s, position_s + source_to_target_shift, extra_s)
+                if source_feature_reshaper is not None:
+                    spatial_feats_source_raw = student.spatial_encoder(pixels_s, mask_s, extra_s)
+                    spatial_feats_source = source_feature_reshaper(spatial_feats_source_raw)
+                    reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
+                        spatial_feats_source_raw,
+                        spatial_feats_source,
+                    )
+                    temporal_feats_source = student.temporal_encoder(
+                        spatial_feats_source,
+                        position_s + source_to_target_shift,
+                    )
+                    logits_source = student.decoder(temporal_feats_source)
+                else:
+                    logits_source = student.forward(pixels_s, mask_s, position_s + source_to_target_shift, extra_s)
                 if target_update_count >= 2:  # at least 2 examples required for BN
                     _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
                     logits_target = student.forward(pixels_t[pseudo_mask], mask_t[pseudo_mask], position_t[pseudo_mask], extra_t[pseudo_mask])
             else:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
+                spatial_feats_source_raw = student.spatial_encoder(pixels_s, mask_s, extra_s)
+                spatial_feats_source = spatial_feats_source_raw
+                if source_feature_reshaper is not None:
+                    spatial_feats_source = source_feature_reshaper(spatial_feats_source_raw)
+                    reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
+                        spatial_feats_source_raw,
+                        spatial_feats_source,
+                    )
+                temporal_feats_source = student.temporal_encoder(
+                    spatial_feats_source,
+                    position_s + source_to_target_shift,
+                )
+                logits_source = student.decoder(temporal_feats_source)
+
                 if target_update_count > 0:
                     _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
-                    pixels = torch.cat([pixels_s, pixels_t[pseudo_mask]])
-                    mask = torch.cat([mask_s, mask_t[pseudo_mask]])
-                    position = torch.cat([position_s + source_to_target_shift, position_t[pseudo_mask]])
-                    extra = torch.cat([extra_s, extra_t[pseudo_mask]])
-                    logits = student.forward(pixels, mask, position, extra)
-                    logits_source, logits_target = logits[:config.batch_size], logits[config.batch_size:]
-                else:
-                    logits_source = student.forward(pixels_s, mask_s, position_s + source_to_target_shift, extra_s)
+                    logits_target = student.forward(
+                        pixels_t[pseudo_mask],
+                        mask_t[pseudo_mask],
+                        position_t[pseudo_mask],
+                        extra_t[pseudo_mask],
+                    )
 
             loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
             loss = loss_source + config.trade_off * loss_target
+            if source_feature_reshaper is not None:
+                loss = loss + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
 
             target_struct_logs = {}
             target_struct_loss = None
@@ -216,7 +267,15 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     0.0 if target_struct_loss is None else float(target_struct_loss.detach().item()),
                     global_step,
                 )
+                if source_feature_reshaper is not None:
+                    writer.add_scalar(
+                        "train/source_feature_reshaper_reg_loss",
+                        float(reshaper_logs.get("source_reshaper_reg_loss", 0.0)),
+                        global_step,
+                    )
                 for name, value in target_struct_logs.items():
+                    writer.add_scalar(f"train/{name}", value, global_step)
+                for name, value in reshaper_logs.items():
                     writer.add_scalar(f"train/{name}", value, global_step)
 
             global_step += 1
@@ -237,16 +296,48 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         if config.run_validation:
             if config.output_student:
                 student.eval()
-                best_f1 = validation(best_f1, None, config, criterion, device, epoch, student, val_loader, writer)
+                if source_feature_reshaper is not None:
+                    source_feature_reshaper.eval()
+                best_f1 = validation(
+                    best_f1,
+                    None,
+                    config,
+                    criterion,
+                    device,
+                    epoch,
+                    student,
+                    val_loader,
+                    writer,
+                    source_feature_reshaper=source_feature_reshaper,
+                    apply_source_feature_reshaper=False,
+                )
             else:
                 teacher.eval()
-                best_f1 = validation(best_f1, None, config, criterion, device, epoch, teacher, val_loader, writer)
+                best_f1 = validation(
+                    best_f1,
+                    None,
+                    config,
+                    criterion,
+                    device,
+                    epoch,
+                    teacher,
+                    val_loader,
+                    writer,
+                    source_feature_reshaper=None,
+                    apply_source_feature_reshaper=False,
+                )
 
     # Save model final model 
     if config.output_student:
-        torch.save({'state_dict': student.state_dict()}, best_model_path)
+        checkpoint = {'state_dict': student.state_dict()}
+        if source_feature_reshaper is not None:
+            checkpoint['source_feature_reshaper_state_dict'] = source_feature_reshaper.state_dict()
+        torch.save(checkpoint, best_model_path)
     else:
-        torch.save({'state_dict': teacher.state_dict()}, best_model_path)
+        checkpoint = {'state_dict': teacher.state_dict()}
+        if source_feature_reshaper is not None:
+            checkpoint['source_feature_reshaper_state_dict'] = source_feature_reshaper.state_dict()
+        torch.save(checkpoint, best_model_path)
 
 def estimate_class_distribution(labels, num_classes):
     return np.bincount(labels, minlength=num_classes) / len(labels)
