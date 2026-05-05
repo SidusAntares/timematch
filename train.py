@@ -10,9 +10,26 @@ import random
 import numpy as np
 import torch
 import torch.backends.cudnn
-from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import transforms
 from tqdm import tqdm
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ModuleNotFoundError:
+    class SummaryWriter:  # type: ignore[override]
+        """No-op fallback when tensorboard is unavailable in the runtime."""
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_scalar(self, *args, **kwargs):
+            pass
+
+        def add_text(self, *args, **kwargs):
+            pass
+
+        def close(self):
+            pass
 
 from competitors.dann.dann import train_dann
 from competitors.jumbot.jumbot import train_jumbot
@@ -413,7 +430,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_feature_reshaper',
         default='none',
-        choices=['none', 'residual_temporal_conv', 'adaptive_residual_temporal_conv'],
+        choices=['none', 'residual_temporal_conv', 'adaptive_residual_temporal_conv', 'componentized_residual_temporal_conv'],
         help='source-only lightweight feature reshaper inserted between PSE and LTAE',
     )
     parser.add_argument(
