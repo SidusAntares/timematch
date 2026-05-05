@@ -432,6 +432,24 @@ if __name__ == '__main__':
         type=float,
         help='weight for identity/stat-preserving regularization of the source-only feature reshaper',
     )
+    parser.add_argument(
+        '--source_feature_dual_path',
+        default=False,
+        type=bool_flag,
+        help='use raw-source anchor + reshaped-source auxiliary dual-path training when source_feature_reshaper is enabled',
+    )
+    parser.add_argument(
+        '--source_feature_dual_cls_trade_off',
+        default=1.0,
+        type=float,
+        help='weight for reshaped-source classification loss in dual-path training',
+    )
+    parser.add_argument(
+        '--source_feature_dual_relation_trade_off',
+        default=0.05,
+        type=float,
+        help='weight for raw/reshaped source relation consistency in dual-path training',
+    )
 
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')

@@ -10,6 +10,7 @@ from ideas.source_phase_compactness import (
 )
 from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
+    compute_dual_path_relation_regularization,
     compute_source_feature_reshaper_regularization,
 )
 from transforms import (
@@ -87,6 +88,8 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         cls_loss_meter = AverageMeter()
         compact_loss_meter = AverageMeter()
         reshaper_loss_meter = AverageMeter()
+        dual_cls_loss_meter = AverageMeter()
+        dual_relation_loss_meter = AverageMeter()
 
         progress_bar = tqdm(enumerate(data_loader), total=len(data_loader), desc=f'Epoch {epoch + 1}/{config.epochs}')
         global_step = epoch * len(data_loader)
@@ -95,6 +98,9 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             pixels, mask, positions, extra = to_cuda(sample, device)
 
             spatial_feats_raw = model.spatial_encoder(pixels, mask, extra)
+            temporal_feats_raw = model.temporal_encoder(spatial_feats_raw, positions)
+            outputs_raw = model.decoder(temporal_feats_raw)
+
             spatial_feats = spatial_feats_raw
             reshaper_loss = spatial_feats_raw.sum() * 0.0
             reshaper_logs = {}
@@ -108,6 +114,7 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             temporal_feats = model.temporal_encoder(spatial_feats, positions)
             outputs = model.decoder(temporal_feats)
 
+            cls_loss_raw = criterion(outputs_raw, targets)
             cls_loss = criterion(outputs, targets)
             compact_loss, compact_logs = compute_source_phase_compactness_loss(
                 spatial_feats,
@@ -115,7 +122,25 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                 targets,
                 weight_tracker=phase_weight_tracker,
             )
-            loss = cls_loss + compact_loss + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
+            dual_relation_loss = spatial_feats_raw.sum() * 0.0
+            dual_relation_logs = {}
+            if source_feature_reshaper is not None and getattr(config, "source_feature_dual_path", False):
+                dual_relation_loss, dual_relation_logs = compute_dual_path_relation_regularization(
+                    outputs_raw,
+                    outputs,
+                    raw_temporal_feats=temporal_feats_raw,
+                    reshaped_temporal_feats=temporal_feats,
+                )
+
+            if source_feature_reshaper is not None and getattr(config, "source_feature_dual_path", False):
+                loss = (
+                    cls_loss_raw
+                    + getattr(config, "source_feature_dual_cls_trade_off", 1.0) * cls_loss
+                    + getattr(config, "source_feature_dual_relation_trade_off", 0.05) * dual_relation_loss
+                )
+            else:
+                loss = cls_loss
+            loss = loss + compact_loss + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
 
             optimizer.zero_grad()
             loss.backward()
@@ -123,10 +148,13 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             scheduler.step()
 
             loss_meter.update(loss.item(), n=config.batch_size)
-            cls_loss_meter.update(cls_loss.item(), n=config.batch_size)
+            cls_loss_meter.update(cls_loss_raw.item(), n=config.batch_size)
             compact_loss_meter.update(compact_logs["compactness_loss"], n=config.batch_size)
             if source_feature_reshaper is not None:
                 reshaper_loss_meter.update(reshaper_logs["source_reshaper_reg_loss"], n=config.batch_size)
+                dual_cls_loss_meter.update(cls_loss.item(), n=config.batch_size)
+                if getattr(config, "source_feature_dual_path", False):
+                    dual_relation_loss_meter.update(dual_relation_logs["source_dual_relation_loss"], n=config.batch_size)
 
             if step % config.log_step == 0:
                 lr = optimizer.param_groups[0]["lr"]
@@ -136,17 +164,24 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     cls=f"{cls_loss_meter.avg:.3f}",
                     compact=f"{compact_loss_meter.avg:.3f}",
                     reshaper=f"{reshaper_loss_meter.avg:.3f}",
+                    dualcls=f"{dual_cls_loss_meter.avg:.3f}",
+                    dualrel=f"{dual_relation_loss_meter.avg:.3f}",
                 )
                 writer.add_scalar("train/loss", loss_meter.val, global_step + step)
                 writer.add_scalar("train/lr", lr, global_step + step)
-                writer.add_scalar("train/source_cls_loss", cls_loss_meter.val, global_step + step)
+                writer.add_scalar("train/source_cls_loss_raw", cls_loss_meter.val, global_step + step)
                 writer.add_scalar("train/source_phase_compactness_loss", compact_loss_meter.val, global_step + step)
                 if source_feature_reshaper is not None:
                     writer.add_scalar("train/source_feature_reshaper_reg_loss", reshaper_loss_meter.val, global_step + step)
+                    writer.add_scalar("train/source_cls_loss_reshaped", dual_cls_loss_meter.val, global_step + step)
+                    if getattr(config, "source_feature_dual_path", False):
+                        writer.add_scalar("train/source_dual_relation_loss", dual_relation_loss_meter.val, global_step + step)
                 for key, value in compact_logs.items():
                     if key != "compactness_loss":
                         writer.add_scalar(f"train/{key}", value, global_step + step)
                 for key, value in reshaper_logs.items():
+                    writer.add_scalar(f"train/{key}", value, global_step + step)
+                for key, value in dual_relation_logs.items():
                     writer.add_scalar(f"train/{key}", value, global_step + step)
 
         progress_bar.close()

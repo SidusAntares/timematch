@@ -16,6 +16,7 @@ from ideas.target_phase_compactness import compute_target_phase_compactness_loss
 from ideas.target_phase_consistency import compute_target_phase_consistency_loss
 from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
+    compute_dual_path_relation_regularization,
     compute_source_feature_reshaper_regularization,
     forward_with_optional_source_reshaper,
 )
@@ -157,10 +158,19 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             loss_target = 0.0
             reshaper_loss = pixels_s.sum() * 0.0
             reshaper_logs = {}
+            dual_relation_loss = pixels_s.sum() * 0.0
+            dual_relation_logs = {}
+            loss_source_reshaped = pixels_s.sum() * 0.0
             if config.domain_specific_bn:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
+                spatial_feats_source_raw = student.spatial_encoder(pixels_s, mask_s, extra_s)
+                temporal_feats_source_raw = student.temporal_encoder(
+                    spatial_feats_source_raw,
+                    position_s + source_to_target_shift,
+                )
+                logits_source_raw = student.decoder(temporal_feats_source_raw)
+                logits_source = logits_source_raw
                 if source_feature_reshaper is not None:
-                    spatial_feats_source_raw = student.spatial_encoder(pixels_s, mask_s, extra_s)
                     spatial_feats_source = source_feature_reshaper(spatial_feats_source_raw)
                     reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
                         spatial_feats_source_raw,
@@ -171,26 +181,47 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         position_s + source_to_target_shift,
                     )
                     logits_source = student.decoder(temporal_feats_source)
-                else:
-                    logits_source = student.forward(pixels_s, mask_s, position_s + source_to_target_shift, extra_s)
+                    loss_source_reshaped = criterion(logits_source, source_labels)
+                    if getattr(config, "source_feature_dual_path", False):
+                        dual_relation_loss, dual_relation_logs = compute_dual_path_relation_regularization(
+                            logits_source_raw,
+                            logits_source,
+                            raw_temporal_feats=temporal_feats_source_raw,
+                            reshaped_temporal_feats=temporal_feats_source,
+                        )
                 if target_update_count >= 2:  # at least 2 examples required for BN
                     _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
                     logits_target = student.forward(pixels_t[pseudo_mask], mask_t[pseudo_mask], position_t[pseudo_mask], extra_t[pseudo_mask])
             else:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
                 spatial_feats_source_raw = student.spatial_encoder(pixels_s, mask_s, extra_s)
+                temporal_feats_source_raw = student.temporal_encoder(
+                    spatial_feats_source_raw,
+                    position_s + source_to_target_shift,
+                )
+                logits_source_raw = student.decoder(temporal_feats_source_raw)
                 spatial_feats_source = spatial_feats_source_raw
+                temporal_feats_source = temporal_feats_source_raw
+                logits_source = logits_source_raw
                 if source_feature_reshaper is not None:
                     spatial_feats_source = source_feature_reshaper(spatial_feats_source_raw)
                     reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
                         spatial_feats_source_raw,
                         spatial_feats_source,
                     )
-                temporal_feats_source = student.temporal_encoder(
-                    spatial_feats_source,
-                    position_s + source_to_target_shift,
-                )
-                logits_source = student.decoder(temporal_feats_source)
+                    temporal_feats_source = student.temporal_encoder(
+                        spatial_feats_source,
+                        position_s + source_to_target_shift,
+                    )
+                    logits_source = student.decoder(temporal_feats_source)
+                    loss_source_reshaped = criterion(logits_source, source_labels)
+                    if getattr(config, "source_feature_dual_path", False):
+                        dual_relation_loss, dual_relation_logs = compute_dual_path_relation_regularization(
+                            logits_source_raw,
+                            logits_source,
+                            raw_temporal_feats=temporal_feats_source_raw,
+                            reshaped_temporal_feats=temporal_feats_source,
+                        )
 
                 if target_update_count > 0:
                     _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
@@ -201,7 +232,15 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         extra_t[pseudo_mask],
                     )
 
-            loss_source = criterion(logits_source, source_labels)
+            loss_source_raw = criterion(logits_source_raw, source_labels)
+            if source_feature_reshaper is not None and getattr(config, "source_feature_dual_path", False):
+                loss_source = (
+                    loss_source_raw
+                    + getattr(config, "source_feature_dual_cls_trade_off", 1.0) * loss_source_reshaped
+                    + getattr(config, "source_feature_dual_relation_trade_off", 0.05) * dual_relation_loss
+                )
+            else:
+                loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
             loss = loss_source + config.trade_off * loss_target
@@ -273,9 +312,27 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         float(reshaper_logs.get("source_reshaper_reg_loss", 0.0)),
                         global_step,
                     )
+                    writer.add_scalar(
+                        "train/source_cls_loss_raw",
+                        float(loss_source_raw.detach().item()),
+                        global_step,
+                    )
+                    writer.add_scalar(
+                        "train/source_cls_loss_reshaped",
+                        float(loss_source_reshaped.detach().item()),
+                        global_step,
+                    )
+                    if getattr(config, "source_feature_dual_path", False):
+                        writer.add_scalar(
+                            "train/source_dual_relation_loss",
+                            float(dual_relation_logs.get("source_dual_relation_loss", 0.0)),
+                            global_step,
+                        )
                 for name, value in target_struct_logs.items():
                     writer.add_scalar(f"train/{name}", value, global_step)
                 for name, value in reshaper_logs.items():
+                    writer.add_scalar(f"train/{name}", value, global_step)
+                for name, value in dual_relation_logs.items():
                     writer.add_scalar(f"train/{name}", value, global_step)
 
             global_step += 1

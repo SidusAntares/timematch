@@ -111,3 +111,42 @@ def compute_source_feature_reshaper_regularization(
         "source_reshaper_delta_norm": float(diff.detach().pow(2).mean().sqrt().item()),
     }
     return total, logs
+
+
+def compute_dual_path_relation_regularization(
+    raw_logits,
+    reshaped_logits,
+    raw_temporal_feats=None,
+    reshaped_temporal_feats=None,
+):
+    """
+    Tie the reshaped source path to the raw PSE path without forcing them to be identical.
+
+    - logit consistency keeps downstream predictions aligned
+    - optional temporal feature consistency keeps the reshaped path near the raw path
+      at the LTAE input/output level, which is especially helpful when target data
+      bypasses the reshaper entirely.
+    """
+
+    raw_probs = F.softmax(raw_logits.detach(), dim=1)
+    reshaped_log_probs = F.log_softmax(reshaped_logits, dim=1)
+    logit_consistency_loss = F.kl_div(
+        reshaped_log_probs,
+        raw_probs,
+        reduction="batchmean",
+    )
+
+    temporal_consistency_loss = raw_logits.sum() * 0.0
+    if raw_temporal_feats is not None and reshaped_temporal_feats is not None:
+        temporal_consistency_loss = F.mse_loss(
+            reshaped_temporal_feats,
+            raw_temporal_feats.detach(),
+        )
+
+    total = logit_consistency_loss + temporal_consistency_loss
+    logs = {
+        "source_dual_relation_loss": float(total.detach().item()),
+        "source_dual_logit_consistency_loss": float(logit_consistency_loss.detach().item()),
+        "source_dual_temporal_consistency_loss": float(temporal_consistency_loss.detach().item()),
+    }
+    return total, logs
