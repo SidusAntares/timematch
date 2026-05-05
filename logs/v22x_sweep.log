@@ -1,0 +1,9 @@
+nohup: 忽略输入
+[GPU 0] start v221_s008_rel003
+[GPU 1] start v222_s010_rel003
+[GPU 2] start v223_s010_rel005
+[GPU 3] start v224_s012_rel005
+[GPU 1] done v222_s010_rel003
+[GPU 3] done v224_s012_rel005
+[GPU 0] done v221_s008_rel003
+[GPU 2] done v223_s010_rel005

@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IDEA_DIR="$SCRIPT_DIR/ideas"
-LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/../logs/source_reshaper_dualpath_v22x_$(date +%Y%m%d_%H%M%S)}"
+LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/../logs/source_reshaper_dualpath_v22x_minival_$(date +%Y%m%d_%H%M%S)}"
 mkdir -p "$LOG_DIR"
 
 # Default v2.2.x hyperparameter groups.
@@ -39,7 +39,7 @@ run_config() {
     SOURCE_FEATURE_DUAL_CLS_TRADE_OFF="$dual_cls_trade" \
     SOURCE_FEATURE_DUAL_RELATION_TRADE_OFF="$dual_rel_trade" \
     RESHAPER_TAG="$tag" \
-    bash "$IDEA_DIR/run_timematch_closed_set_sourcephasecompact_reshaper_dualpath_alltasks.sh" \
+    bash "$IDEA_DIR/run_timematch_closed_set_sourcephasecompact_reshaper_dualpath_minival_alltasks.sh" \
     > "$log_file" 2>&1
   echo "[GPU ${gpu_id}] done ${tag}"
 }
