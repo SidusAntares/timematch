@@ -68,6 +68,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         feature_dim=student.spatial_encoder.output_dim,
         strength=getattr(config, "source_feature_reshaper_strength", 0.10),
         kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
+        phase_count=getattr(config, "source_structure_phase_count", 5),
     )
     if source_feature_reshaper is not None:
         source_feature_reshaper.to(device)
@@ -171,11 +172,16 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 logits_source_raw = student.decoder(temporal_feats_source_raw)
                 logits_source = logits_source_raw
                 if source_feature_reshaper is not None:
-                    spatial_feats_source = source_feature_reshaper(spatial_feats_source_raw)
+                    spatial_feats_source = source_feature_reshaper(
+                        spatial_feats_source_raw,
+                        positions=position_s,
+                        labels=source_labels,
+                    )
                     reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
                         spatial_feats_source_raw,
                         spatial_feats_source,
                     )
+                    reshaper_logs.update(getattr(source_feature_reshaper, "last_logs", {}))
                     temporal_feats_source = student.temporal_encoder(
                         spatial_feats_source,
                         position_s + source_to_target_shift,
@@ -204,11 +210,16 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 temporal_feats_source = temporal_feats_source_raw
                 logits_source = logits_source_raw
                 if source_feature_reshaper is not None:
-                    spatial_feats_source = source_feature_reshaper(spatial_feats_source_raw)
+                    spatial_feats_source = source_feature_reshaper(
+                        spatial_feats_source_raw,
+                        positions=position_s,
+                        labels=source_labels,
+                    )
                     reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
                         spatial_feats_source_raw,
                         spatial_feats_source,
                     )
+                    reshaper_logs.update(getattr(source_feature_reshaper, "last_logs", {}))
                     temporal_feats_source = student.temporal_encoder(
                         spatial_feats_source,
                         position_s + source_to_target_shift,

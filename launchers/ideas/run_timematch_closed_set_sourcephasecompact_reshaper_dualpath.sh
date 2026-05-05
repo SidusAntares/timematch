@@ -16,6 +16,8 @@ RESHAPER_KERNEL_SIZE="${SOURCE_FEATURE_RESHAPER_KERNEL_SIZE:-3}"
 RESHAPER_REG_TRADE_OFF="${SOURCE_FEATURE_RESHAPER_REG_TRADE_OFF:-0.05}"
 DUAL_CLS_TRADE_OFF="${SOURCE_FEATURE_DUAL_CLS_TRADE_OFF:-1.00}"
 DUAL_REL_TRADE_OFF="${SOURCE_FEATURE_DUAL_RELATION_TRADE_OFF:-0.05}"
+DOMAIN_PHASE_WEIGHTS="${SOURCE_DOMAIN_ADAPTIVE_PHASE_WEIGHTS:-False}"
+DOMAIN_PHASE_BLEND_ALPHA="${SOURCE_DOMAIN_PHASE_BLEND_ALPHA:-0.00}"
 RESHAPER_TAG="${RESHAPER_TAG:-${RESHAPER_KIND}_s${RESHAPER_STRENGTH}_k${RESHAPER_KERNEL_SIZE}_r${RESHAPER_REG_TRADE_OFF}_dual_c${DUAL_CLS_TRADE_OFF}_rel${DUAL_REL_TRADE_OFF}}"
 
 SOURCE_MODEL="${SOURCE_MODEL:-pseltae_${SOURCE_TILE}_closedset_noshift_sourcephasecompact_p5_${RESHAPER_TAG}}"
@@ -34,6 +36,8 @@ python train.py \
   --source_feature_dual_path True \
   --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
   --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
+  --source_domain_adaptive_phase_weights "$DOMAIN_PHASE_WEIGHTS" \
+  --source_domain_phase_blend_alpha "$DOMAIN_PHASE_BLEND_ALPHA" \
   -e "$SOURCE_MODEL" \
   --source "$SOURCE" \
   --target "$SOURCE" \
@@ -50,6 +54,8 @@ python train.py \
   --source_feature_dual_path True \
   --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
   --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
+  --source_domain_adaptive_phase_weights "$DOMAIN_PHASE_WEIGHTS" \
+  --source_domain_phase_blend_alpha "$DOMAIN_PHASE_BLEND_ALPHA" \
   -e "$SOURCE_MODEL" \
   --source "$SOURCE" \
   --target "$TARGET" \
@@ -66,6 +72,8 @@ python train.py \
   --source_feature_dual_path True \
   --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
   --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
+  --source_domain_adaptive_phase_weights "$DOMAIN_PHASE_WEIGHTS" \
+  --source_domain_phase_blend_alpha "$DOMAIN_PHASE_BLEND_ALPHA" \
   -e "$TIMEMATCH_MODEL" \
   --source "$SOURCE" \
   --target "$TARGET" \
