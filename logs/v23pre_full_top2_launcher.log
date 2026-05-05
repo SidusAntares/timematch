@@ -1,0 +1,4 @@
+nohup: 忽略输入
+[INFO] Using python: /home/user/anaconda3/envs/ti/bin/python
+[INFO] Python executable: /home/user/anaconda3/envs/ti/bin/python
+[SUCCESS] v23pre top2 full run finished. Logs in: /data/user/timematch/logs/v23pre_full_top2_20260505_184938

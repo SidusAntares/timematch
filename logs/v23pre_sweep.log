@@ -1,0 +1,9 @@
+nohup: 忽略输入
+[GPU 0] start v23pre1_adaptive_s010_rel003_a000
+[GPU 1] start v23pre2_adaptive_s010_rel003_a020
+[GPU 2] start v23pre3_adaptive_s010_rel003_a035
+[GPU 3] start v23pre4_adaptive_s010_rel002_a020
+[GPU 0] done v23pre1_adaptive_s010_rel003_a000
+[GPU 3] done v23pre4_adaptive_s010_rel002_a020
+[GPU 2] done v23pre3_adaptive_s010_rel003_a035
+[GPU 1] done v23pre2_adaptive_s010_rel003_a020

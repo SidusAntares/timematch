@@ -11,6 +11,23 @@ def _sort_by_positions(spatial_feats, positions):
     return torch.gather(spatial_feats, dim=1, index=expanded)
 
 
+def _sort_with_indices(spatial_feats, positions):
+    if positions is None:
+        batch_size, seq_len = spatial_feats.shape[:2]
+        identity = torch.arange(seq_len, device=spatial_feats.device).unsqueeze(0).expand(batch_size, -1)
+        return spatial_feats, identity, identity
+    sort_indices = torch.argsort(positions, dim=1)
+    expanded = sort_indices.unsqueeze(-1).expand(-1, -1, spatial_feats.shape[-1])
+    sorted_feats = torch.gather(spatial_feats, dim=1, index=expanded)
+    inverse_indices = torch.argsort(sort_indices, dim=1)
+    return sorted_feats, sort_indices, inverse_indices
+
+
+def _restore_original_order(sorted_feats, inverse_indices):
+    expanded = inverse_indices.unsqueeze(-1).expand(-1, -1, sorted_feats.shape[-1])
+    return torch.gather(sorted_feats, dim=1, index=expanded)
+
+
 def _compute_batch_domain_signature(spatial_feats, positions=None, labels=None, eps=1e-6, phase_count=5):
     ordered_feats = _sort_by_positions(spatial_feats, positions)
     temporal_mean = ordered_feats.mean(dim=1, keepdim=True)
@@ -58,6 +75,22 @@ def _compute_batch_domain_signature(spatial_feats, positions=None, labels=None, 
         "source_domain_signature_discriminability": float(discriminability.detach().item()),
     }
     return signature, logs
+
+
+def _compute_phase_centered_feats(spatial_feats, positions=None, phase_count=5):
+    ordered_feats, _, inverse_indices = _sort_with_indices(spatial_feats, positions)
+    sequence_length = ordered_feats.shape[1]
+    phase_slices = torch.tensor_split(
+        torch.arange(sequence_length, device=ordered_feats.device, dtype=torch.long),
+        min(max(phase_count, 1), sequence_length),
+    )
+    centered = ordered_feats.new_zeros(ordered_feats.shape)
+    for phase_indices in phase_slices:
+        if phase_indices.numel() == 0:
+            continue
+        phase_feats = ordered_feats[:, phase_indices, :]
+        centered[:, phase_indices, :] = phase_feats - phase_feats.mean(dim=1, keepdim=True)
+    return _restore_original_order(centered, inverse_indices)
 
 
 class ResidualTemporalConvReshaper(nn.Module):
@@ -190,6 +223,134 @@ class AdaptiveResidualTemporalConvReshaper(nn.Module):
         return output
 
 
+class ComponentizedResidualTemporalConvReshaper(nn.Module):
+    """
+    Interpretable source reshaper with explicit structural components.
+
+    Instead of routing to opaque expert branches, this module decomposes the
+    residual update into three named components:
+    - shape: global curve spread / dynamic range adjustment
+    - phase: phase-local structure adjustment
+    - disc: encoded discriminability adjustment
+
+    The batch domain signature directly determines the component coefficients,
+    which makes the induced structure easier to inspect and reason about.
+    """
+
+    COMPONENT_NAMES = (
+        "shape",
+        "phase",
+        "disc",
+    )
+
+    def __init__(self, feature_dim, strength=0.10, kernel_size=3, phase_count=5):
+        super().__init__()
+        if kernel_size % 2 == 0:
+            raise ValueError(f"kernel_size must be odd, got {kernel_size}")
+        self.feature_dim = feature_dim
+        self.phase_count = phase_count
+        self.pre_norm = nn.LayerNorm(feature_dim)
+
+        shape_kernel = kernel_size + 2
+        if shape_kernel % 2 == 0:
+            shape_kernel += 1
+
+        self.shape_depthwise = nn.Conv1d(
+            feature_dim,
+            feature_dim,
+            kernel_size=shape_kernel,
+            padding=shape_kernel // 2,
+            groups=feature_dim,
+            bias=False,
+        )
+        self.shape_pointwise = nn.Conv1d(feature_dim, feature_dim, kernel_size=1, bias=True)
+
+        self.phase_depthwise = nn.Conv1d(
+            feature_dim,
+            feature_dim,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+            groups=feature_dim,
+            bias=False,
+        )
+        self.phase_pointwise = nn.Conv1d(feature_dim, feature_dim, kernel_size=1, bias=True)
+
+        self.disc_pointwise_in = nn.Conv1d(feature_dim, feature_dim, kernel_size=1, bias=True)
+        self.disc_depthwise = nn.Conv1d(
+            feature_dim,
+            feature_dim,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+            groups=feature_dim,
+            bias=False,
+        )
+        self.disc_pointwise_out = nn.Conv1d(feature_dim, feature_dim, kernel_size=1, bias=True)
+
+        self.gate = nn.Parameter(torch.tensor(float(strength)))
+        self.last_logs = {}
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        nn.init.normal_(self.shape_depthwise.weight, mean=0.0, std=1e-3)
+        nn.init.normal_(self.shape_pointwise.weight, mean=0.0, std=1e-3)
+        nn.init.zeros_(self.shape_pointwise.bias)
+
+        nn.init.normal_(self.phase_depthwise.weight, mean=0.0, std=1e-3)
+        nn.init.normal_(self.phase_pointwise.weight, mean=0.0, std=1e-3)
+        nn.init.zeros_(self.phase_pointwise.bias)
+
+        nn.init.normal_(self.disc_pointwise_in.weight, mean=0.0, std=1e-3)
+        nn.init.zeros_(self.disc_pointwise_in.bias)
+        nn.init.normal_(self.disc_depthwise.weight, mean=0.0, std=1e-3)
+        nn.init.normal_(self.disc_pointwise_out.weight, mean=0.0, std=1e-3)
+        nn.init.zeros_(self.disc_pointwise_out.bias)
+
+    def _compute_component_alphas(self, signature, eps=1e-6):
+        scores = torch.clamp(signature.detach(), min=0.0)
+        score_sum = scores.sum()
+        if float(score_sum.item()) <= eps:
+            return torch.full_like(scores, 1.0 / scores.numel())
+        return scores / (score_sum + eps)
+
+    def forward(self, spatial_feats, positions=None, labels=None):
+        signature, signature_logs = _compute_batch_domain_signature(
+            spatial_feats,
+            positions=positions,
+            labels=labels,
+            phase_count=self.phase_count,
+        )
+        component_alphas = self._compute_component_alphas(signature)
+
+        normalized = self.pre_norm(spatial_feats)
+        x = normalized.transpose(1, 2)
+
+        shape_input = (normalized - normalized.mean(dim=1, keepdim=True)).transpose(1, 2)
+        delta_shape = self.shape_pointwise(torch.tanh(self.shape_depthwise(shape_input))).transpose(1, 2)
+
+        phase_input = _compute_phase_centered_feats(normalized, positions=positions, phase_count=self.phase_count).transpose(1, 2)
+        delta_phase = self.phase_pointwise(torch.tanh(self.phase_depthwise(phase_input))).transpose(1, 2)
+
+        disc_hidden = torch.tanh(self.disc_pointwise_in(x))
+        delta_disc = self.disc_pointwise_out(torch.tanh(self.disc_depthwise(disc_hidden))).transpose(1, 2)
+
+        mixed_delta = (
+            component_alphas[0] * delta_shape
+            + component_alphas[1] * delta_phase
+            + component_alphas[2] * delta_disc
+        )
+        output = spatial_feats + torch.tanh(self.gate) * mixed_delta
+
+        self.last_logs = dict(signature_logs)
+        self.last_logs["source_component_alpha_shape"] = float(component_alphas[0].detach().item())
+        self.last_logs["source_component_alpha_phase"] = float(component_alphas[1].detach().item())
+        self.last_logs["source_component_alpha_disc"] = float(component_alphas[2].detach().item())
+        self.last_logs["source_component_delta_shape_norm"] = float(delta_shape.detach().pow(2).mean().sqrt().item())
+        self.last_logs["source_component_delta_phase_norm"] = float(delta_phase.detach().pow(2).mean().sqrt().item())
+        self.last_logs["source_component_delta_disc_norm"] = float(delta_disc.detach().pow(2).mean().sqrt().item())
+        self.last_logs["source_component_gate_strength"] = float(torch.tanh(self.gate).detach().item())
+        return output
+
+
 def build_source_feature_reshaper(kind, feature_dim, strength=0.10, kernel_size=3, phase_count=5):
     if kind == "none":
         return None
@@ -201,6 +362,13 @@ def build_source_feature_reshaper(kind, feature_dim, strength=0.10, kernel_size=
         )
     if kind == "adaptive_residual_temporal_conv":
         return AdaptiveResidualTemporalConvReshaper(
+            feature_dim=feature_dim,
+            strength=strength,
+            kernel_size=kernel_size,
+            phase_count=phase_count,
+        )
+    if kind == "componentized_residual_temporal_conv":
+        return ComponentizedResidualTemporalConvReshaper(
             feature_dim=feature_dim,
             strength=strength,
             kernel_size=kernel_size,
