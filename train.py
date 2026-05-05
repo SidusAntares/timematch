@@ -175,6 +175,7 @@ def maybe_build_source_feature_reshaper(model, config):
         feature_dim=model.spatial_encoder.output_dim,
         strength=getattr(config, "source_feature_reshaper_strength", 0.10),
         kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
+        phase_count=getattr(config, "source_structure_phase_count", 5),
     )
 
 def get_dataset_size(data_root, dataset):
@@ -237,6 +238,7 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
                 mask,
                 positions,
                 extra,
+                labels=targets,
                 source_feature_reshaper=source_feature_reshaper,
                 apply_source_feature_reshaper=(source_feature_reshaper is not None and dataset_name == config.source),
             )
@@ -411,7 +413,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_feature_reshaper',
         default='none',
-        choices=['none', 'residual_temporal_conv'],
+        choices=['none', 'residual_temporal_conv', 'adaptive_residual_temporal_conv'],
         help='source-only lightweight feature reshaper inserted between PSE and LTAE',
     )
     parser.add_argument(
@@ -449,6 +451,18 @@ if __name__ == '__main__':
         default=0.05,
         type=float,
         help='weight for raw/reshaped source relation consistency in dual-path training',
+    )
+    parser.add_argument(
+        '--source_domain_adaptive_phase_weights',
+        default=False,
+        type=bool_flag,
+        help='blend source compactness phase weights with a domain-adaptive phase prior derived from source structure',
+    )
+    parser.add_argument(
+        '--source_domain_phase_blend_alpha',
+        default=0.0,
+        type=float,
+        help='blend coefficient for domain-adaptive phase priors; 0 keeps the original phase weights',
     )
 
     # Specific parameters for each training method

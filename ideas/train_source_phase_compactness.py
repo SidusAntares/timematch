@@ -72,6 +72,7 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         feature_dim=model.spatial_encoder.output_dim,
         strength=getattr(config, "source_feature_reshaper_strength", 0.10),
         kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
+        phase_count=getattr(config, "source_structure_phase_count", 5),
     )
     params = list(model.parameters())
     if source_feature_reshaper is not None:
@@ -105,11 +106,12 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             reshaper_loss = spatial_feats_raw.sum() * 0.0
             reshaper_logs = {}
             if source_feature_reshaper is not None:
-                spatial_feats = source_feature_reshaper(spatial_feats_raw)
+                spatial_feats = source_feature_reshaper(spatial_feats_raw, positions=positions, labels=targets)
                 reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
                     spatial_feats_raw,
                     spatial_feats,
                 )
+                reshaper_logs.update(getattr(source_feature_reshaper, "last_logs", {}))
 
             temporal_feats = model.temporal_encoder(spatial_feats, positions)
             outputs = model.decoder(temporal_feats)
@@ -121,6 +123,8 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                 positions,
                 targets,
                 weight_tracker=phase_weight_tracker,
+                domain_adaptive_phase_weights=getattr(config, "source_domain_adaptive_phase_weights", False),
+                phase_blend_alpha=getattr(config, "source_domain_phase_blend_alpha", 0.0),
             )
             dual_relation_loss = spatial_feats_raw.sum() * 0.0
             dual_relation_logs = {}

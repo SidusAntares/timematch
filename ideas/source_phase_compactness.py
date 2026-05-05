@@ -25,6 +25,42 @@ def _sorted_sequence_features(spatial_feats, positions):
     return torch.gather(spatial_feats, dim=1, index=expanded)
 
 
+def _compute_domain_adaptive_phase_prior(ordered_feats, phase_slices, labels, eps):
+    phase_scores = []
+    for phase_indices in phase_slices:
+        if phase_indices.numel() == 0:
+            phase_scores.append(ordered_feats.new_tensor(0.0))
+            continue
+
+        phase_feats = ordered_feats[:, phase_indices, :].mean(dim=1)
+        activity = (
+            ordered_feats[:, phase_indices, :] - ordered_feats[:, phase_indices, :].mean(dim=1, keepdim=True)
+        ).pow(2).mean(dim=(1, 2)).sqrt().mean()
+
+        separability = ordered_feats.new_tensor(0.0)
+        centers = []
+        within_terms = []
+        for class_id in labels.unique(sorted=True):
+            class_mask = labels == class_id
+            if int(class_mask.sum().item()) < 2:
+                continue
+            class_phase_feats = phase_feats[class_mask]
+            class_center = class_phase_feats.mean(dim=0, keepdim=True)
+            centers.append(class_center.squeeze(0))
+            within_terms.append((class_phase_feats - class_center).pow(2).sum(dim=1).mean())
+        if len(centers) >= 2:
+            centers = torch.stack(centers, dim=0)
+            between = torch.pdist(centers, p=2).mean()
+            within = torch.stack(within_terms).mean()
+            separability = between / (within.sqrt() + eps)
+
+        phase_scores.append(activity + separability)
+
+    phase_scores = torch.stack(phase_scores)
+    phase_scores = _zscore_or_zero(phase_scores, eps)
+    return torch.softmax(phase_scores, dim=0)
+
+
 def _zscore_or_zero(values, eps):
     if values.numel() <= 1:
         return values.new_zeros(values.shape)
@@ -155,7 +191,15 @@ class SourcePhaseWeightTracker:
         return logs
 
 
-def compute_source_phase_compactness_loss(spatial_feats, positions, labels, weight_tracker=None, eps=1e-6):
+def compute_source_phase_compactness_loss(
+    spatial_feats,
+    positions,
+    labels,
+    weight_tracker=None,
+    eps=1e-6,
+    domain_adaptive_phase_weights=False,
+    phase_blend_alpha=0.0,
+):
     """
     Compute a source-domain phase compactness regularizer on top of per-time-step
     PSE features.
@@ -248,6 +292,14 @@ def compute_source_phase_compactness_loss(spatial_feats, positions, labels, weig
     else:
         weight_tracker.update(phase_structures)
         weights = weight_tracker.get_weights(spatial_feats, eps)
+
+    if domain_adaptive_phase_weights and phase_blend_alpha > 0.0:
+        phase_prior = _compute_domain_adaptive_phase_prior(ordered_feats, phase_slices, labels, eps)
+        for phase_idx in range(len(phase_slices)):
+            phase_logs[f"domain_phase_prior_p{phase_idx + 1}"] = float(phase_prior[phase_idx].detach().item())
+        weights = (1.0 - phase_blend_alpha) * weights + phase_blend_alpha * phase_prior
+        weights = weights / weights.sum().clamp_min(eps)
+        phase_logs["domain_phase_blend_alpha"] = float(phase_blend_alpha)
 
     for phase_idx, stats in enumerate(phase_structures):
         if stats["valid_class_count"] > 0:
