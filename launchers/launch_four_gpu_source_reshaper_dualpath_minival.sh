@@ -1,0 +1,40 @@
+#!/bin/bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/../logs/source_reshaper_dualpath_minival_$(date +%Y%m%d_%H%M%S)}"
+mkdir -p "$LOG_DIR"
+
+RESHAPER_KIND="${RESHAPER_KIND:-residual_temporal_conv}"
+RESHAPER_STRENGTH="${RESHAPER_STRENGTH:-0.10}"
+RESHAPER_KERNEL_SIZE="${RESHAPER_KERNEL_SIZE:-3}"
+RESHAPER_REG_TRADE_OFF="${RESHAPER_REG_TRADE_OFF:-0.05}"
+DUAL_CLS_TRADE_OFF="${DUAL_CLS_TRADE_OFF:-1.00}"
+DUAL_REL_TRADE_OFF="${DUAL_REL_TRADE_OFF:-0.10}"
+RESHAPER_TAG="${RESHAPER_TAG:-${RESHAPER_KIND}_s${RESHAPER_STRENGTH}_k${RESHAPER_KERNEL_SIZE}_r${RESHAPER_REG_TRADE_OFF}_dual_c${DUAL_CLS_TRADE_OFF}_rel${DUAL_REL_TRADE_OFF}}"
+
+TASKS=(
+  "0 france/30TXT/2017 france/31TCJ/2017"
+  "1 denmark/32VNH/2017 france/31TCJ/2017"
+  "2 france/31TCJ/2017 france/30TXT/2017"
+  "3 france/30TXT/2017 denmark/32VNH/2017"
+)
+
+for task in "${TASKS[@]}"; do
+  read -r GPU_ID SOURCE TARGET <<< "$task"
+  CUDA_VISIBLE_DEVICES="$GPU_ID" \
+    SOURCE_FEATURE_RESHAPER="$RESHAPER_KIND" \
+    SOURCE_FEATURE_RESHAPER_STRENGTH="$RESHAPER_STRENGTH" \
+    SOURCE_FEATURE_RESHAPER_KERNEL_SIZE="$RESHAPER_KERNEL_SIZE" \
+    SOURCE_FEATURE_RESHAPER_REG_TRADE_OFF="$RESHAPER_REG_TRADE_OFF" \
+    SOURCE_FEATURE_DUAL_CLS_TRADE_OFF="$DUAL_CLS_TRADE_OFF" \
+    SOURCE_FEATURE_DUAL_RELATION_TRADE_OFF="$DUAL_REL_TRADE_OFF" \
+    RESHAPER_TAG="$RESHAPER_TAG" \
+    SOURCE="$SOURCE" \
+    TARGET="$TARGET" \
+    bash "$SCRIPT_DIR/ideas/run_timematch_closed_set_sourcephasecompact_reshaper_dualpath.sh" \
+    > "$LOG_DIR/gpu${GPU_ID}_$(echo "$SOURCE" | cut -d'/' -f2)_to_$(echo "$TARGET" | cut -d'/' -f2)_${RESHAPER_TAG}.log" 2>&1 &
+done
+
+wait
