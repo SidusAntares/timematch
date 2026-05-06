@@ -1,0 +1,5 @@
+family,top_metric,top_abs_corr,top_corr,avg_abs_corr,metric_count
+intra_phase_compact_smooth,source_encoded_phase_within_radius_mean,0.5247170702432424,-0.5247170702432424,0.30970315451132097,3
+amplitude_spread,source_encoded_amplitude_l2_std,0.47572066543595054,0.47572066543595054,0.27554950944016876,3
+trend_activity,source_encoded_activity_path_length_mean,0.2863883936379367,-0.2863883936379367,0.2395310444208499,3
+inter_phase_contrast,source_encoded_phase_early_late_distance_mean,0.18248460217178394,0.18248460217178394,0.16905081405900005,3

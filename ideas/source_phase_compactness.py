@@ -25,49 +25,6 @@ def _sorted_sequence_features(spatial_feats, positions):
     return torch.gather(spatial_feats, dim=1, index=expanded)
 
 
-def _phase_activity_score(ordered_feats, phase_indices):
-    if phase_indices.numel() == 0:
-        return ordered_feats.new_tensor(0.0)
-    centered = ordered_feats[:, phase_indices, :] - ordered_feats[:, phase_indices, :].mean(dim=1, keepdim=True)
-    return centered.pow(2).mean(dim=(1, 2)).sqrt().mean()
-
-
-def _compute_domain_adaptive_phase_prior(ordered_feats, phase_slices, labels, eps):
-    phase_scores = []
-    for phase_indices in phase_slices:
-        if phase_indices.numel() == 0:
-            phase_scores.append(ordered_feats.new_tensor(0.0))
-            continue
-
-        phase_feats = ordered_feats[:, phase_indices, :].mean(dim=1)
-        activity = (
-            ordered_feats[:, phase_indices, :] - ordered_feats[:, phase_indices, :].mean(dim=1, keepdim=True)
-        ).pow(2).mean(dim=(1, 2)).sqrt().mean()
-
-        separability = ordered_feats.new_tensor(0.0)
-        centers = []
-        within_terms = []
-        for class_id in labels.unique(sorted=True):
-            class_mask = labels == class_id
-            if int(class_mask.sum().item()) < 2:
-                continue
-            class_phase_feats = phase_feats[class_mask]
-            class_center = class_phase_feats.mean(dim=0, keepdim=True)
-            centers.append(class_center.squeeze(0))
-            within_terms.append((class_phase_feats - class_center).pow(2).sum(dim=1).mean())
-        if len(centers) >= 2:
-            centers = torch.stack(centers, dim=0)
-            between = torch.pdist(centers, p=2).mean()
-            within = torch.stack(within_terms).mean()
-            separability = between / (within.sqrt() + eps)
-
-        phase_scores.append(activity + separability)
-
-    phase_scores = torch.stack(phase_scores)
-    phase_scores = _zscore_or_zero(phase_scores, eps)
-    return torch.softmax(phase_scores, dim=0)
-
-
 def _zscore_or_zero(values, eps):
     if values.numel() <= 1:
         return values.new_zeros(values.shape)
@@ -198,16 +155,7 @@ class SourcePhaseWeightTracker:
         return logs
 
 
-def compute_source_phase_compactness_loss(
-    spatial_feats,
-    positions,
-    labels,
-    weight_tracker=None,
-    eps=1e-6,
-    domain_adaptive_phase_weights=False,
-    phase_blend_alpha=0.0,
-    margin_trade_off=0.0,
-):
+def compute_source_phase_compactness_loss(spatial_feats, positions, labels, weight_tracker=None, eps=1e-6):
     """
     Compute a source-domain phase compactness regularizer on top of per-time-step
     PSE features.
@@ -230,8 +178,6 @@ def compute_source_phase_compactness_loss(
     ordered_feats = _sorted_sequence_features(spatial_feats, positions)
     phase_slices = _uniform_phase_slices(sequence_length, UNIFORM_PHASE_COUNT)
     total_loss = spatial_feats.sum() * 0.0
-    compactness_term = spatial_feats.sum() * 0.0
-    margin_term = spatial_feats.sum() * 0.0
     phase_logs = {}
     phase_structures = []
 
@@ -239,20 +185,15 @@ def compute_source_phase_compactness_loss(
         if phase_indices.numel() == 0:
             phase_logs[f"phase_compactness_loss_p{phase_idx + 1}"] = 0.0
             phase_logs[f"phase_margin_score_p{phase_idx + 1}"] = 0.0
-            phase_logs[f"phase_margin_loss_p{phase_idx + 1}"] = 0.0
-            phase_logs[f"phase_activity_score_p{phase_idx + 1}"] = 0.0
-            phase_logs[f"phase_separability_ratio_p{phase_idx + 1}"] = 0.0
             phase_structures.append({
                 "phase_loss": total_loss,
                 "valid_class_count": 0,
                 "compactness_score": spatial_feats.new_tensor(0.0),
                 "margin_score": spatial_feats.new_tensor(0.0),
-                "margin_loss": spatial_feats.new_tensor(0.0),
             })
             continue
 
         phase_feats = ordered_feats[:, phase_indices, :].mean(dim=1)
-        phase_activity = _phase_activity_score(ordered_feats, phase_indices)
         phase_loss = phase_feats.sum() * 0.0
         valid_class_count = 0
         class_centers = []
@@ -282,37 +223,24 @@ def compute_source_phase_compactness_loss(
                 center_distances = torch.cdist(centers, centers, p=2)
                 center_distances.fill_diagonal_(float("inf"))
                 margin_score = center_distances.min(dim=1).values.mean().detach()
-                within_mean = torch.stack(class_withins).mean().detach()
-                separability_ratio = margin_score / (within_mean.sqrt() + eps)
             else:
                 margin_score = spatial_feats.new_tensor(0.0)
-                separability_ratio = spatial_feats.new_tensor(0.0)
-
-            margin_loss = torch.exp(-margin_score)
 
             phase_logs[f"phase_margin_score_p{phase_idx + 1}"] = float(margin_score.item())
-            phase_logs[f"phase_margin_loss_p{phase_idx + 1}"] = float(margin_loss.detach().item())
-            phase_logs[f"phase_activity_score_p{phase_idx + 1}"] = float(phase_activity.detach().item())
-            phase_logs[f"phase_separability_ratio_p{phase_idx + 1}"] = float(separability_ratio.detach().item())
             phase_structures.append({
                 "phase_loss": phase_loss,
                 "valid_class_count": valid_class_count,
                 "compactness_score": compactness_score,
                 "margin_score": margin_score,
-                "margin_loss": margin_loss,
             })
         else:
             phase_logs[f"phase_compactness_loss_p{phase_idx + 1}"] = 0.0
             phase_logs[f"phase_margin_score_p{phase_idx + 1}"] = 0.0
-            phase_logs[f"phase_margin_loss_p{phase_idx + 1}"] = 0.0
-            phase_logs[f"phase_activity_score_p{phase_idx + 1}"] = float(phase_activity.detach().item())
-            phase_logs[f"phase_separability_ratio_p{phase_idx + 1}"] = 0.0
             phase_structures.append({
                 "phase_loss": phase_loss,
                 "valid_class_count": 0,
                 "compactness_score": spatial_feats.new_tensor(0.0),
                 "margin_score": spatial_feats.new_tensor(0.0),
-                "margin_loss": spatial_feats.new_tensor(0.0),
             })
 
     if weight_tracker is None:
@@ -321,29 +249,14 @@ def compute_source_phase_compactness_loss(
         weight_tracker.update(phase_structures)
         weights = weight_tracker.get_weights(spatial_feats, eps)
 
-    if domain_adaptive_phase_weights and phase_blend_alpha > 0.0:
-        phase_prior = _compute_domain_adaptive_phase_prior(ordered_feats, phase_slices, labels, eps)
-        for phase_idx in range(len(phase_slices)):
-            phase_logs[f"domain_phase_prior_p{phase_idx + 1}"] = float(phase_prior[phase_idx].detach().item())
-        weights = (1.0 - phase_blend_alpha) * weights + phase_blend_alpha * phase_prior
-        weights = weights / weights.sum().clamp_min(eps)
-        phase_logs["domain_phase_blend_alpha"] = float(phase_blend_alpha)
-
     for phase_idx, stats in enumerate(phase_structures):
         if stats["valid_class_count"] > 0:
-            compactness_term = compactness_term + weights[phase_idx] * stats["phase_loss"]
-            margin_term = margin_term + weights[phase_idx] * stats["margin_loss"]
+            total_loss = total_loss + weights[phase_idx] * stats["phase_loss"]
         phase_logs[f"phase_weight_p{phase_idx + 1}"] = float(weights[phase_idx].detach().item())
 
     if weight_tracker is not None:
         phase_logs.update(weight_tracker.get_logs())
 
-    total_loss = (
-        SOURCE_PHASE_COMPACTNESS_LAMBDA * compactness_term
-        + margin_trade_off * margin_term
-    )
-    phase_logs["compactness_term"] = float((SOURCE_PHASE_COMPACTNESS_LAMBDA * compactness_term).detach().item())
-    phase_logs["margin_term"] = float((margin_trade_off * margin_term).detach().item())
-    phase_logs["margin_trade_off"] = float(margin_trade_off)
+    total_loss = SOURCE_PHASE_COMPACTNESS_LAMBDA * total_loss
     phase_logs["compactness_loss"] = float(total_loss.detach().item())
     return total_loss, phase_logs

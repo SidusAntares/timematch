@@ -1,0 +1,13 @@
+group_name,group_value,metric,family,corr_with_target_f1,abs_corr,pair_count,task_count
+overall,all,source_encoded_phase_within_radius_mean,intra_phase_compact_smooth,-0.5247170702432424,0.5247170702432424,12,12
+overall,all,source_encoded_amplitude_l2_std,amplitude_spread,0.47572066543595054,0.47572066543595054,12,12
+overall,all,source_encoded_activity_path_length_mean,trend_activity,-0.2863883936379367,0.2863883936379367,12,12
+overall,all,source_encoded_activity_directionality_mean,trend_activity,0.28615491703402124,0.28615491703402124,12,12
+overall,all,source_encoded_amplitude_l2_mean,amplitude_spread,-0.27644470729168874,0.27644470729168874,12,12
+overall,all,source_encoded_phase_internal_smoothness_mean,intra_phase_compact_smooth,-0.2611070707863069,0.2611070707863069,12,12
+overall,all,source_encoded_phase_early_late_distance_mean,inter_phase_contrast,0.18248460217178394,0.18248460217178394,12,12
+overall,all,source_encoded_phase_adjacent_contrast_mean,inter_phase_contrast,-0.16720094800509008,0.16720094800509008,12,12
+overall,all,source_encoded_phase_global_contrast_mean,inter_phase_contrast,-0.15746689200012615,0.15746689200012615,12,12
+overall,all,source_encoded_activity_step_norm_std,trend_activity,0.14604982259059168,0.14604982259059168,12,12
+overall,all,source_encoded_phase_within_radius_std,intra_phase_compact_smooth,-0.14328532250441353,0.14328532250441353,12,12
+overall,all,source_encoded_temporal_norm_std_mean,amplitude_spread,0.07448315559286703,0.07448315559286703,12,12

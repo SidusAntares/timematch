@@ -20,7 +20,6 @@ from transforms import (
     RandomSampleTimeSteps,
     RandomTemporalShift,
     ToTensor,
-    build_source_structure_transform,
 )
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda
@@ -31,10 +30,10 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
     Source-only training with source-domain phase compactness regularization.
 
     Design choice:
-    - compactness is computed on top of PSE / spatial encoder outputs
-    - gradients flow normally through the upstream path of those features
-    - LTAE / decoder are still trained by the supervised classification loss,
-      but the compactness regularizer itself is only attached to PSE features
+    - the shared PSE is driven only by the raw-path classification objective
+    - structure regularization is attached to the source-only reshaper branch
+    - reshaped-path supervision updates downstream temporal/classification heads,
+      but does not backpropagate into the shared PSE or the reshaper
     """
     model.to(device)
 
@@ -42,11 +41,6 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         RandomSamplePixels(config.num_pixels),
         RandomSampleTimeSteps(config.seq_length),
         RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
-        build_source_structure_transform(
-            kind=getattr(config, "source_structure_transform", "none"),
-            strength=getattr(config, "source_structure_strength", 0.0),
-            phase_count=getattr(config, "source_structure_phase_count", 5),
-        ),
         Normalize(),
         ToTensor(),
     ])
@@ -72,7 +66,6 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         feature_dim=model.spatial_encoder.output_dim,
         strength=getattr(config, "source_feature_reshaper_strength", 0.10),
         kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
-        phase_count=getattr(config, "source_structure_phase_count", 5),
     )
     params = list(model.parameters())
     if source_feature_reshaper is not None:
@@ -105,28 +98,29 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             spatial_feats = spatial_feats_raw
             reshaper_loss = spatial_feats_raw.sum() * 0.0
             reshaper_logs = {}
+            compact_loss = spatial_feats_raw.sum() * 0.0
+            compact_logs = {"compactness_loss": 0.0}
             if source_feature_reshaper is not None:
-                spatial_feats = source_feature_reshaper(spatial_feats_raw, positions=positions, labels=targets)
+                spatial_feats_anchor = spatial_feats_raw.detach()
+                spatial_feats = source_feature_reshaper(spatial_feats_anchor, positions=positions, labels=targets)
                 reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
-                    spatial_feats_raw,
+                    spatial_feats_anchor,
                     spatial_feats,
                 )
-                reshaper_logs.update(getattr(source_feature_reshaper, "last_logs", {}))
-
-            temporal_feats = model.temporal_encoder(spatial_feats, positions)
-            outputs = model.decoder(temporal_feats)
+                compact_loss, compact_logs = compute_source_phase_compactness_loss(
+                    spatial_feats,
+                    positions,
+                    targets,
+                    weight_tracker=phase_weight_tracker,
+                )
+                temporal_feats = model.temporal_encoder(spatial_feats.detach(), positions)
+                outputs = model.decoder(temporal_feats)
+            else:
+                temporal_feats = temporal_feats_raw
+                outputs = outputs_raw
 
             cls_loss_raw = criterion(outputs_raw, targets)
             cls_loss = criterion(outputs, targets)
-            compact_loss, compact_logs = compute_source_phase_compactness_loss(
-                spatial_feats,
-                positions,
-                targets,
-                weight_tracker=phase_weight_tracker,
-                domain_adaptive_phase_weights=getattr(config, "source_domain_adaptive_phase_weights", False),
-                phase_blend_alpha=getattr(config, "source_domain_phase_blend_alpha", 0.0),
-                margin_trade_off=getattr(config, "source_phase_margin_trade_off", 0.0),
-            )
             dual_relation_loss = spatial_feats_raw.sum() * 0.0
             dual_relation_logs = {}
             if source_feature_reshaper is not None and getattr(config, "source_feature_dual_path", False):

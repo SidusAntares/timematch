@@ -51,7 +51,6 @@ from transforms import (
     ToTensor,
     RandomTemporalShift,
     Identity,
-    build_source_structure_transform,
 )
 from utils import label_utils
 from utils.focal_loss import FocalLoss
@@ -126,10 +125,6 @@ def main(config):
             writer = SummaryWriter(log_dir=f'{config.tensorboard_log_dir}_fold{fold_num}', purge_step=0)
             if config.method == 'timematch':
                 train_timematch(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
-            elif config.method == 'timematchtgtphaseconsistency':
-                train_timematch(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
-            elif config.method == 'timematchtgtphasecompact':
-                train_timematch(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'dann':
                 train_dann(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'mmd':
@@ -176,23 +171,12 @@ def get_num_trainable_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def maybe_source_structure_transform(config, dataset_name):
-    if dataset_name != config.source:
-        return Identity()
-    return build_source_structure_transform(
-        kind=getattr(config, "source_structure_transform", "none"),
-        strength=getattr(config, "source_structure_strength", 0.0),
-        phase_count=getattr(config, "source_structure_phase_count", 5),
-    )
-
-
 def maybe_build_source_feature_reshaper(model, config):
     return build_source_feature_reshaper(
         kind=getattr(config, "source_feature_reshaper", "none"),
         feature_dim=model.spatial_encoder.output_dim,
         strength=getattr(config, "source_feature_reshaper_strength", 0.10),
         kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
-        phase_count=getattr(config, "source_structure_phase_count", 5),
     )
 
 def get_dataset_size(data_root, dataset):
@@ -218,7 +202,6 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
         RandomSamplePixels(config.num_pixels),
         RandomSampleTimeSteps(config.seq_length),
         RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
-        maybe_source_structure_transform(config, dataset_name),
         Normalize(),
         ToTensor(),
     ])
@@ -410,27 +393,9 @@ if __name__ == '__main__':
     parser.add_argument('--shift_aug_p', default=1.0, type=float, help='probability to apply temporal shift augmentation')
     parser.add_argument('--max_shift_aug', default=60, type=int, help='highest shift to apply for temporal shift augmentation')
     parser.add_argument(
-        '--source_structure_transform',
-        default='none',
-        choices=['none', 'temporal_deviation_scale', 'phase_center_blend', 'middle_phase_deviation_boost'],
-        help='rule-based source-only data transform applied before normalization',
-    )
-    parser.add_argument(
-        '--source_structure_strength',
-        default=0.0,
-        type=float,
-        help='strength of the source-only structure transform; sign and range depend on transform type',
-    )
-    parser.add_argument(
-        '--source_structure_phase_count',
-        default=5,
-        type=int,
-        help='phase count used by phase-aware source-only structure transforms',
-    )
-    parser.add_argument(
         '--source_feature_reshaper',
         default='none',
-        choices=['none', 'residual_temporal_conv', 'adaptive_residual_temporal_conv', 'componentized_residual_temporal_conv'],
+        choices=['none', 'residual_temporal_conv'],
         help='source-only lightweight feature reshaper inserted between PSE and LTAE',
     )
     parser.add_argument(
@@ -468,24 +433,6 @@ if __name__ == '__main__':
         default=0.05,
         type=float,
         help='weight for raw/reshaped source relation consistency in dual-path training',
-    )
-    parser.add_argument(
-        '--source_domain_adaptive_phase_weights',
-        default=False,
-        type=bool_flag,
-        help='blend source compactness phase weights with a domain-adaptive phase prior derived from source structure',
-    )
-    parser.add_argument(
-        '--source_domain_phase_blend_alpha',
-        default=0.0,
-        type=float,
-        help='blend coefficient for domain-adaptive phase priors; 0 keeps the original phase weights',
-    )
-    parser.add_argument(
-        '--source_phase_margin_trade_off',
-        default=0.0,
-        type=float,
-        help='extra trade-off for explicit source phase margin optimization on top of compactness',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')
@@ -550,50 +497,6 @@ if __name__ == '__main__':
     timematch.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT'])
     timematch.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
     timematch.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
-
-    # TimeMatch + target phase consistency without pseudo labels
-    timematchtgtphaseconsistency = subparsers.add_parser('timematchtgtphaseconsistency')
-    timematchtgtphaseconsistency.add_argument('--weights', type=str, help='path to source trained model weights')
-    timematchtgtphaseconsistency.add_argument('--lr', default=0.0001, type=float, help='Learning rate')
-    timematchtgtphaseconsistency.add_argument("--pseudo_threshold", default=0.9, type=float, help='confidence threshold for assigning pseudo labels')
-    timematchtgtphaseconsistency.add_argument("--ema_decay", default=0.9999, type=float, help='decay rate for mean teacher')
-    timematchtgtphaseconsistency.add_argument("--trade_off", type=float, default=2.0, help='weight for unsupervised loss')
-    timematchtgtphaseconsistency.add_argument("--target_struct_trade_off", type=float, default=0.05, help='weight for target phase consistency loss')
-    timematchtgtphaseconsistency.add_argument("--target_struct_warmup_epochs", type=int, default=2, help='epochs to wait before enabling target phase consistency')
-    timematchtgtphaseconsistency.add_argument("--estimate_shift", type=bool_flag, default=True, help='whether to account for temporal shift')
-    timematchtgtphaseconsistency.add_argument('--epochs', default=20, type=int, help='Number of epochs per fold')
-    timematchtgtphaseconsistency.add_argument("--steps_per_epoch", type=int, default=500, help='n steps per epoch')
-    timematchtgtphaseconsistency.add_argument("--balance_source", type=bool_flag, default=True, help='class balanced batches for source')
-    timematchtgtphaseconsistency.add_argument("--use_focal_loss", type=bool_flag, default=True, help='use focal loss or cross entropy')
-    timematchtgtphaseconsistency.add_argument("--shift_source", type=bool_flag, default=True, help='whether to apply temporal shift to source data')
-    timematchtgtphaseconsistency.add_argument("--sample_size", type=int, default=100, help='number of batches to sample for estimating shift')
-    timematchtgtphaseconsistency.add_argument("--max_temporal_shift", type=int, default=60, help='maximum temporal shift to consider')
-    timematchtgtphaseconsistency.add_argument("--domain_specific_bn", type=bool_flag, default=True, help='whether to use domain specific batch normalization')
-    timematchtgtphaseconsistency.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT'])
-    timematchtgtphaseconsistency.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
-    timematchtgtphaseconsistency.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
-
-    # TimeMatch + target phase compactness on high-confidence pseudo labels
-    timematchtgtphasecompact = subparsers.add_parser('timematchtgtphasecompact')
-    timematchtgtphasecompact.add_argument('--weights', type=str, help='path to source trained model weights')
-    timematchtgtphasecompact.add_argument('--lr', default=0.0001, type=float, help='Learning rate')
-    timematchtgtphasecompact.add_argument("--pseudo_threshold", default=0.9, type=float, help='confidence threshold for assigning pseudo labels')
-    timematchtgtphasecompact.add_argument("--ema_decay", default=0.9999, type=float, help='decay rate for mean teacher')
-    timematchtgtphasecompact.add_argument("--trade_off", type=float, default=2.0, help='weight for unsupervised loss')
-    timematchtgtphasecompact.add_argument("--target_struct_trade_off", type=float, default=0.05, help='weight for target phase compactness loss')
-    timematchtgtphasecompact.add_argument("--target_struct_warmup_epochs", type=int, default=2, help='epochs to wait before enabling target phase compactness')
-    timematchtgtphasecompact.add_argument("--estimate_shift", type=bool_flag, default=True, help='whether to account for temporal shift')
-    timematchtgtphasecompact.add_argument('--epochs', default=20, type=int, help='Number of epochs per fold')
-    timematchtgtphasecompact.add_argument("--steps_per_epoch", type=int, default=500, help='n steps per epoch')
-    timematchtgtphasecompact.add_argument("--balance_source", type=bool_flag, default=True, help='class balanced batches for source')
-    timematchtgtphasecompact.add_argument("--use_focal_loss", type=bool_flag, default=True, help='use focal loss or cross entropy')
-    timematchtgtphasecompact.add_argument("--shift_source", type=bool_flag, default=True, help='whether to apply temporal shift to source data')
-    timematchtgtphasecompact.add_argument("--sample_size", type=int, default=100, help='number of batches to sample for estimating shift')
-    timematchtgtphasecompact.add_argument("--max_temporal_shift", type=int, default=60, help='maximum temporal shift to consider')
-    timematchtgtphasecompact.add_argument("--domain_specific_bn", type=bool_flag, default=True, help='whether to use domain specific batch normalization')
-    timematchtgtphasecompact.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT'])
-    timematchtgtphasecompact.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
-    timematchtgtphasecompact.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
 
     # Source-only + source phase compactness regularization
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')

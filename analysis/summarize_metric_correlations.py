@@ -26,12 +26,8 @@ NON_METRIC_FIELDS = {
     "checkpoint_dir",
     "source_phase_partition_mode",
     "source_phase_count",
-    "target_phase_partition_mode",
-    "target_phase_count",
     "raw_source_phase_partition_mode",
     "raw_source_phase_count",
-    "raw_target_phase_partition_mode",
-    "raw_target_phase_count",
 }
 
 
