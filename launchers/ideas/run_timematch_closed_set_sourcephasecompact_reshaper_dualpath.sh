@@ -18,6 +18,9 @@ DUAL_CLS_TRADE_OFF="${SOURCE_FEATURE_DUAL_CLS_TRADE_OFF:-1.00}"
 DUAL_REL_TRADE_OFF="${SOURCE_FEATURE_DUAL_RELATION_TRADE_OFF:-0.05}"
 DOMAIN_PHASE_WEIGHTS="${SOURCE_DOMAIN_ADAPTIVE_PHASE_WEIGHTS:-False}"
 DOMAIN_PHASE_BLEND_ALPHA="${SOURCE_DOMAIN_PHASE_BLEND_ALPHA:-0.00}"
+COMPONENT_ALPHA_TEMPERATURE="${SOURCE_COMPONENT_ALPHA_TEMPERATURE:-0.75}"
+COMPONENT_ALPHA_FLOOR="${SOURCE_COMPONENT_ALPHA_FLOOR:-0.10}"
+COMPONENT_PHASE_SCALE="${SOURCE_COMPONENT_PHASE_SCALE:-0.85}"
 RESHAPER_TAG="${RESHAPER_TAG:-${RESHAPER_KIND}_s${RESHAPER_STRENGTH}_k${RESHAPER_KERNEL_SIZE}_r${RESHAPER_REG_TRADE_OFF}_dual_c${DUAL_CLS_TRADE_OFF}_rel${DUAL_REL_TRADE_OFF}}"
 
 SOURCE_MODEL="${SOURCE_MODEL:-pseltae_${SOURCE_TILE}_closedset_noshift_sourcephasecompact_p5_${RESHAPER_TAG}}"
@@ -38,6 +41,9 @@ python train.py \
   --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
   --source_domain_adaptive_phase_weights "$DOMAIN_PHASE_WEIGHTS" \
   --source_domain_phase_blend_alpha "$DOMAIN_PHASE_BLEND_ALPHA" \
+  --source_component_alpha_temperature "$COMPONENT_ALPHA_TEMPERATURE" \
+  --source_component_alpha_floor "$COMPONENT_ALPHA_FLOOR" \
+  --source_component_phase_scale "$COMPONENT_PHASE_SCALE" \
   -e "$SOURCE_MODEL" \
   --source "$SOURCE" \
   --target "$SOURCE" \
@@ -56,6 +62,9 @@ python train.py \
   --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
   --source_domain_adaptive_phase_weights "$DOMAIN_PHASE_WEIGHTS" \
   --source_domain_phase_blend_alpha "$DOMAIN_PHASE_BLEND_ALPHA" \
+  --source_component_alpha_temperature "$COMPONENT_ALPHA_TEMPERATURE" \
+  --source_component_alpha_floor "$COMPONENT_ALPHA_FLOOR" \
+  --source_component_phase_scale "$COMPONENT_PHASE_SCALE" \
   -e "$SOURCE_MODEL" \
   --source "$SOURCE" \
   --target "$TARGET" \
@@ -74,6 +83,9 @@ python train.py \
   --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
   --source_domain_adaptive_phase_weights "$DOMAIN_PHASE_WEIGHTS" \
   --source_domain_phase_blend_alpha "$DOMAIN_PHASE_BLEND_ALPHA" \
+  --source_component_alpha_temperature "$COMPONENT_ALPHA_TEMPERATURE" \
+  --source_component_alpha_floor "$COMPONENT_ALPHA_FLOOR" \
+  --source_component_phase_scale "$COMPONENT_PHASE_SCALE" \
   -e "$TIMEMATCH_MODEL" \
   --source "$SOURCE" \
   --target "$TARGET" \

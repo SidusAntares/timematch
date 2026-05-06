@@ -1,0 +1,4 @@
+nohup: 忽略输入
+[INFO] Using python: /home/user/anaconda3/envs/ti/bin/python
+[INFO] Python executable: /home/user/anaconda3/envs/ti/bin/python
+[SUCCESS] v2.3 componentized full run finished. Logs in: /data/user/timematch/logs/v23_full_20260505_225554
