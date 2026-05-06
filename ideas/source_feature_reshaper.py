@@ -243,24 +243,12 @@ class ComponentizedResidualTemporalConvReshaper(nn.Module):
         "disc",
     )
 
-    def __init__(
-        self,
-        feature_dim,
-        strength=0.10,
-        kernel_size=3,
-        phase_count=5,
-        alpha_temperature=0.75,
-        alpha_floor=0.10,
-        phase_component_scale=0.85,
-    ):
+    def __init__(self, feature_dim, strength=0.10, kernel_size=3, phase_count=5):
         super().__init__()
         if kernel_size % 2 == 0:
             raise ValueError(f"kernel_size must be odd, got {kernel_size}")
         self.feature_dim = feature_dim
         self.phase_count = phase_count
-        self.alpha_temperature = float(alpha_temperature)
-        self.alpha_floor = float(alpha_floor)
-        self.phase_component_scale = float(phase_component_scale)
         self.pre_norm = nn.LayerNorm(feature_dim)
 
         shape_kernel = kernel_size + 2
@@ -319,18 +307,10 @@ class ComponentizedResidualTemporalConvReshaper(nn.Module):
 
     def _compute_component_alphas(self, signature, eps=1e-6):
         scores = torch.clamp(signature.detach(), min=0.0)
-        if float(scores.sum().item()) <= eps:
+        score_sum = scores.sum()
+        if float(score_sum.item()) <= eps:
             return torch.full_like(scores, 1.0 / scores.numel())
-        temperature = max(self.alpha_temperature, eps)
-        logits = scores / temperature
-        base = torch.softmax(logits, dim=0)
-
-        floor = min(max(self.alpha_floor, 0.0), 1.0 / scores.numel() - 1e-4)
-        if floor > 0:
-            uniform = torch.full_like(base, 1.0 / base.numel())
-            mix = floor * base.numel()
-            base = (1.0 - mix) * base + mix * uniform
-        return base / (base.sum() + eps)
+        return scores / (score_sum + eps)
 
     def forward(self, spatial_feats, positions=None, labels=None):
         signature, signature_logs = _compute_batch_domain_signature(
@@ -355,7 +335,7 @@ class ComponentizedResidualTemporalConvReshaper(nn.Module):
 
         mixed_delta = (
             component_alphas[0] * delta_shape
-            + component_alphas[1] * (self.phase_component_scale * delta_phase)
+            + component_alphas[1] * delta_phase
             + component_alphas[2] * delta_disc
         )
         output = spatial_feats + torch.tanh(self.gate) * mixed_delta
@@ -368,9 +348,6 @@ class ComponentizedResidualTemporalConvReshaper(nn.Module):
         self.last_logs["source_component_delta_phase_norm"] = float(delta_phase.detach().pow(2).mean().sqrt().item())
         self.last_logs["source_component_delta_disc_norm"] = float(delta_disc.detach().pow(2).mean().sqrt().item())
         self.last_logs["source_component_gate_strength"] = float(torch.tanh(self.gate).detach().item())
-        self.last_logs["source_component_alpha_temperature"] = float(self.alpha_temperature)
-        self.last_logs["source_component_alpha_floor"] = float(self.alpha_floor)
-        self.last_logs["source_component_phase_scale"] = float(self.phase_component_scale)
         return output
 
 
@@ -380,9 +357,6 @@ def build_source_feature_reshaper(
     strength=0.10,
     kernel_size=3,
     phase_count=5,
-    component_alpha_temperature=0.75,
-    component_alpha_floor=0.10,
-    component_phase_scale=0.85,
 ):
     if kind == "none":
         return None
@@ -405,9 +379,6 @@ def build_source_feature_reshaper(
             strength=strength,
             kernel_size=kernel_size,
             phase_count=phase_count,
-            alpha_temperature=component_alpha_temperature,
-            alpha_floor=component_alpha_floor,
-            phase_component_scale=component_phase_scale,
         )
     raise ValueError(f"Unknown source_feature_reshaper kind: {kind}")
 
