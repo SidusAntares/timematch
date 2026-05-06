@@ -1,0 +1,10 @@
+nohup: 忽略输入
+Logs saved to: /data/user/timematch/logs/v223_rerun_and_structure_20260506_170729
+Training logs:
+  /data/user/timematch/logs/v223_rerun_and_structure_20260506_170729/gpu0_30TXT_v223_tasks.log
+  /data/user/timematch/logs/v223_rerun_and_structure_20260506_170729/gpu1_31TCJ_v223_tasks.log
+  /data/user/timematch/logs/v223_rerun_and_structure_20260506_170729/gpu2_32VNH_v223_tasks.log
+  /data/user/timematch/logs/v223_rerun_and_structure_20260506_170729/gpu3_33UVP_v223_tasks.log
+Analysis logs:
+  /data/user/timematch/logs/v223_rerun_and_structure_20260506_170729/gpu0_v223_transfer_metrics.log
+  /data/user/timematch/logs/v223_rerun_and_structure_20260506_170729/gpu0_v223_dimension_analysis.log

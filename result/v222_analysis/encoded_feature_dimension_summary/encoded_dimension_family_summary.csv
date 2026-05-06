@@ -1,0 +1,6 @@
+dimension,top_metric,top_score,avg_score,metric_count
+other-encoded,source_phase_boundary_3,0.10736621761468389,0.062939567424903,4
+phase-intra-compactness,source_phase_compactness_p2,0.06510572942121537,0.05859672832565578,5
+global-feature-structure,source_ndvi_q90_range_mean,0.12232186416688126,0.057216382928995856,5
+phase-inter-contrast,source_phase_separability_p1,0.10598078068276946,0.05000106545363947,10
+effect-discriminability,source_fisher_ratio,0.031160148476752893,0.031160148476752893,1

@@ -1212,21 +1212,9 @@ def main():
                 f"source_phase_separability_{phase_label}",
                 f"source_phase_margin_{phase_label}",
                 f"source_phase_compactness_{phase_label}",
-                f"target_phase_separability_{phase_label}",
-                f"target_phase_margin_{phase_label}",
-                f"target_phase_compactness_{phase_label}",
-                f"phase_separability_gap_{phase_label}",
-                f"phase_margin_gap_{phase_label}",
-                f"phase_compactness_gap_{phase_label}",
                 f"raw_source_phase_separability_{phase_label}",
                 f"raw_source_phase_margin_{phase_label}",
                 f"raw_source_phase_compactness_{phase_label}",
-                f"raw_target_phase_separability_{phase_label}",
-                f"raw_target_phase_margin_{phase_label}",
-                f"raw_target_phase_compactness_{phase_label}",
-                f"raw_phase_separability_gap_{phase_label}",
-                f"raw_phase_margin_gap_{phase_label}",
-                f"raw_phase_compactness_gap_{phase_label}",
             ]
         )
     for source_tag, target_tag in iter_task_pairs():
@@ -1306,17 +1294,6 @@ def main():
                     max_acf_lag=args.max_acf_lag,
                     phase_only=False,
                 )
-                target_phase_metrics = compute_target_phase_self_structure_metrics(
-                    target_stats,
-                    phase_partition_mode=args.phase_partition_mode,
-                    phase_count=args.phase_count,
-                )
-                raw_target_phase_metrics = compute_raw_target_phase_self_structure_metrics(
-                    target_stats,
-                    phase_partition_mode=args.phase_partition_mode,
-                    phase_count=args.phase_count,
-                )
-
                 source_feats_global, source_labels_global = maybe_subsample(
                     source_stats["features"],
                     source_stats["labels"],
@@ -1429,49 +1406,9 @@ def main():
             for field in phase_metric_fields:
                 if field.startswith("source_phase_"):
                     phase_fold_metric[field] = source_phase_metrics[field]
-                elif not args.phase_only and field.startswith("target_phase_"):
-                    phase_fold_metric[field] = target_phase_metrics[field]
-                elif not args.phase_only and field.startswith("phase_separability_gap_"):
-                    phase_name = field.split("phase_separability_gap_", 1)[1]
-                    phase_fold_metric[field] = (
-                        source_phase_metrics[f"source_phase_separability_{phase_name}"]
-                        - target_phase_metrics[f"target_phase_separability_{phase_name}"]
-                    )
-                elif not args.phase_only and field.startswith("phase_margin_gap_"):
-                    phase_name = field.split("phase_margin_gap_", 1)[1]
-                    phase_fold_metric[field] = (
-                        source_phase_metrics[f"source_phase_margin_{phase_name}"]
-                        - target_phase_metrics[f"target_phase_margin_{phase_name}"]
-                    )
-                elif not args.phase_only and field.startswith("phase_compactness_gap_"):
-                    phase_name = field.split("phase_compactness_gap_", 1)[1]
-                    phase_fold_metric[field] = (
-                        source_phase_metrics[f"source_phase_compactness_{phase_name}"]
-                        - target_phase_metrics[f"target_phase_compactness_{phase_name}"]
-                    )
                 elif field.startswith("raw_source_phase_"):
                     phase_fold_metric[field] = (
                         raw_source_phase_metrics[field] if raw_source_phase_metrics is not None else float("nan")
-                    )
-                elif not args.phase_only and field.startswith("raw_target_phase_"):
-                    phase_fold_metric[field] = raw_target_phase_metrics[field]
-                elif not args.phase_only and field.startswith("raw_phase_separability_gap_"):
-                    phase_name = field.split("raw_phase_separability_gap_", 1)[1]
-                    phase_fold_metric[field] = (
-                        raw_source_phase_metrics[f"raw_source_phase_separability_{phase_name}"]
-                        - raw_target_phase_metrics[f"raw_target_phase_separability_{phase_name}"]
-                    )
-                elif not args.phase_only and field.startswith("raw_phase_margin_gap_"):
-                    phase_name = field.split("raw_phase_margin_gap_", 1)[1]
-                    phase_fold_metric[field] = (
-                        raw_source_phase_metrics[f"raw_source_phase_margin_{phase_name}"]
-                        - raw_target_phase_metrics[f"raw_target_phase_margin_{phase_name}"]
-                    )
-                elif not args.phase_only and field.startswith("raw_phase_compactness_gap_"):
-                    phase_name = field.split("raw_phase_compactness_gap_", 1)[1]
-                    phase_fold_metric[field] = (
-                        raw_source_phase_metrics[f"raw_source_phase_compactness_{phase_name}"]
-                        - raw_target_phase_metrics[f"raw_target_phase_compactness_{phase_name}"]
                     )
             for boundary_idx in range(1, args.phase_count):
                 phase_fold_metric[f"source_phase_boundary_{boundary_idx}"] = source_phase_metrics[
@@ -1480,13 +1417,6 @@ def main():
                 if raw_source_phase_metrics is not None:
                     phase_fold_metric[f"raw_source_phase_boundary_{boundary_idx}"] = raw_source_phase_metrics[
                         f"raw_source_phase_boundary_{boundary_idx}"
-                    ]
-                if not args.phase_only:
-                    phase_fold_metric[f"target_phase_boundary_{boundary_idx}"] = target_phase_metrics[
-                        f"target_phase_boundary_{boundary_idx}"
-                    ]
-                    phase_fold_metric[f"raw_target_phase_boundary_{boundary_idx}"] = raw_target_phase_metrics[
-                        f"raw_target_phase_boundary_{boundary_idx}"
                     ]
             phase_fold_metrics.append(phase_fold_metric)
 
@@ -1528,12 +1458,8 @@ def main():
             "target_accuracy": target_accuracy,
             "source_phase_partition_mode": args.phase_partition_mode,
             "source_phase_count": args.phase_count,
-            "target_phase_partition_mode": args.phase_partition_mode,
-            "target_phase_count": args.phase_count,
             "raw_source_phase_partition_mode": args.phase_partition_mode,
             "raw_source_phase_count": args.phase_count,
-            "raw_target_phase_partition_mode": args.phase_partition_mode,
-            "raw_target_phase_count": args.phase_count,
             "source_samples": len(source_dataset_obj),
             "target_samples": len(target_dataset_obj) if target_dataset_obj is not None else 0,
             "checkpoint_dir": str((outputs_root / experiment_name).resolve()),
@@ -1543,17 +1469,9 @@ def main():
             phase_row[f"source_phase_boundary_{boundary_idx}"] = phase_metrics_aggregated[
                 f"source_phase_boundary_{boundary_idx}"
             ]
-            if f"target_phase_boundary_{boundary_idx}" in phase_metrics_aggregated:
-                phase_row[f"target_phase_boundary_{boundary_idx}"] = phase_metrics_aggregated[
-                    f"target_phase_boundary_{boundary_idx}"
-                ]
             if f"raw_source_phase_boundary_{boundary_idx}" in phase_metrics_aggregated:
                 phase_row[f"raw_source_phase_boundary_{boundary_idx}"] = phase_metrics_aggregated[
                     f"raw_source_phase_boundary_{boundary_idx}"
-                ]
-            if f"raw_target_phase_boundary_{boundary_idx}" in phase_metrics_aggregated:
-                phase_row[f"raw_target_phase_boundary_{boundary_idx}"] = phase_metrics_aggregated[
-                    f"raw_target_phase_boundary_{boundary_idx}"
                 ]
         phase_rows.append(phase_row)
 
@@ -1615,12 +1533,8 @@ def main():
         "closed_set",
         "source_phase_partition_mode",
         "source_phase_count",
-        "target_phase_partition_mode",
-        "target_phase_count",
         "raw_source_phase_partition_mode",
         "raw_source_phase_count",
-        "raw_target_phase_partition_mode",
-        "raw_target_phase_count",
         "num_classes",
         "fold_count",
         "timematch_experiment",
@@ -1630,9 +1544,7 @@ def main():
     phase_auxiliary_fields = ["source_samples", "target_samples"]
     for boundary_idx in range(1, args.phase_count):
         phase_auxiliary_fields.append(f"source_phase_boundary_{boundary_idx}")
-        phase_auxiliary_fields.append(f"target_phase_boundary_{boundary_idx}")
         phase_auxiliary_fields.append(f"raw_source_phase_boundary_{boundary_idx}")
-        phase_auxiliary_fields.append(f"raw_target_phase_boundary_{boundary_idx}")
     phase_auxiliary_fields.append("checkpoint_dir")
     phase_fieldnames = phase_metadata_fields + sorted_phase_metric_fields + phase_auxiliary_fields
     with open(phase_output_csv, "w", newline="", encoding="utf-8") as handle:

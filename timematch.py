@@ -12,13 +12,14 @@ from tqdm import tqdm
 
 from dataset import PixelSetData
 from evaluation import validation
-from ideas.target_phase_compactness import compute_target_phase_compactness_loss
-from ideas.target_phase_consistency import compute_target_phase_consistency_loss
+from ideas.source_phase_compactness import (
+    SourcePhaseWeightTracker,
+    compute_source_phase_compactness_loss,
+)
 from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
     compute_dual_path_relation_regularization,
     compute_source_feature_reshaper_regularization,
-    forward_with_optional_source_reshaper,
 )
 from transforms import (
     Normalize,
@@ -27,7 +28,6 @@ from transforms import (
     ToTensor,
     RandomTemporalShift,
     Identity,
-    build_source_structure_transform,
 )
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda, cycle
@@ -68,7 +68,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         feature_dim=student.spatial_encoder.output_dim,
         strength=getattr(config, "source_feature_reshaper_strength", 0.10),
         kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
-        phase_count=getattr(config, "source_structure_phase_count", 5),
     )
     if source_feature_reshaper is not None:
         source_feature_reshaper.to(device)
@@ -89,14 +88,12 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         params += list(source_feature_reshaper.parameters())
     optimizer = torch.optim.Adam(params, lr=config.lr, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs * steps_per_epoch, eta_min=0)
+    phase_weight_tracker = SourcePhaseWeightTracker(phase_count=5)
 
     source_iter = iter(cycle(source_loader))
     target_iter = iter(cycle(target_loader))
     min_shift, max_shift = -config.max_temporal_shift, config.max_temporal_shift
     target_to_source_shift = 0
-    target_struct_trade_off = getattr(config, "target_struct_trade_off", 0.0)
-    target_struct_warmup_epochs = getattr(config, "target_struct_warmup_epochs", 0)
-
     # To evaluate how well we estimate class distribution
     target_labels = target_loader_no_aug.dataset.get_labels()
     actual_class_distr = estimate_class_distribution(target_labels, config.num_classes)
@@ -159,6 +156,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             loss_target = 0.0
             reshaper_loss = pixels_s.sum() * 0.0
             reshaper_logs = {}
+            compact_loss = pixels_s.sum() * 0.0
+            compact_logs = {}
             dual_relation_loss = pixels_s.sum() * 0.0
             dual_relation_logs = {}
             loss_source_reshaped = pixels_s.sum() * 0.0
@@ -173,17 +172,22 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 logits_source = logits_source_raw
                 if source_feature_reshaper is not None:
                     spatial_feats_source = source_feature_reshaper(
-                        spatial_feats_source_raw,
+                        spatial_feats_source_raw.detach(),
                         positions=position_s,
                         labels=source_labels,
                     )
                     reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
-                        spatial_feats_source_raw,
+                        spatial_feats_source_raw.detach(),
                         spatial_feats_source,
                     )
-                    reshaper_logs.update(getattr(source_feature_reshaper, "last_logs", {}))
-                    temporal_feats_source = student.temporal_encoder(
+                    compact_loss, compact_logs = compute_source_phase_compactness_loss(
                         spatial_feats_source,
+                        position_s,
+                        source_labels,
+                        weight_tracker=phase_weight_tracker,
+                    )
+                    temporal_feats_source = student.temporal_encoder(
+                        spatial_feats_source.detach(),
                         position_s + source_to_target_shift,
                     )
                     logits_source = student.decoder(temporal_feats_source)
@@ -211,17 +215,22 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 logits_source = logits_source_raw
                 if source_feature_reshaper is not None:
                     spatial_feats_source = source_feature_reshaper(
-                        spatial_feats_source_raw,
+                        spatial_feats_source_raw.detach(),
                         positions=position_s,
                         labels=source_labels,
                     )
                     reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
-                        spatial_feats_source_raw,
+                        spatial_feats_source_raw.detach(),
                         spatial_feats_source,
                     )
-                    reshaper_logs.update(getattr(source_feature_reshaper, "last_logs", {}))
-                    temporal_feats_source = student.temporal_encoder(
+                    compact_loss, compact_logs = compute_source_phase_compactness_loss(
                         spatial_feats_source,
+                        position_s,
+                        source_labels,
+                        weight_tracker=phase_weight_tracker,
+                    )
+                    temporal_feats_source = student.temporal_encoder(
+                        spatial_feats_source.detach(),
                         position_s + source_to_target_shift,
                     )
                     logits_source = student.decoder(temporal_feats_source)
@@ -256,42 +265,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
             loss = loss_source + config.trade_off * loss_target
             if source_feature_reshaper is not None:
-                loss = loss + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
-
-            target_struct_logs = {}
-            target_struct_loss = None
-            if target_struct_trade_off > 0.0 and epoch >= target_struct_warmup_epochs:
-                if config.method == "timematchtgtphasecompact" and target_update_count >= 2:
-                    spatial_feats_target = student.spatial_encoder(
-                        pixels_t[pseudo_mask],
-                        mask_t[pseudo_mask],
-                        extra_t[pseudo_mask],
-                    )
-                    target_struct_loss, target_struct_logs = compute_target_phase_compactness_loss(
-                        spatial_feats_target,
-                        position_t[pseudo_mask],
-                        pseudo_targets[pseudo_mask],
-                    )
-                    loss = loss + target_struct_trade_off * target_struct_loss
-                elif config.method == "timematchtgtphaseconsistency":
-                    with torch.no_grad():
-                        teacher_spatial_feats_weak = teacher.spatial_encoder(
-                            pixels_t_weak,
-                            mask_t_weak,
-                            extra_t_weak,
-                        )
-                    student_spatial_feats_strong = student.spatial_encoder(
-                        pixels_t,
-                        mask_t,
-                        extra_t,
-                    )
-                    target_struct_loss, target_struct_logs = compute_target_phase_consistency_loss(
-                        teacher_spatial_feats_weak,
-                        position_t_weak + target_to_source_shift,
-                        student_spatial_feats_strong,
-                        position_t,
-                    )
-                    loss = loss + target_struct_trade_off * target_struct_loss
+                loss = loss + compact_loss + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
 
             # compute loss and backprop
             optimizer.zero_grad()
@@ -312,15 +286,15 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 writer.add_scalar("train/loss", loss_meter.val, global_step)
                 writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
                 writer.add_scalar("train/target_updates", target_update_count, global_step)
-                writer.add_scalar(
-                    "train/target_struct_loss",
-                    0.0 if target_struct_loss is None else float(target_struct_loss.detach().item()),
-                    global_step,
-                )
                 if source_feature_reshaper is not None:
                     writer.add_scalar(
                         "train/source_feature_reshaper_reg_loss",
                         float(reshaper_logs.get("source_reshaper_reg_loss", 0.0)),
+                        global_step,
+                    )
+                    writer.add_scalar(
+                        "train/source_phase_compactness_loss",
+                        float(compact_logs.get("compactness_loss", 0.0)),
                         global_step,
                     )
                     writer.add_scalar(
@@ -339,10 +313,11 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                             float(dual_relation_logs.get("source_dual_relation_loss", 0.0)),
                             global_step,
                         )
-                for name, value in target_struct_logs.items():
-                    writer.add_scalar(f"train/{name}", value, global_step)
                 for name, value in reshaper_logs.items():
                     writer.add_scalar(f"train/{name}", value, global_step)
+                for name, value in compact_logs.items():
+                    if name != "compactness_loss":
+                        writer.add_scalar(f"train/{name}", value, global_step)
                 for name, value in dual_relation_logs.items():
                     writer.add_scalar(f"train/{name}", value, global_step)
 
@@ -420,12 +395,6 @@ def update_ema_variables(model, ema, decay=0.99):
 
 
 def get_data_loaders(splits, config, balance_source=True):
-    source_structure_transform = build_source_structure_transform(
-        kind=getattr(config, "source_structure_transform", "none"),
-        strength=getattr(config, "source_structure_strength", 0.0),
-        phase_count=getattr(config, "source_structure_phase_count", 5),
-    )
-
     weak_aug = transforms.Compose([
         RandomSamplePixels(config.num_pixels),
         Normalize(),
@@ -435,7 +404,6 @@ def get_data_loaders(splits, config, balance_source=True):
     strong_aug = transforms.Compose([
             RandomSamplePixels(config.num_pixels),
             RandomSampleTimeSteps(config.seq_length),
-            source_structure_transform,
             Normalize(),
             ToTensor(),
     ])
