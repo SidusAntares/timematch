@@ -193,6 +193,9 @@ def maybe_build_source_feature_reshaper(model, config):
         strength=getattr(config, "source_feature_reshaper_strength", 0.10),
         kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
         phase_count=getattr(config, "source_structure_phase_count", 5),
+        component_alpha_temperature=getattr(config, "source_component_alpha_temperature", 0.75),
+        component_alpha_floor=getattr(config, "source_component_alpha_floor", 0.10),
+        component_phase_scale=getattr(config, "source_component_phase_scale", 0.85),
     )
 
 def get_dataset_size(data_root, dataset):
@@ -480,6 +483,24 @@ if __name__ == '__main__':
         default=0.0,
         type=float,
         help='blend coefficient for domain-adaptive phase priors; 0 keeps the original phase weights',
+    )
+    parser.add_argument(
+        '--source_component_alpha_temperature',
+        default=0.75,
+        type=float,
+        help='temperature used when converting source domain signatures into component weights for componentized reshapers',
+    )
+    parser.add_argument(
+        '--source_component_alpha_floor',
+        default=0.10,
+        type=float,
+        help='minimum uniform mixing ratio for componentized reshaper weights to avoid over-suppressing one component',
+    )
+    parser.add_argument(
+        '--source_component_phase_scale',
+        default=0.85,
+        type=float,
+        help='extra scaling factor applied to the phase component in the componentized source reshaper',
     )
 
     # Specific parameters for each training method

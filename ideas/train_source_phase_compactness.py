@@ -73,6 +73,9 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         strength=getattr(config, "source_feature_reshaper_strength", 0.10),
         kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
         phase_count=getattr(config, "source_structure_phase_count", 5),
+        component_alpha_temperature=getattr(config, "source_component_alpha_temperature", 0.75),
+        component_alpha_floor=getattr(config, "source_component_alpha_floor", 0.10),
+        component_phase_scale=getattr(config, "source_component_phase_scale", 0.85),
     )
     params = list(model.parameters())
     if source_feature_reshaper is not None:
