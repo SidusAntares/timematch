@@ -211,6 +211,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
                         shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
                         trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
+                        season_trade_off=getattr(config, "source_structure_season_trade_off", 0.02),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
@@ -262,6 +263,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
                         shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
                         trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
+                        season_trade_off=getattr(config, "source_structure_season_trade_off", 0.02),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
