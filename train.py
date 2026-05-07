@@ -376,7 +376,7 @@ if __name__ == '__main__':
     parser.add_argument('--closed_set', default=False, type=bool_flag, help='exclude unknown / out-of-class parcels')
 
     # Training configuration
-    parser.add_argument('--epochs', default=80, type=int, help='Number of epochs per fold')
+    parser.add_argument('--epochs', default=50, type=int, help='Number of epochs per fold')
     parser.add_argument('--batch_size', default=128, type=int, help='Batch size')
     parser.add_argument('--lr', default=1e-3, type=float, help='Learning rate')
     parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight decay rate')
@@ -479,8 +479,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component'],
-        help='source-side structural loss version: original compactness or fixed-weight multi-component v2.3.2',
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual'],
+        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, or v2.3.4 trend-residual',
     )
     parser.add_argument(
         '--source_structure_intra_trade_off',
@@ -492,13 +492,25 @@ if __name__ == '__main__':
         '--source_structure_amplitude_trade_off',
         default=0.25,
         type=float,
-        help='component weight for amplitude-spread suppression in source structure loss',
+        help='component weight for amplitude-spread suppression in v2.3.2 multi-component source structure loss',
     )
     parser.add_argument(
         '--source_structure_interphase_trade_off',
         default=0.25,
         type=float,
-        help='component weight for adjacent inter-phase smoothness in source structure loss',
+        help='component weight for adjacent inter-phase smoothness in v2.3.2 multi-component source structure loss',
+    )
+    parser.add_argument(
+        '--source_structure_shape_trade_off',
+        default=0.15,
+        type=float,
+        help='shape-regularization weight in profiled source structure loss variants',
+    )
+    parser.add_argument(
+        '--source_structure_trend_trade_off',
+        default=0.05,
+        type=float,
+        help='trend-smoothness regularization weight in trend-residual source structure loss variants',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')

@@ -209,6 +209,10 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
                         amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
                         interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
+                        shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
+                        trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
+                        anchor_spatial_feats=spatial_feats_source_raw.detach(),
+                        anchor_positions=position_s,
                     )
                     temporal_feats_source = student.temporal_encoder(
                         spatial_feats_source.detach(),
@@ -256,6 +260,10 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
                         amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
                         interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
+                        shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
+                        trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
+                        anchor_spatial_feats=spatial_feats_source_raw.detach(),
+                        anchor_positions=position_s,
                     )
                     temporal_feats_source = student.temporal_encoder(
                         spatial_feats_source.detach(),

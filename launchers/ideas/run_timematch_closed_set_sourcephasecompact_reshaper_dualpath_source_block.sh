@@ -28,6 +28,10 @@ SOURCE_STRUCTURE_LOSS_VERSION="${SOURCE_STRUCTURE_LOSS_VERSION:-compactness}"
 SOURCE_STRUCTURE_INTRA_TRADE_OFF="${SOURCE_STRUCTURE_INTRA_TRADE_OFF:-1.0}"
 SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF="${SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF:-0.25}"
 SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF="${SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF:-0.25}"
+SOURCE_STRUCTURE_SHAPE_TRADE_OFF="${SOURCE_STRUCTURE_SHAPE_TRADE_OFF:-0.15}"
+SOURCE_STRUCTURE_TREND_TRADE_OFF="${SOURCE_STRUCTURE_TREND_TRADE_OFF:-0.05}"
+SOURCE_PRETRAIN_EPOCHS="${SOURCE_PRETRAIN_EPOCHS:-100}"
+TIMEMATCH_EPOCHS="${TIMEMATCH_EPOCHS:-20}"
 
 SOURCE_MODEL="${SOURCE_MODEL:-pseltae_${SOURCE_TILE}_closedset_noshift_sourcephasecompact_p5_${RESHAPER_TAG}}"
 
@@ -55,6 +59,9 @@ python train.py \
   --source_structure_intra_trade_off "$SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
   --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
   --source_structure_interphase_trade_off "$SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF" \
+  --source_structure_shape_trade_off "$SOURCE_STRUCTURE_SHAPE_TRADE_OFF" \
+  --source_structure_trend_trade_off "$SOURCE_STRUCTURE_TREND_TRADE_OFF" \
+  --epochs "$SOURCE_PRETRAIN_EPOCHS" \
   -e "$SOURCE_MODEL" \
   --source "$SOURCE" \
   --target "$SOURCE" \
@@ -90,6 +97,8 @@ while IFS= read -r TARGET; do
     --source_structure_intra_trade_off "$SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
     --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
     --source_structure_interphase_trade_off "$SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF" \
+    --source_structure_shape_trade_off "$SOURCE_STRUCTURE_SHAPE_TRADE_OFF" \
+    --source_structure_trend_trade_off "$SOURCE_STRUCTURE_TREND_TRADE_OFF" \
     -e "$SOURCE_MODEL" \
     --source "$SOURCE" \
     --target "$TARGET" \
@@ -117,9 +126,12 @@ while IFS= read -r TARGET; do
     --source_structure_intra_trade_off "$SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
     --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
     --source_structure_interphase_trade_off "$SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF" \
+    --source_structure_shape_trade_off "$SOURCE_STRUCTURE_SHAPE_TRADE_OFF" \
+    --source_structure_trend_trade_off "$SOURCE_STRUCTURE_TREND_TRADE_OFF" \
     -e "$TIMEMATCH_MODEL" \
     --source "$SOURCE" \
     --target "$TARGET" \
     timematch \
+    --epochs "$TIMEMATCH_EPOCHS" \
     --weights "outputs/$SOURCE_MODEL"
 done <<< "$TARGETS_BLOCK"
