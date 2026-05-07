@@ -7,7 +7,7 @@ from evaluation import validation
 from ideas.source_phase_compactness import (
     SourcePhaseWeightTracker,
     build_source_phase_partition_spec,
-    compute_source_phase_compactness_loss,
+    compute_source_structure_loss,
     describe_source_phase_partition_spec,
 )
 from ideas.source_feature_reshaper import (
@@ -127,11 +127,15 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     spatial_feats_anchor,
                     spatial_feats,
                 )
-                compact_loss, compact_logs = compute_source_phase_compactness_loss(
+                compact_loss, compact_logs = compute_source_structure_loss(
                     spatial_feats,
                     positions,
                     targets,
                     weight_tracker=phase_weight_tracker,
+                    version=getattr(config, "source_structure_loss_version", "compactness"),
+                    intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
+                    amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
+                    interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
                 )
                 temporal_feats = model.temporal_encoder(spatial_feats.detach(), positions)
                 outputs = model.decoder(temporal_feats)
@@ -190,6 +194,7 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                 writer.add_scalar("train/lr", lr, global_step + step)
                 writer.add_scalar("train/source_cls_loss_raw", cls_loss_meter.val, global_step + step)
                 writer.add_scalar("train/source_phase_compactness_loss", compact_loss_meter.val, global_step + step)
+                writer.add_scalar("train/source_structure_loss", compact_loss_meter.val, global_step + step)
                 if source_feature_reshaper is not None:
                     writer.add_scalar("train/source_feature_reshaper_reg_loss", reshaper_loss_meter.val, global_step + step)
                     writer.add_scalar("train/source_cls_loss_reshaped", dual_cls_loss_meter.val, global_step + step)

@@ -15,7 +15,7 @@ from evaluation import validation
 from ideas.source_phase_compactness import (
     SourcePhaseWeightTracker,
     build_source_phase_partition_spec,
-    compute_source_phase_compactness_loss,
+    compute_source_structure_loss,
     describe_source_phase_partition_spec,
 )
 from ideas.source_feature_reshaper import (
@@ -200,11 +200,15 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         spatial_feats_source_raw.detach(),
                         spatial_feats_source,
                     )
-                    compact_loss, compact_logs = compute_source_phase_compactness_loss(
+                    compact_loss, compact_logs = compute_source_structure_loss(
                         spatial_feats_source,
                         position_s,
                         source_labels,
                         weight_tracker=phase_weight_tracker,
+                        version=getattr(config, "source_structure_loss_version", "compactness"),
+                        intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
+                        amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
+                        interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
                     )
                     temporal_feats_source = student.temporal_encoder(
                         spatial_feats_source.detach(),
@@ -243,11 +247,15 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         spatial_feats_source_raw.detach(),
                         spatial_feats_source,
                     )
-                    compact_loss, compact_logs = compute_source_phase_compactness_loss(
+                    compact_loss, compact_logs = compute_source_structure_loss(
                         spatial_feats_source,
                         position_s,
                         source_labels,
                         weight_tracker=phase_weight_tracker,
+                        version=getattr(config, "source_structure_loss_version", "compactness"),
+                        intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
+                        amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
+                        interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
                     )
                     temporal_feats_source = student.temporal_encoder(
                         spatial_feats_source.detach(),
@@ -315,6 +323,11 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     writer.add_scalar(
                         "train/source_phase_compactness_loss",
                         float(compact_logs.get("compactness_loss", 0.0)),
+                        global_step,
+                    )
+                    writer.add_scalar(
+                        "train/source_structure_loss",
+                        float(compact_logs.get("structure_loss", compact_logs.get("compactness_loss", 0.0))),
                         global_step,
                     )
                     writer.add_scalar(

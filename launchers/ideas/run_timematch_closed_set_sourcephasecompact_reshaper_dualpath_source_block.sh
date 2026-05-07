@@ -24,6 +24,10 @@ SOURCE_PHASE_MIN_POINTS="${SOURCE_PHASE_MIN_POINTS:-3}"
 SOURCE_PHASE_MAX_POINTS="${SOURCE_PHASE_MAX_POINTS:-8}"
 SOURCE_PHASE_MAX_SPAN="${SOURCE_PHASE_MAX_SPAN:-120}"
 SOURCE_PHASE_MIN_SAMPLE_POINTS="${SOURCE_PHASE_MIN_SAMPLE_POINTS:-2}"
+SOURCE_STRUCTURE_LOSS_VERSION="${SOURCE_STRUCTURE_LOSS_VERSION:-compactness}"
+SOURCE_STRUCTURE_INTRA_TRADE_OFF="${SOURCE_STRUCTURE_INTRA_TRADE_OFF:-1.0}"
+SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF="${SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF:-0.25}"
+SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF="${SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF:-0.25}"
 
 SOURCE_MODEL="${SOURCE_MODEL:-pseltae_${SOURCE_TILE}_closedset_noshift_sourcephasecompact_p5_${RESHAPER_TAG}}"
 
@@ -47,6 +51,10 @@ python train.py \
   --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
   --source_phase_max_span "$SOURCE_PHASE_MAX_SPAN" \
   --source_phase_min_sample_points "$SOURCE_PHASE_MIN_SAMPLE_POINTS" \
+  --source_structure_loss_version "$SOURCE_STRUCTURE_LOSS_VERSION" \
+  --source_structure_intra_trade_off "$SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
+  --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
+  --source_structure_interphase_trade_off "$SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF" \
   -e "$SOURCE_MODEL" \
   --source "$SOURCE" \
   --target "$SOURCE" \
@@ -78,6 +86,10 @@ while IFS= read -r TARGET; do
     --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
     --source_phase_max_span "$SOURCE_PHASE_MAX_SPAN" \
     --source_phase_min_sample_points "$SOURCE_PHASE_MIN_SAMPLE_POINTS" \
+    --source_structure_loss_version "$SOURCE_STRUCTURE_LOSS_VERSION" \
+    --source_structure_intra_trade_off "$SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
+    --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
+    --source_structure_interphase_trade_off "$SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF" \
     -e "$SOURCE_MODEL" \
     --source "$SOURCE" \
     --target "$TARGET" \
@@ -101,6 +113,10 @@ while IFS= read -r TARGET; do
     --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
     --source_phase_max_span "$SOURCE_PHASE_MAX_SPAN" \
     --source_phase_min_sample_points "$SOURCE_PHASE_MIN_SAMPLE_POINTS" \
+    --source_structure_loss_version "$SOURCE_STRUCTURE_LOSS_VERSION" \
+    --source_structure_intra_trade_off "$SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
+    --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
+    --source_structure_interphase_trade_off "$SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF" \
     -e "$TIMEMATCH_MODEL" \
     --source "$SOURCE" \
     --target "$TARGET" \

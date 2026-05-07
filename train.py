@@ -376,7 +376,7 @@ if __name__ == '__main__':
     parser.add_argument('--closed_set', default=False, type=bool_flag, help='exclude unknown / out-of-class parcels')
 
     # Training configuration
-    parser.add_argument('--epochs', default=100, type=int, help='Number of epochs per fold')
+    parser.add_argument('--epochs', default=80, type=int, help='Number of epochs per fold')
     parser.add_argument('--batch_size', default=128, type=int, help='Batch size')
     parser.add_argument('--lr', default=1e-3, type=float, help='Learning rate')
     parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight decay rate')
@@ -475,6 +475,30 @@ if __name__ == '__main__':
         default=2,
         type=int,
         help='minimum sampled time points required for one sample to contribute to a phase loss',
+    )
+    parser.add_argument(
+        '--source_structure_loss_version',
+        default='compactness',
+        choices=['compactness', 'multi_component'],
+        help='source-side structural loss version: original compactness or fixed-weight multi-component v2.3.2',
+    )
+    parser.add_argument(
+        '--source_structure_intra_trade_off',
+        default=1.0,
+        type=float,
+        help='component weight for intra-phase compactness in source structure loss',
+    )
+    parser.add_argument(
+        '--source_structure_amplitude_trade_off',
+        default=0.25,
+        type=float,
+        help='component weight for amplitude-spread suppression in source structure loss',
+    )
+    parser.add_argument(
+        '--source_structure_interphase_trade_off',
+        default=0.25,
+        type=float,
+        help='component weight for adjacent inter-phase smoothness in source structure loss',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')
