@@ -138,6 +138,7 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
                     shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
                     trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
+                    season_trade_off=getattr(config, "source_structure_season_trade_off", 0.02),
                     anchor_spatial_feats=spatial_feats_anchor,
                     anchor_positions=positions,
                 )

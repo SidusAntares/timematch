@@ -1,330 +1,418 @@
-# Project Progress Summary
+# Project Next Steps
 
-## Status Note (2026-05-01)
+## Status Note (2026-05-07)
 
-This file contains several intermediate judgments from an earlier stage.
+This file is now aligned with the current source-structure mainline.
 
-In particular, parts of this file still reflect:
+Earlier versions of this note mixed together:
 
-- older closed-set baseline numbers
-- a stronger emphasis on source-target structure gap than the current motivation allows
-- a pre-implementation belief that the next mainline should directly become adaptation-stage phase-aware structure alignment
+- old open-set / early closed-set baseline discussions
+- source-target structure gap motivation
+- prototype / clustering / target-side alignment ideas
+- pre-implementation guesses about what the next mainline should be
 
-The current project status is now more specific:
+Those ideas were not all wrong, but many of them have now either:
 
-1. the main motivation should be **source-domain self-structure**, not source-target gap alone
-2. the strongest source-side indicators are:
-   - `phase compactness`
-   - `phase margin`
-3. the first direct implementation `srcphasecompact_p5` showed:
-   - source self-structure regularization is not useless
-   - but a global hard-coded adaptation-stage compactness penalty is too coarse
-4. the cleaner next step is now:
-   - source-only self-structure shaping first
-   - then ordinary TimeMatch initialization from that source model
+- been tested and found not to be the right mainline
+- been partially absorbed into the current source-only structure design
+- or been postponed to a later, more source-sensitive weighting stage
 
-5. an additional pending issue has now been identified inside the current source-phase mainline:
-   - the current phase partition is performed after sorting encoded features by time index
-   - but the original input series are irregular and contain large missing gaps
-   - so a uniform split over sorted time steps may accidentally assign a long blank temporal interval into one phase
-   - this means the current phase unit is not yet truly domain-sensitive to observation sparsity / seasonal coverage structure
+The current project status should therefore be read from the perspective of:
 
-For the latest numeric baseline and source-phase analysis, prefer:
+> **source-only temporal structure shaping for time-series UDA**
 
-- [timematch_closed_set_noshift_macro_f1_summary.csv](C:\Code\dev\PythonProject\timematch\result\_summary\timematch_closed_set_noshift_macro_f1_summary.csv)
-- [structure_motivation_and_metrics.md](C:\Code\dev\PythonProject\timematch\result\_summary\structure_motivation_and_metrics.md)
+That is:
 
-## Current scope
-- Main baseline has moved from the original open-set setting to a **closed-set** setting.
-- PRA remains a single-pair validation track centered on `FR1 -> DK1`.
-- Multi-source closed-set TimeMatch baseline has now been rerun for all 12 transfer tasks.
-- Structure analysis is now a separate analysis track based on the saved closed-set baseline checkpoints rather than new training runs.
+- structure loss is defined only on the source side
+- target is not used to define the structure loss itself
+- TimeMatch still handles adaptation
+- the structure module is used to shape a better source initialization
 
-## Why the project focus changed
-- Earlier discussion started from the idea that "more complex source domains may transfer better".
-- However, source-only complexity measures did not align well with actual adaptation outcomes.
-- After switching to closed-set evaluation and computing task-level structure metrics, the project focus became:
+---
 
-> The key question is not which domain is more complex by itself, but which source domain provides **more stable and more useful transferable structure** for a target domain.
+## 1. Current Best Mainline
 
-- This means the analysis target is now `source -> target` pairs rather than standalone source domains.
+### Official best-performing mainline
 
-## Closed-set baseline overview
+Current best full 12-task result remains:
 
-| Task | TimeMatch |
-|---|---:|
-| FR1 -> FR2 | 0.7998860 |
-| FR1 -> DK1 | 0.6391047 |
-| FR1 -> AT1 | 0.7395250 |
-| FR2 -> FR1 | 0.7146287 |
-| FR2 -> DK1 | 0.4652110 |
-| FR2 -> AT1 | 0.6486893 |
-| DK1 -> FR1 | 0.5917054 |
-| DK1 -> FR2 | 0.5071109 |
-| DK1 -> AT1 | 0.5264147 |
-| AT1 -> FR1 | 0.7031468 |
-| AT1 -> FR2 | 0.6226317 |
-| AT1 -> DK1 | 0.7511958 |
+- **`v2.2.3 = 0.6761`**
 
-## Closed-set vs previous open-set baseline
-- Compared with the earlier open-set baseline table, the closed-set rerun improved in most tasks.
-- Among the 11 tasks with directly comparable old open-set results:
-  - 8 improved
-  - 3 decreased
-- Large gains appeared in:
-  - `DK1 -> FR2`
-  - `FR1 -> FR2`
-  - `FR1 -> AT1`
-- This confirms that removing the `unknown` bucket and enforcing a proper closed-set protocol materially changes the transfer landscape.
+using the `v222` hyperparameter set:
 
-## Closed-set data loading change
-- `unknown` is no longer kept in the active class list.
-- Rare source classes and classes that do not belong to the source closed set are excluded during loading rather than collapsed into `unknown`.
-- As a result:
-  - target classes used in training/evaluation are always a subset of the source closed-set classes
-  - source-only rare classes and target-only unseen classes are removed
+- `source_feature_reshaper = residual_temporal_conv`
+- `source_feature_reshaper_strength = 0.10`
+- `source_feature_dual_relation_trade_off = 0.03`
+- `source_feature_dual_cls_trade_off = 1.00`
+- `source_feature_reshaper_reg_trade_off = 0.05`
+- `kernel_size = 3`
 
-## PRA status
-- PRA has been tested mainly on `FR1 -> DK1`.
-- Multiple variants were tried:
-  - point/edge trade-off tuning
-  - bank momentum tuning
-  - pseudo-threshold tuning
-  - pseudo-label filtering variants
-  - geometry normalization before point/edge alignment
-- The consistent outcome is:
-  - PRA can train stably
-  - PRA can get close to baseline
-  - PRA has **not** shown a stable gain over the debugged TimeMatch baseline
+This is still the official performance reference line.
 
-## Structure analysis track
+---
 
-### Goal
-- Before adding new structure losses, determine which structure metrics actually explain transfer performance.
-- Reuse the 12 closed-set TimeMatch baseline checkpoints and compute task-level structure metrics for each `source -> target` pair.
+## 2. What Has Already Been Considered And Slowly Implemented
 
-### Metrics currently implemented
-- `Target F1`
-- `MMD`
-- `CORAL`
-- `Prototype Distance`
-- `Relation Structure Distance`
-- `ACF Distance`
+Several ideas that were previously only hypotheses have now already been tested in concrete versions.
 
-### Current analysis table
+### 2.1 Source-only structure shaping
+This is no longer just a motivation; it has become the actual mainline.
 
-| Source | Target | Target F1 | MMD | CORAL | Prototype Distance | Relation Structure Distance | ACF Distance |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| AT1 | DK1 | 0.7512 | 0.0849 | 0.001696 | 2.6984 | 0.000617 | 0.0581 |
-| AT1 | FR1 | 0.7031 | 0.0646 | 0.000263 | 1.6566 | 0.000830 | 0.0662 |
-| AT1 | FR2 | 0.6226 | 0.0697 | 0.000183 | 1.1330 | 0.000601 | 0.0678 |
-| DK1 | AT1 | 0.5264 | 0.0612 | 0.001852 | 3.0822 | 0.000994 | 0.0581 |
-| DK1 | FR1 | 0.5917 | 0.0884 | 0.001355 | 3.0653 | 0.000892 | 0.0444 |
-| DK1 | FR2 | 0.5071 | 0.0902 | 0.000152 | 2.3737 | 0.001596 | 0.0670 |
-| FR1 | AT1 | 0.7395 | 0.0458 | 0.000009 | 0.7958 | 0.001419 | 0.0665 |
-| FR1 | DK1 | 0.6391 | 0.0933 | 0.000033 | 1.3149 | 0.001948 | 0.0441 |
-| FR1 | FR2 | 0.7999 | 0.1047 | 0.000013 | 0.6940 | 0.001205 | 0.0766 |
-| FR2 | AT1 | 0.6487 | 0.0648 | 0.003278 | 2.4584 | 0.000579 | 0.0696 |
-| FR2 | DK1 | 0.4652 | 0.0572 | 0.001645 | 2.7916 | 0.001897 | 0.0667 |
-| FR2 | FR1 | 0.7146 | 0.0976 | 0.000415 | 1.0041 | 0.000457 | 0.0766 |
+What has already been established:
 
-### Correlation with target F1
-- `prototype_distance`: `-0.6518`
-- `relation_structure_distance`: `-0.4135`
-- `coral`: `-0.2866`
-- `acf_distance`: `+0.2818`
-- `mmd`: `+0.2765`
+- source-side structure regularization is useful
+- source-only structure shaping + ordinary TimeMatch is a valid training pipeline
+- target should not be directly used to define the structure loss
 
-## What the current analysis shows
+### 2.2 Phase unit redesign
+The earlier concern that the original phase split was too crude has already been acted on.
 
-### 1. Prototype distance is the strongest signal so far
-- The clearest result is that **smaller source-target prototype distance tends to correspond to higher target F1**.
-- This means that category-level structure stability is currently the most useful explanatory factor.
+This was implemented in:
 
-### 2. Relation structure matters, but is secondary
-- `relation_structure_distance` also shows a useful negative relationship with target F1.
-- However, it is clearly weaker than `prototype_distance`.
-- This suggests:
-  - point-level prototype alignment is likely more important than relation-only alignment
-  - relation structure may still help, but it should not be the first design priority
+- **`v2.3.1`**
 
-### 3. Source-only complexity is not the main story
-- Earlier source-only MSE-based "separability/complexity" did not explain the observed transfer results well.
-- The current evidence points toward:
+What changed:
 
-> Transfer performance depends more on **source-target category structure stability** than on source-only structural strength.
+- no longer uniform split by sorted index
+- changed to source-domain shared `DOY-gap-aware` phase partition
+- phase count became adaptive
+- phase units became more faithful to real temporal support
 
-### 4. ACF / global discrepancy are not yet the main drivers
-- `MMD`, `CORAL`, and `ACF Distance` currently show weaker explanatory power than prototype-based measures.
-- This does not mean temporal structure is irrelevant, but it suggests the current implementation is not capturing the dominant transferable factor yet.
+Conclusion:
 
-## Method-design implication
-- If a new structure-based adaptation method is developed, the first priority should be:
-  1. improve target prototype construction
-  2. stabilize cross-domain prototype alignment
-  3. only then consider stronger relation/graph modeling
+- this idea was reasonable and important
+- but phase correction alone was **not sufficient** to improve final UDA performance
 
-- In other words, current evidence supports:
-  - **prototype quality first**
-  - **relation structure second**
+### 2.3 Multi-component structure loss
+The idea that structure should not be only one compactness term has also already been tested.
 
-## Pseudo labels vs clustering for target structure
-- At this stage, the preferred mainline remains:
-  - **high-confidence pseudo labels as the first main solution**
-  - **clustering as an auxiliary or comparative solution**
-- Reason:
-  - the strongest current signal is category-level prototype stability
-  - pseudo-label prototypes are more directly tied to semantic class structure
-- Clustering is still worth studying, especially as:
-  - a target-structure discovery tool
-  - a comparison baseline
-  - or a first-stage grouping method before semantic refinement
+This was implemented in:
 
-## What the latest prototype variants changed
-- Three recent prototype-centered variants on `FR1 -> DK1` now give almost the same result:
-  - `RGPA-v1`: `0.5999`
-  - `ProtoCon-pure-v1`: `0.5996`
-  - `MemProto-v1`: `0.5989`
-- The closed-set baseline remains:
-  - `0.6391047`
-- This means:
-  - prototype structure is still the strongest **explanatory** signal
-  - but current prototype-side losses are **not yet** the right optimization mechanism
+- **`v2.3.2`**
 
-## What the v3 temporal analysis changed
-- The new `v3` analysis compared:
-  - raw temporal curves
-  - phase/window variants
-  - trend / detrended / frequency descriptors
-  - and the same family of metrics on **PSE temporal feature curves**
-- The strongest new correlations with `target_f1` are now:
-  - `pse_trend_curve_distance`: `-0.6997`
-  - `pse_early_curve_distance`: `-0.6855`
-  - `pse_mid_curve_distance`: `-0.6845`
-  - `pse_temporal_curve_distance`: `-0.6573`
-  - `prototype_distance`: `-0.6518`
-  - `pse_frequency_magnitude_distance`: `-0.6393`
-- This is the first time a new metric family slightly exceeds `prototype_distance`.
-- The main conclusion is:
+What changed:
 
-> encoded temporal structure is more informative than raw temporal curve geometry
+- tried to organize structure as multiple components:
+  - `intra`
+  - `amplitude`
+  - `inter-phase`
 
-## What this means structurally
-- Raw-curve whole-season distances remain weak or unstable.
-- Simple seasonal three-way splitting did not add much signal.
-- Approximate phenology splitting based only on curve peak was also weak.
-- In contrast, **PSE feature trajectories** show:
-  - stronger signal than raw curves
-  - stronger signal than naive whole-curve comparison
-  - and clear evidence that **early / mid season** matter more than late season
+Conclusion:
 
-## Updated judgment on phase structure
-- The project should now treat **phase-aware encoded temporal structure** as a top-priority mainline.
-- The key unit is no longer just:
-  - one sample
-  - one pooled feature
-  - one class prototype
+- this idea was also reasonable in motivation
+- but directly turning correlated indicators into penalties was **not effective**
+- performance became worse
 
-## New pending issue inside the source-phase mainline
+### 2.4 More conservative temporal-structure regularization
+After `v2.3.2` failed, a more conservative profile-based rewrite was tested.
 
-### Problem: current phase partition ignores irregular observation gaps
-- In the current `source phase compactness` design, `PSE` outputs one encoded feature per observed time step.
-- Those encoded features are sorted by time and then uniformly split into phases.
-- However, the original remote-sensing series are irregular and highly missing.
-- Therefore, two neighboring encoded time steps in the sorted sequence may correspond to observations separated by a large real temporal gap.
-- As a result, the current partition rule can easily produce a phase that is contiguous in **index order** but not contiguous in **real temporal coverage**.
+This was:
 
-### Why this matters
-- This weakens the semantic meaning of each phase.
-- It may blur truly important early / mid / late seasonal structure.
-- It may also hide domain-specific differences in observation density and valid seasonal support.
-- Therefore, this is not just a small engineering detail; it is part of the broader problem of **domain sensitivity**.
+- **`v2.3.3`**
 
-### What should be treated as the next to-do
-- The current phase partition strategy should be revisited before further decomposing the structure loss in `v2.3`.
-- The goal is not to return to source-target feature alignment, but to make the **source structure unit itself** more faithful to real temporal support.
-- Concretely, the next phase design should consider at least one of the following:
-  - partition by real timestamp span rather than by equal index count
-  - make phase boundaries aware of large observation gaps
-  - incorporate valid-observation density / seasonal support when defining phase units
+Conclusion:
 
-### Current status judgment
-- This issue should now be recorded as a formal pending item in the mainline.
-- It belongs to the implementation of **domain-sensitive source structure modeling**, rather than ordinary parameter tuning.
-- A better unit is now likely:
-  - `class x phase`
-  - or `sample phase -> class phase structure`
+- the direction was healthier than `v2.3.2`
+- but still too conservative
+- it partially protected the original source structure instead of sufficiently reshaping it
 
-## Updated judgment on decomposition
-- Trend-level structure is now strongly supported:
-  - `pse_trend_curve_distance` is the strongest metric in `v3`
-- Frequency structure is also useful on the encoded side:
-  - `pse_frequency_magnitude_distance` remains competitive
-- So future temporal structure design should not rely only on:
-  - raw pointwise curve distance
-- It should explicitly consider:
-  - encoded trend
-  - encoded local seasonal windows
-  - encoded phase-specific semantics
+### 2.5 Trend-residual restructuring
+The next major correction was to move away from direct `amplitude/inter-phase` penalties and keep only:
 
-## Updated judgment on clustering
-- Clustering may still help, but it should **not** be assumed to be the next primary solution.
-- Current evidence suggests:
-  - if clustering is used, it should probably serve as a **supporting structure discovery mechanism**
-  - rather than fully replacing semantic pseudo labels as the main supervision source
-- The main risk of a clustering-first route is:
-  - it may improve geometric compactness
-  - while drifting away from the semantic categories that actually define evaluation performance
+- `residual / compactness` as the main term
+- `trend` as a weak regularizer
 
-## Updated judgment on temporal structure
-- Compared with purely spatial/category prototype structure, **encoded temporal structure is now a stronger next candidate than more prototype-loss tweaking**.
-- Reason:
-  - current prototype-distance analysis says category-level alignment matters
-  - but the existing prototype methods still plateau around `0.599`
-  - `v3` now suggests the missing transferable signal lies in **how category identity is expressed over encoded time structure**, not only in static feature geometry
-- In other words:
+This became:
 
-> the model may already know "which class center to approach",  
-> but still not represent "how that class evolves across the season" well enough across domains
+- **`v2.3.4`**
 
-## More precise next-step priority
-- The next method-design priority should now be:
-  1. preserve semantic supervision through pseudo labels
-  2. enrich structure definition with **phase-aware PSE temporal signals**
-  3. use clustering only as an auxiliary view of target organization
+Current judgment:
 
-## Candidate temporal-structure directions
-- Phase-aware PSE alignment:
-  - align early / mid / late encoded trajectories rather than only pooled sample features
-- Class-phase prototype modeling:
-  - treat each class as a sequence of phase prototypes instead of a single static point
-- Encoded trend alignment:
-  - compare low-frequency semantic evolution across domains
-- Encoded frequency alignment:
-  - compare temporal spectrum magnitude after PSE encoding
-- Teacher-consistency-over-phase:
-  - prefer target samples whose phase-wise semantics remain stable under shift/augmentation
+- this is the strongest post-`v2.2.3` direction so far
+- full 12-task result reached:
+  - **`v2.3.4 = 0.6710`**
+- this is clearly better than `v2.3.1` and `v2.3.2`
+- and only slightly below `v2.2.3`
 
-## Files added for analysis
-- Closed-set transfer analysis script:
-  - [analyze_closed_set_transfer.py](/C:/Code/dev/PythonProject/timematch/analyze_closed_set_transfer.py)
-- Current analysis result table:
-  - [closed_set_transfer_metrics.csv](/C:/Code/dev/PythonProject/timematch/result/baseline_analysis/closed_set_transfer_metrics.csv)
-  - [closed_set_transfer_metrics_v2.csv](/C:/Code/dev/PythonProject/timematch/result/baseline_analysis/closed_set_transfer_metrics_v2.csv)
-  - [closed_set_transfer_metrics_v3.csv](/C:/Code/dev/PythonProject/timematch/result/baseline_analysis/closed_set_transfer_metrics_v3.csv)
+So this idea has also already moved from “reasonable thought” to “partially validated implementation”.
 
-## Next steps
-1. Use the `v3` result as the new decision point:
-   - encoded temporal structure has enough signal to justify a training method
-2. Design and implement a first **Phase-Aware PSE Structure Alignment** method:
-   - phase-wise encoded features
-   - class-phase prototypes
-   - trend-sensitive structure loss
-3. Keep clustering as a comparison or support track, including:
-   - clustering-based phase discovery
-   - clustering vs pseudo-label phase agreement
-4. Only after the first phase-aware encoded method is tested, decide whether to add stronger decomposition or joint completion modules.
+### 2.6 Seasonal pattern regularization
+The next step after `v2.3.4` is no longer to shrink seasonal structure, but to regulate its **pattern**.
 
-## Current mainline conclusion
+This has now been implemented as:
 
-> At the current stage, the most promising direction is not to keep expanding PRA variants or source-only complexity analysis, but to study **phase-aware encoded temporal structure**, especially how source and target classes align through PSE feature trajectories and class-phase semantics rather than only as static prototype points.
+- **`v2.3.5`**
+
+Its current design adds a weak source-only seasonal pattern term on top of:
+
+- `residual`
+- `trend`
+
+Status:
+
+- implementation completed
+- full 12-task run should be treated as the next formal verification
+
+---
+
+## 3. What We Have Learned So Far
+
+The following judgments are now much clearer than before.
+
+### 3.1 Structure loss should not be built directly from correlation tables
+Many indicators found in analysis are useful as:
+
+- descriptors
+- explanatory signals
+- candidate weighting signals
+
+but not automatically as:
+
+- direct optimization penalties
+
+In particular:
+
+- correlated structure indicators are not automatically good loss terms
+- “related to better transfer” does not imply “should be pushed smaller”
+
+### 3.2 Pattern regularization is better than magnitude penalty
+This has become a core design principle.
+
+Bad direction:
+
+- penalize `amplitude` magnitude directly
+- penalize `inter-phase jump` magnitude directly
+
+Better direction:
+
+- constrain temporal pattern regularity
+- reduce structural disorder
+- reduce redundancy
+- preserve discriminative temporal organization
+
+In short:
+
+> **good temporal structure regularization should constrain pattern, not simply shrink magnitude**
+
+### 3.3 Trend / seasonal / residual is a better semantic basis than intra / amplitude / inter
+After reading decomposition papers and comparing our experiments, the cleaner decomposition view is now:
+
+- `residual / noise`
+- `trend`
+- `seasonal / phenology-like variation`
+
+This is more semantically stable than:
+
+- `intra`
+- `amplitude`
+- `inter-phase`
+
+because the latter are closer to measurement views, while the former are closer to structural components.
+
+### 3.4 Source-only remains the correct constraint boundary
+Even when borrowing ideas from:
+
+- Barlow Twins
+- multi-view causal regularization
+- self-supervised structural losses
+
+the rule remains:
+
+- only borrow the **form of pattern regularization**
+- do **not** turn the method into source-target structure alignment
+
+This boundary should remain explicit.
+
+---
+
+## 4. Current Version Line
+
+### `v2.2.3`
+- best-performing official reference
+- single compactness-style source structure loss
+
+### `v2.3.1`
+- phase mechanism fixed
+- `DOY-gap-aware`
+- adaptive phase count
+- result worse than `v2.2.3`
+
+### `v2.3.2`
+- direct multi-component penalties
+- failed
+
+### `v2.3.3`
+- profile consistency quickcheck
+- healthier than `v2.3.2`
+- still too conservative
+
+### `v2.3.4`
+- `residual + trend`
+- best post-`v2.2.3` source-structure line so far
+
+### `v2.3.5`
+- `residual + trend + source-only seasonal-pattern`
+- current active next verification line
+
+---
+
+## 5. What Still Needs To Be Solved
+
+Although many earlier reasonable ideas have already been tested, several issues remain unresolved.
+
+### 5.1 Phase is improved, but may still not be the final temporal unit
+`DOY-gap-aware` phase partition is already much better than uniform split, but it is still a hard segmentation.
+
+Open question:
+
+- should the final temporal unit remain `phase`
+- or should it move toward a more general local temporal unit
+
+Possible direction:
+
+- **coherent temporal segment**
+
+This would be more general than a remote-sensing-specific phase notion.
+
+### 5.2 Sliding-window local structure is still worth exploring
+The current phase design is still segment-based.
+
+A likely next structural improvement is:
+
+- local sliding-window structure analysis
+
+Why it still matters:
+
+- it captures local continuity better
+- it is less dependent on hard phase boundaries
+- it is more general across domains such as:
+  - remote sensing
+  - medicine
+  - weather
+  - traffic
+
+This has not yet been fully implemented as a mainline structure unit.
+
+### 5.3 Intra-segment and inter-segment losses should likely be different
+This is now an important design insight.
+
+Inside one coherent temporal segment, it is reasonable to constrain:
+
+- compactness
+- local smoothness
+- residual suppression
+
+Across two different segments, it is **not** reasonable to use the same contraction logic.
+
+Instead, inter-segment losses should focus on:
+
+- transition regularity
+- structural organization
+- boundary consistency
+
+not simple shrinkage.
+
+This distinction has been conceptually identified, but has not yet been fully formalized as the next mainline loss family.
+
+### 5.4 Seasonal structure still needs a correct role
+Current judgment:
+
+- seasonal structure should **not** be directly minimized
+- seasonal magnitude itself is not the target
+- seasonal pattern is the meaningful object
+
+Open question:
+
+- should seasonal pattern be used as:
+  - a weak regularizer
+  - a phase/component weighting signal
+  - or a later source-sensitive gating signal
+
+`v2.3.5` is the first concrete attempt along this line.
+
+---
+
+## 6. Generic Time-Series UDA Goal
+
+The long-term goal is no longer just “remote-sensing phenology adaptation”.
+
+The desired scope is:
+
+> **generic time-series unsupervised domain adaptation**
+
+This means the method should ideally be reusable on:
+
+- remote sensing
+- medical time-series classification
+- weather-related time-series classification
+- traffic time-series classification
+
+This has two consequences.
+
+### 6.1 What is already relatively generic
+The following structure ideas are already close to being general:
+
+- source-only structure shaping
+- residual/noise suppression
+- trend regularization
+- source-internal seasonal pattern regularization
+
+### 6.2 What is still domain-flavored
+The following part is still more remote-sensing-flavored:
+
+- the current `DOY-gap-aware` partition thresholds
+- absolute gap/span settings such as `45` / `120`
+
+Therefore, a later generalization step should reframe phase construction as:
+
+- time-gap-aware segmentation
+- scale-normalized temporal segmentation
+- or local coherent temporal windows / segments
+
+rather than remote-sensing-specific `DOY` heuristics.
+
+---
+
+## 7. Immediate Next Formal Check
+
+The next formal step is:
+
+- finish validating **`v2.3.5`** on the full 12 tasks
+
+Main question:
+
+> can a weak source-only seasonal-pattern term improve over `v2.3.4` without reintroducing the failure mode of `v2.3.2`
+
+If `v2.3.5` works, then the next stage can move toward:
+
+- more explicit source-sensitive component weighting
+- but still source-only
+
+If `v2.3.5` fails, then the next redesign should focus on:
+
+- coherent temporal segment formulation
+- intra-segment vs inter-segment loss separation
+- window-based local structural constraints
+
+---
+
+## 8. Current Short Summary
+
+Many previously recorded “reasonable ideas” have **already** been gradually considered and partially implemented.
+
+In particular, we have already gone through:
+
+- source-only structure shaping
+- adaptive phase redesign
+- multi-component direct penalties
+- conservative profile regularization
+- trend-residual restructuring
+- source-only seasonal pattern regularization
+
+So the project is no longer at the stage of “what if we try structure”.
+
+The current stage is:
+
+> **how to organize source-only temporal structure loss so that it is semantically correct, optimization-friendly, and eventually generalizable beyond remote sensing**
+
+That is now the real mainline.
