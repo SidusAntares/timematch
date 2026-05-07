@@ -376,7 +376,7 @@ if __name__ == '__main__':
     parser.add_argument('--closed_set', default=False, type=bool_flag, help='exclude unknown / out-of-class parcels')
 
     # Training configuration
-    parser.add_argument('--epochs', default=30, type=int, help='Number of epochs per fold')
+    parser.add_argument('--epochs', default=100, type=int, help='Number of epochs per fold')
     parser.add_argument('--batch_size', default=128, type=int, help='Batch size')
     parser.add_argument('--lr', default=1e-3, type=float, help='Learning rate')
     parser.add_argument('--weight_decay', default=1e-4, type=float, help='Weight decay rate')
@@ -433,6 +433,48 @@ if __name__ == '__main__':
         default=0.05,
         type=float,
         help='weight for raw/reshaped source relation consistency in dual-path training',
+    )
+    parser.add_argument(
+        '--source_phase_partition_mode',
+        default='uniform',
+        choices=['uniform', 'doy_gap'],
+        help='phase partition mode for source phase compactness regularization',
+    )
+    parser.add_argument(
+        '--source_phase_count',
+        default=5,
+        type=int,
+        help='phase count used only when source_phase_partition_mode=uniform',
+    )
+    parser.add_argument(
+        '--source_phase_gap_threshold',
+        default=45,
+        type=int,
+        help='split phase candidates when consecutive source DOYs differ by more than this threshold',
+    )
+    parser.add_argument(
+        '--source_phase_min_points',
+        default=3,
+        type=int,
+        help='minimum number of source-domain time points required for a phase segment',
+    )
+    parser.add_argument(
+        '--source_phase_max_points',
+        default=8,
+        type=int,
+        help='maximum number of source-domain time points before a phase segment is split',
+    )
+    parser.add_argument(
+        '--source_phase_max_span',
+        default=120,
+        type=int,
+        help='maximum DOY span for one source phase before it is split',
+    )
+    parser.add_argument(
+        '--source_phase_min_sample_points',
+        default=2,
+        type=int,
+        help='minimum sampled time points required for one sample to contribute to a phase loss',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')

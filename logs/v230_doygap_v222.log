@@ -1,0 +1,10 @@
+nohup: 忽略输入
+Logs saved to: /data/user/timematch/logs/v230_doygap_v222_rerun_and_structure_20260506_225631
+Training logs:
+  /data/user/timematch/logs/v230_doygap_v222_rerun_and_structure_20260506_225631/gpu0_30TXT_v230_doygap_v222_tasks.log
+  /data/user/timematch/logs/v230_doygap_v222_rerun_and_structure_20260506_225631/gpu1_31TCJ_v230_doygap_v222_tasks.log
+  /data/user/timematch/logs/v230_doygap_v222_rerun_and_structure_20260506_225631/gpu2_32VNH_v230_doygap_v222_tasks.log
+  /data/user/timematch/logs/v230_doygap_v222_rerun_and_structure_20260506_225631/gpu3_33UVP_v230_doygap_v222_tasks.log
+Analysis logs:
+  /data/user/timematch/logs/v230_doygap_v222_rerun_and_structure_20260506_225631/gpu0_v230_doygap_v222_transfer_metrics.log
+  /data/user/timematch/logs/v230_doygap_v222_rerun_and_structure_20260506_225631/gpu0_v230_doygap_v222_dimension_analysis.log

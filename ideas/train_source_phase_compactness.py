@@ -6,7 +6,9 @@ from dataset import PixelSetData, create_train_loader
 from evaluation import validation
 from ideas.source_phase_compactness import (
     SourcePhaseWeightTracker,
+    build_source_phase_partition_spec,
     compute_source_phase_compactness_loss,
+    describe_source_phase_partition_spec,
 )
 from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
@@ -35,6 +37,10 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
     - reshaped-path supervision updates downstream temporal/classification heads,
       but does not backpropagate into the shared PSE or the reshaper
     """
+    assert not getattr(config, "with_shift_aug", False), (
+        "sourcephasecompact / v2.3 phase-aware training must not use RandomTemporalShift-style "
+        "source-side augmentation, because the source phase partition is defined on the original source time axis."
+    )
     model.to(device)
 
     train_transform = transforms.Compose([
@@ -58,6 +64,16 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
     )
     data_loader = create_train_loader(dataset, config.batch_size, config.num_workers)
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
+    phase_partition_spec = build_source_phase_partition_spec(
+        dataset.date_positions,
+        mode=getattr(config, "source_phase_partition_mode", "uniform"),
+        phase_count=getattr(config, "source_phase_count", 5),
+        gap_threshold=getattr(config, "source_phase_gap_threshold", 45),
+        min_points=getattr(config, "source_phase_min_points", 3),
+        max_points=getattr(config, "source_phase_max_points", 8),
+        max_span=getattr(config, "source_phase_max_span", 120),
+    )
+    print("source phase partition:", describe_source_phase_partition_spec(phase_partition_spec))
 
     criterion = FocalLoss(gamma=config.focal_loss_gamma)
     steps_per_epoch = len(data_loader)
@@ -73,7 +89,11 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         params += list(source_feature_reshaper.parameters())
     optimizer = torch.optim.Adam(params, lr=config.lr, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs * steps_per_epoch, eta_min=0)
-    phase_weight_tracker = SourcePhaseWeightTracker(phase_count=5)
+    phase_weight_tracker = SourcePhaseWeightTracker(
+        phase_count=phase_partition_spec["phase_count"],
+        phase_partition_spec=phase_partition_spec,
+        min_sample_points_per_phase=getattr(config, "source_phase_min_sample_points", 2),
+    )
 
     best_f1 = 0
     for epoch in range(config.epochs):
