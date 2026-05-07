@@ -1,0 +1,7 @@
+nohup: 忽略输入
+Logs saved to: /data/user/timematch/logs/v233_profiled_quickcheck_v222_20260507_145509
+Quick-check training logs:
+  /data/user/timematch/logs/v233_profiled_quickcheck_v222_20260507_145509/gpu0_30TXT_v233_profiled_quickcheck_v222.log
+  /data/user/timematch/logs/v233_profiled_quickcheck_v222_20260507_145509/gpu1_31TCJ_v233_profiled_quickcheck_v222.log
+  /data/user/timematch/logs/v233_profiled_quickcheck_v222_20260507_145509/gpu2_32VNH_v233_profiled_quickcheck_v222.log
+  /data/user/timematch/logs/v233_profiled_quickcheck_v222_20260507_145509/gpu3_33UVP_v233_profiled_quickcheck_v222.log

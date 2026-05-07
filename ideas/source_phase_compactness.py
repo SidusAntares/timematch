@@ -10,6 +10,11 @@ SOURCE_STRUCTURE_LOSS_VERSION = "compactness"
 SOURCE_STRUCTURE_INTRA_TRADE_OFF = 1.0
 SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF = 0.25
 SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF = 0.25
+SOURCE_STRUCTURE_SHAPE_TRADE_OFF = 0.15
+SOURCE_STRUCTURE_TREND_TRADE_OFF = 0.05
+SHAPE_REG_DIRECTION_TRADE_OFF = 0.5
+SHAPE_REG_COLLAPSE_TRADE_OFF = 0.5
+SHAPE_REG_COLLAPSE_MARGIN = 0.35
 # Source-level dynamic phase-weight construction:
 # - keep the phase partition fixed (uniform 5 phases)
 # - accumulate source-domain phase structure statistics across batches
@@ -38,6 +43,25 @@ def _sorted_sequence_features(spatial_feats, positions):
     ordered_feats = torch.gather(spatial_feats, dim=1, index=expanded)
     ordered_positions = torch.gather(positions, dim=1, index=sort_indices)
     return ordered_feats, ordered_positions
+
+
+def _moving_average_same(sequence_tensor):
+    if sequence_tensor.ndim != 2:
+        raise ValueError(f"Expected [T, D] tensor, got {tuple(sequence_tensor.shape)}")
+    if sequence_tensor.shape[0] <= 1:
+        return sequence_tensor
+    if sequence_tensor.shape[0] == 2:
+        return 0.5 * (sequence_tensor + torch.roll(sequence_tensor, shifts=-1, dims=0))
+
+    padded = torch.cat(
+        [sequence_tensor[:1], sequence_tensor, sequence_tensor[-1:]],
+        dim=0,
+    )
+    return (
+        padded[:-2]
+        + padded[1:-1]
+        + padded[2:]
+    ) / 3.0
 
 
 def _merge_small_segments(segments, min_points):
@@ -430,6 +454,10 @@ def compute_source_structure_loss(
     intra_trade_off=SOURCE_STRUCTURE_INTRA_TRADE_OFF,
     amplitude_trade_off=SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF,
     interphase_trade_off=SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF,
+    shape_trade_off=SOURCE_STRUCTURE_SHAPE_TRADE_OFF,
+    trend_trade_off=SOURCE_STRUCTURE_TREND_TRADE_OFF,
+    anchor_spatial_feats=None,
+    anchor_positions=None,
 ):
     """
     Generic source-side structural loss.
@@ -442,6 +470,17 @@ def compute_source_structure_loss(
           * intra-phase compactness
           * class-curve amplitude spread across phases
           * adjacent inter-phase smoothness of class centers
+    - profiled_components:
+        v2.3.3 fixed-weight combination of:
+          * intra-phase compactness
+          * shape regularization on reshaped class curves
+            - discourage disorderly temporal deformation
+            - discourage fragmented transition patterns
+            - discourage anomalous phase-energy collapse
+    - trend_residual:
+        v2.3.4 decomposition-inspired objective:
+          * residual/noise suppression via intra-phase compactness
+          * low-frequency trend regularization on phase-level class-center sequences
     """
     version = str(version).lower()
     if version == "compactness":
@@ -453,7 +492,17 @@ def compute_source_structure_loss(
             eps=eps,
         )
 
-    if version not in {"multi_component", "multicomponent", "v232"}:
+    if version not in {
+        "multi_component",
+        "multicomponent",
+        "v232",
+        "profiled_components",
+        "profiled",
+        "v233",
+        "trend_residual",
+        "trend",
+        "v234",
+    }:
         raise ValueError(f"Unsupported source structure loss version: {version}")
 
     if spatial_feats.ndim != 3:
@@ -564,60 +613,185 @@ def compute_source_structure_loss(
     })
     amplitude_loss = zero
     interphase_loss = zero
+    shape_loss = zero
+    shape_disorder_loss = zero
+    shape_fragment_loss = zero
+    shape_collapse_loss = zero
+    trend_loss = zero
     amplitude_class_count = 0
     interphase_class_count = 0
+    shape_class_count = 0
+    trend_class_count = 0
 
-    for class_id in class_ids:
-        valid_phase_indices = [
-            phase_idx
-            for phase_idx, stats in enumerate(phase_structures)
-            if class_id in stats["class_centers"]
-        ]
-        if len(valid_phase_indices) < 2:
-            continue
+    if version in {"profiled_components", "profiled", "v233"}:
+        for class_id in class_ids:
+            valid_phase_indices = [
+                phase_idx
+                for phase_idx, stats in enumerate(phase_structures)
+                if class_id in stats["class_centers"]
+            ]
+            if len(valid_phase_indices) < 3:
+                continue
 
-        centers = torch.stack(
-            [phase_structures[phase_idx]["class_centers"][class_id] for phase_idx in valid_phase_indices],
-            dim=0,
-        )
-        class_weights = weights[torch.tensor(valid_phase_indices, device=weights.device)]
-        class_weights = class_weights / class_weights.sum().clamp_min(eps)
+            centers = torch.stack(
+                [phase_structures[phase_idx]["class_centers"][class_id] for phase_idx in valid_phase_indices],
+                dim=0,
+            )
+            class_weights = weights[torch.tensor(valid_phase_indices, device=weights.device)]
+            class_weights = class_weights / class_weights.sum().clamp_min(eps)
 
-        temporal_center = (class_weights.unsqueeze(-1) * centers).sum(dim=0, keepdim=True)
-        class_amplitude = ((centers - temporal_center).pow(2).sum(dim=1) * class_weights).sum()
-        amplitude_loss = amplitude_loss + class_amplitude
-        amplitude_class_count += 1
-
-        if centers.shape[0] >= 2:
             diffs = centers[1:] - centers[:-1]
-            diff_energy = diffs.pow(2).sum(dim=1)
             pair_weights = 0.5 * (class_weights[1:] + class_weights[:-1])
             pair_weights = pair_weights / pair_weights.sum().clamp_min(eps)
-            class_interphase = (diff_energy * pair_weights).sum()
-            interphase_loss = interphase_loss + class_interphase
-            interphase_class_count += 1
+            diff_energy = diffs.pow(2).sum(dim=1)
+
+            second_diffs = diffs[1:] - diffs[:-1]
+            second_weights = 0.5 * (pair_weights[1:] + pair_weights[:-1])
+            second_weights = second_weights / second_weights.sum().clamp_min(eps)
+            class_disorder = (
+                second_diffs.pow(2).sum(dim=1) * second_weights
+            ).sum() / (diff_energy.mul(pair_weights).sum().clamp_min(eps))
+
+            cosine = torch.nn.functional.cosine_similarity(diffs[:-1], diffs[1:], dim=1, eps=eps)
+            class_fragment = ((1.0 - cosine) * second_weights).sum()
+
+            center_energy = centers.norm(dim=1)
+            center_profile = center_energy / center_energy.sum().clamp_min(eps)
+            concentration = center_profile.pow(2).sum()
+            uniform_floor = 1.0 / max(center_profile.numel(), 1)
+            normalized_collapse = (concentration - uniform_floor) / max(1.0 - uniform_floor, eps)
+            class_collapse = torch.relu(
+                normalized_collapse - SHAPE_REG_COLLAPSE_MARGIN
+            ).pow(2)
+
+            class_shape = (
+                class_disorder
+                + SHAPE_REG_DIRECTION_TRADE_OFF * class_fragment
+                + SHAPE_REG_COLLAPSE_TRADE_OFF * class_collapse
+            )
+            shape_disorder_loss = shape_disorder_loss + class_disorder
+            shape_fragment_loss = shape_fragment_loss + class_fragment
+            shape_collapse_loss = shape_collapse_loss + class_collapse
+            shape_loss = shape_loss + class_shape
+            shape_class_count += 1
+    elif version in {"trend_residual", "trend", "v234"}:
+        for class_id in class_ids:
+            valid_phase_indices = [
+                phase_idx
+                for phase_idx, stats in enumerate(phase_structures)
+                if class_id in stats["class_centers"]
+            ]
+            if len(valid_phase_indices) < 3:
+                continue
+
+            centers = torch.stack(
+                [phase_structures[phase_idx]["class_centers"][class_id] for phase_idx in valid_phase_indices],
+                dim=0,
+            )
+            trend_centers = _moving_average_same(centers)
+            if trend_centers.shape[0] < 3:
+                continue
+
+            second_diffs = trend_centers[2:] - 2.0 * trend_centers[1:-1] + trend_centers[:-2]
+            class_weights = weights[torch.tensor(valid_phase_indices, device=weights.device)]
+            interior_weights = class_weights[1:-1]
+            interior_weights = interior_weights / interior_weights.sum().clamp_min(eps)
+            class_trend = (second_diffs.pow(2).sum(dim=1) * interior_weights).sum()
+            trend_loss = trend_loss + class_trend
+            trend_class_count += 1
+    else:
+        for class_id in class_ids:
+            valid_phase_indices = [
+                phase_idx
+                for phase_idx, stats in enumerate(phase_structures)
+                if class_id in stats["class_centers"]
+            ]
+            if len(valid_phase_indices) < 2:
+                continue
+
+            centers = torch.stack(
+                [phase_structures[phase_idx]["class_centers"][class_id] for phase_idx in valid_phase_indices],
+                dim=0,
+            )
+            class_weights = weights[torch.tensor(valid_phase_indices, device=weights.device)]
+            class_weights = class_weights / class_weights.sum().clamp_min(eps)
+
+            temporal_center = (class_weights.unsqueeze(-1) * centers).sum(dim=0, keepdim=True)
+            class_amplitude = ((centers - temporal_center).pow(2).sum(dim=1) * class_weights).sum()
+            amplitude_loss = amplitude_loss + class_amplitude
+            amplitude_class_count += 1
+
+            if centers.shape[0] >= 2:
+                diffs = centers[1:] - centers[:-1]
+                diff_energy = diffs.pow(2).sum(dim=1)
+                pair_weights = 0.5 * (class_weights[1:] + class_weights[:-1])
+                pair_weights = pair_weights / pair_weights.sum().clamp_min(eps)
+                class_interphase = (diff_energy * pair_weights).sum()
+                interphase_loss = interphase_loss + class_interphase
+                interphase_class_count += 1
 
     if amplitude_class_count > 0:
         amplitude_loss = amplitude_loss / amplitude_class_count
     if interphase_class_count > 0:
         interphase_loss = interphase_loss / interphase_class_count
+    if shape_class_count > 0:
+        shape_loss = shape_loss / shape_class_count
+        shape_disorder_loss = shape_disorder_loss / shape_class_count
+        shape_fragment_loss = shape_fragment_loss / shape_class_count
+        shape_collapse_loss = shape_collapse_loss / shape_class_count
+    if trend_class_count > 0:
+        trend_loss = trend_loss / trend_class_count
 
-    total_loss = (
-        float(intra_trade_off) * intra_loss
-        + float(amplitude_trade_off) * amplitude_loss
-        + float(interphase_trade_off) * interphase_loss
-    )
+    if version in {"profiled_components", "profiled", "v233"}:
+        total_loss = (
+            float(intra_trade_off) * intra_loss
+            + float(shape_trade_off) * shape_loss
+        )
+    elif version in {"trend_residual", "trend", "v234"}:
+        total_loss = (
+            float(intra_trade_off) * intra_loss
+            + float(trend_trade_off) * trend_loss
+        )
+    else:
+        total_loss = (
+            float(intra_trade_off) * intra_loss
+            + float(amplitude_trade_off) * amplitude_loss
+            + float(interphase_trade_off) * interphase_loss
+        )
 
     if weight_tracker is not None:
         phase_logs.update(weight_tracker.get_logs())
 
     total_loss = SOURCE_PHASE_COMPACTNESS_LAMBDA * total_loss
-    phase_logs["source_structure_loss_version"] = 1.0
+    phase_logs["source_structure_loss_version"] = (
+        1.0 if version in {"multi_component", "multicomponent", "v232"} else 2.0
+    )
     phase_logs["source_structure_intra_loss"] = float((SOURCE_PHASE_COMPACTNESS_LAMBDA * intra_loss).detach().item())
-    phase_logs["source_structure_amplitude_loss"] = float((SOURCE_PHASE_COMPACTNESS_LAMBDA * amplitude_loss).detach().item())
-    phase_logs["source_structure_interphase_loss"] = float((SOURCE_PHASE_COMPACTNESS_LAMBDA * interphase_loss).detach().item())
+    phase_logs["source_structure_amplitude_loss"] = float(
+        (SOURCE_PHASE_COMPACTNESS_LAMBDA * amplitude_loss).detach().item()
+    )
+    phase_logs["source_structure_interphase_loss"] = float(
+        (SOURCE_PHASE_COMPACTNESS_LAMBDA * interphase_loss).detach().item()
+    )
+    phase_logs["source_structure_shape_loss"] = float(
+        (SOURCE_PHASE_COMPACTNESS_LAMBDA * shape_loss).detach().item()
+    )
+    phase_logs["source_structure_shape_disorder_loss"] = float(
+        (SOURCE_PHASE_COMPACTNESS_LAMBDA * shape_disorder_loss).detach().item()
+    )
+    phase_logs["source_structure_shape_fragment_loss"] = float(
+        (SOURCE_PHASE_COMPACTNESS_LAMBDA * shape_fragment_loss).detach().item()
+    )
+    phase_logs["source_structure_shape_collapse_loss"] = float(
+        (SOURCE_PHASE_COMPACTNESS_LAMBDA * shape_collapse_loss).detach().item()
+    )
+    phase_logs["source_structure_trend_loss"] = float(
+        (SOURCE_PHASE_COMPACTNESS_LAMBDA * trend_loss).detach().item()
+    )
     phase_logs["source_structure_amplitude_classes"] = float(amplitude_class_count)
     phase_logs["source_structure_interphase_classes"] = float(interphase_class_count)
+    phase_logs["source_structure_shape_classes"] = float(shape_class_count)
+    phase_logs["source_structure_trend_classes"] = float(trend_class_count)
     phase_logs["structure_loss"] = float(total_loss.detach().item())
     phase_logs["compactness_loss"] = phase_logs["structure_loss"]
     return total_loss, phase_logs
