@@ -1,0 +1,5 @@
+family,top_metric,top_abs_corr,top_corr,avg_abs_corr,metric_count
+inter_phase_contrast,source_encoded_interphase_global_separation_mean,0.7962365578374955,-0.7962365578374955,0.6610611560630246,5
+intra_phase_compact_smooth,source_encoded_intraphase_late_early_radius_ratio_mean,0.7871991181800381,0.7871991181800381,0.641309881987298,4
+amplitude_spread,source_encoded_amplitude_excursion_cv,0.7507457021193426,0.7507457021193426,0.6031716620040637,4
+trend_activity,source_encoded_trend_path_length_mean,0.5057827166342823,-0.5057827166342823,0.363438512626988,4

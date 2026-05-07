@@ -23,6 +23,12 @@ The current project status is now more specific:
    - source-only self-structure shaping first
    - then ordinary TimeMatch initialization from that source model
 
+5. an additional pending issue has now been identified inside the current source-phase mainline:
+   - the current phase partition is performed after sorting encoded features by time index
+   - but the original input series are irregular and contain large missing gaps
+   - so a uniform split over sorted time steps may accidentally assign a long blank temporal interval into one phase
+   - this means the current phase unit is not yet truly domain-sensitive to observation sparsity / seasonal coverage structure
+
 For the latest numeric baseline and source-phase analysis, prefer:
 
 - [timematch_closed_set_noshift_macro_f1_summary.csv](C:\Code\dev\PythonProject\timematch\result\_summary\timematch_closed_set_noshift_macro_f1_summary.csv)
@@ -218,6 +224,33 @@ For the latest numeric baseline and source-phase analysis, prefer:
   - one sample
   - one pooled feature
   - one class prototype
+
+## New pending issue inside the source-phase mainline
+
+### Problem: current phase partition ignores irregular observation gaps
+- In the current `source phase compactness` design, `PSE` outputs one encoded feature per observed time step.
+- Those encoded features are sorted by time and then uniformly split into phases.
+- However, the original remote-sensing series are irregular and highly missing.
+- Therefore, two neighboring encoded time steps in the sorted sequence may correspond to observations separated by a large real temporal gap.
+- As a result, the current partition rule can easily produce a phase that is contiguous in **index order** but not contiguous in **real temporal coverage**.
+
+### Why this matters
+- This weakens the semantic meaning of each phase.
+- It may blur truly important early / mid / late seasonal structure.
+- It may also hide domain-specific differences in observation density and valid seasonal support.
+- Therefore, this is not just a small engineering detail; it is part of the broader problem of **domain sensitivity**.
+
+### What should be treated as the next to-do
+- The current phase partition strategy should be revisited before further decomposing the structure loss in `v2.3`.
+- The goal is not to return to source-target feature alignment, but to make the **source structure unit itself** more faithful to real temporal support.
+- Concretely, the next phase design should consider at least one of the following:
+  - partition by real timestamp span rather than by equal index count
+  - make phase boundaries aware of large observation gaps
+  - incorporate valid-observation density / seasonal support when defining phase units
+
+### Current status judgment
+- This issue should now be recorded as a formal pending item in the mainline.
+- It belongs to the implementation of **domain-sensitive source structure modeling**, rather than ordinary parameter tuning.
 - A better unit is now likely:
   - `class x phase`
   - or `sample phase -> class phase structure`

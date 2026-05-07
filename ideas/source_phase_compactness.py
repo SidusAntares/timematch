@@ -1,3 +1,6 @@
+import math
+
+import numpy as np
 import torch
 
 
@@ -12,6 +15,12 @@ PHASE_WEIGHT_COMPACTNESS_COEFF = 1.0
 PHASE_WEIGHT_MARGIN_COEFF = 1.0
 PHASE_WEIGHT_TEMPERATURE = 1.0
 PHASE_WEIGHT_EMA_MOMENTUM = 0.9
+SOURCE_PHASE_PARTITION_MODE = "uniform"
+SOURCE_PHASE_GAP_THRESHOLD = 45
+SOURCE_PHASE_MIN_POINTS = 3
+SOURCE_PHASE_MAX_POINTS = 8
+SOURCE_PHASE_MAX_SPAN = 120
+SOURCE_PHASE_MIN_SAMPLE_POINTS = 2
 
 
 def _uniform_phase_slices(sequence_length, phase_count):
@@ -22,7 +31,130 @@ def _uniform_phase_slices(sequence_length, phase_count):
 def _sorted_sequence_features(spatial_feats, positions):
     sort_indices = torch.argsort(positions, dim=1)
     expanded = sort_indices.unsqueeze(-1).expand(-1, -1, spatial_feats.shape[-1])
-    return torch.gather(spatial_feats, dim=1, index=expanded)
+    ordered_feats = torch.gather(spatial_feats, dim=1, index=expanded)
+    ordered_positions = torch.gather(positions, dim=1, index=sort_indices)
+    return ordered_feats, ordered_positions
+
+
+def _merge_small_segments(segments, min_points):
+    segments = [np.asarray(segment, dtype=np.int64) for segment in segments if len(segment) > 0]
+    if not segments:
+        return segments
+
+    changed = True
+    while changed and len(segments) > 1:
+        changed = False
+        for idx, segment in enumerate(list(segments)):
+            if len(segment) >= min_points:
+                continue
+            if idx == 0:
+                segments[1] = np.concatenate([segment, segments[1]])
+                del segments[0]
+            elif idx == len(segments) - 1:
+                segments[idx - 1] = np.concatenate([segments[idx - 1], segment])
+                del segments[idx]
+            else:
+                gap_prev = int(segment[0] - segments[idx - 1][-1])
+                gap_next = int(segments[idx + 1][0] - segment[-1])
+                if gap_prev <= gap_next:
+                    segments[idx - 1] = np.concatenate([segments[idx - 1], segment])
+                    del segments[idx]
+                else:
+                    segments[idx + 1] = np.concatenate([segment, segments[idx + 1]])
+                    del segments[idx]
+            changed = True
+            break
+    return segments
+
+
+def build_source_phase_partition_spec(
+    date_positions,
+    mode=SOURCE_PHASE_PARTITION_MODE,
+    phase_count=UNIFORM_PHASE_COUNT,
+    gap_threshold=SOURCE_PHASE_GAP_THRESHOLD,
+    min_points=SOURCE_PHASE_MIN_POINTS,
+    max_points=SOURCE_PHASE_MAX_POINTS,
+    max_span=SOURCE_PHASE_MAX_SPAN,
+):
+    mode = str(mode).lower()
+    sorted_positions = np.asarray(sorted({int(pos) for pos in date_positions}), dtype=np.int64)
+    if sorted_positions.size == 0:
+        raise ValueError("Cannot build source phase partition without date positions.")
+
+    if mode == "uniform":
+        return {
+            "mode": "uniform",
+            "phase_count": int(max(1, min(int(phase_count), int(sorted_positions.size)))),
+            "intervals": None,
+            "date_positions": sorted_positions.tolist(),
+        }
+
+    if mode != "doy_gap":
+        raise ValueError(f"Unsupported source phase partition mode: {mode}")
+
+    base_segments = []
+    start_idx = 0
+    for idx in range(1, sorted_positions.size):
+        if int(sorted_positions[idx] - sorted_positions[idx - 1]) > int(gap_threshold):
+            base_segments.append(sorted_positions[start_idx:idx])
+            start_idx = idx
+    base_segments.append(sorted_positions[start_idx:])
+
+    split_segments = []
+    max_points = max(1, int(max_points))
+    max_span = max(1, int(max_span))
+    for segment in base_segments:
+        span = int(segment[-1] - segment[0]) if len(segment) > 0 else 0
+        split_count = max(
+            1,
+            int(math.ceil(len(segment) / max_points)),
+            int(math.ceil(max(span, 1) / max_span)),
+        )
+        for split_segment in np.array_split(segment, split_count):
+            if len(split_segment) > 0:
+                split_segments.append(split_segment)
+
+    merged_segments = _merge_small_segments(split_segments, max(1, int(min_points)))
+    intervals = [(int(segment[0]), int(segment[-1])) for segment in merged_segments]
+    return {
+        "mode": "doy_gap",
+        "phase_count": len(intervals),
+        "intervals": intervals,
+        "date_positions": sorted_positions.tolist(),
+        "gap_threshold": int(gap_threshold),
+        "min_points": int(min_points),
+        "max_points": int(max_points),
+        "max_span": int(max_span),
+    }
+
+
+def describe_source_phase_partition_spec(spec):
+    if spec["mode"] == "uniform":
+        return f"mode=uniform, phase_count={spec['phase_count']}"
+    interval_text = ", ".join([f"[{start},{end}]" for start, end in spec["intervals"]])
+    return (
+        f"mode=doy_gap, phase_count={spec['phase_count']}, "
+        f"gap_threshold={spec['gap_threshold']}, min_points={spec['min_points']}, "
+        f"max_points={spec['max_points']}, max_span={spec['max_span']}, intervals={interval_text}"
+    )
+
+
+def _phase_masks_from_spec(ordered_positions, phase_partition_spec):
+    batch_size, sequence_length = ordered_positions.shape
+    if phase_partition_spec is None or phase_partition_spec["mode"] == "uniform":
+        phase_count = UNIFORM_PHASE_COUNT if phase_partition_spec is None else int(phase_partition_spec["phase_count"])
+        phase_slices = _uniform_phase_slices(sequence_length, phase_count)
+        phase_masks = []
+        for phase_indices in phase_slices:
+            mask = torch.zeros((batch_size, sequence_length), device=ordered_positions.device, dtype=torch.bool)
+            mask[:, phase_indices] = True
+            phase_masks.append(mask)
+        return phase_masks
+
+    phase_masks = []
+    for start, end in phase_partition_spec["intervals"]:
+        phase_masks.append((ordered_positions >= start) & (ordered_positions <= end))
+    return phase_masks
 
 
 def _zscore_or_zero(values, eps):
@@ -71,9 +203,17 @@ def _compute_phase_weights(phase_structures, reference_tensor, eps):
 
 
 class SourcePhaseWeightTracker:
-    def __init__(self, phase_count, ema_momentum=PHASE_WEIGHT_EMA_MOMENTUM):
+    def __init__(
+        self,
+        phase_count,
+        ema_momentum=PHASE_WEIGHT_EMA_MOMENTUM,
+        phase_partition_spec=None,
+        min_sample_points_per_phase=SOURCE_PHASE_MIN_SAMPLE_POINTS,
+    ):
         self.phase_count = phase_count
         self.ema_momentum = ema_momentum
+        self.phase_partition_spec = phase_partition_spec
+        self.min_sample_points_per_phase = int(min_sample_points_per_phase)
         self.running_compactness = None
         self.running_margin = None
         self.valid_counts = None
@@ -152,6 +292,8 @@ class SourcePhaseWeightTracker:
             logs[f"source_compactness_score_p{phase_idx + 1}"] = float(self.running_compactness[phase_idx].item())
             logs[f"source_margin_score_p{phase_idx + 1}"] = float(self.running_margin[phase_idx].item())
             logs[f"source_valid_count_p{phase_idx + 1}"] = float(self.valid_counts[phase_idx].item())
+        if self.phase_partition_spec is not None:
+            logs["source_phase_count"] = float(self.phase_partition_spec["phase_count"])
         return logs
 
 
@@ -171,20 +313,29 @@ def compute_source_phase_compactness_loss(spatial_feats, positions, labels, weig
         raise ValueError(f"Expected spatial_feats to have shape [B, T, D], got {tuple(spatial_feats.shape)}")
 
     batch_size, sequence_length, _ = spatial_feats.shape
-    if batch_size < 2 or sequence_length < UNIFORM_PHASE_COUNT:
+    if batch_size < 2 or sequence_length < 2:
         zero = spatial_feats.sum() * 0.0
         return zero, {"compactness_loss": 0.0}
 
-    ordered_feats = _sorted_sequence_features(spatial_feats, positions)
-    phase_slices = _uniform_phase_slices(sequence_length, UNIFORM_PHASE_COUNT)
+    phase_partition_spec = getattr(weight_tracker, "phase_partition_spec", None) if weight_tracker is not None else None
+    min_sample_points = (
+        getattr(weight_tracker, "min_sample_points_per_phase", SOURCE_PHASE_MIN_SAMPLE_POINTS)
+        if weight_tracker is not None
+        else SOURCE_PHASE_MIN_SAMPLE_POINTS
+    )
+    ordered_feats, ordered_positions = _sorted_sequence_features(spatial_feats, positions)
+    phase_masks = _phase_masks_from_spec(ordered_positions, phase_partition_spec)
     total_loss = spatial_feats.sum() * 0.0
     phase_logs = {}
     phase_structures = []
 
-    for phase_idx, phase_indices in enumerate(phase_slices):
-        if phase_indices.numel() == 0:
+    for phase_idx, phase_mask in enumerate(phase_masks):
+        phase_counts = phase_mask.sum(dim=1)
+        valid_sample_mask = phase_counts >= int(min_sample_points)
+        if not bool(valid_sample_mask.any().item()):
             phase_logs[f"phase_compactness_loss_p{phase_idx + 1}"] = 0.0
             phase_logs[f"phase_margin_score_p{phase_idx + 1}"] = 0.0
+            phase_logs[f"phase_valid_samples_p{phase_idx + 1}"] = 0.0
             phase_structures.append({
                 "phase_loss": total_loss,
                 "valid_class_count": 0,
@@ -193,14 +344,15 @@ def compute_source_phase_compactness_loss(spatial_feats, positions, labels, weig
             })
             continue
 
-        phase_feats = ordered_feats[:, phase_indices, :].mean(dim=1)
+        phase_mask_float = phase_mask.unsqueeze(-1).to(dtype=ordered_feats.dtype)
+        phase_feats = (ordered_feats * phase_mask_float).sum(dim=1) / phase_counts.clamp_min(1).unsqueeze(-1)
         phase_loss = phase_feats.sum() * 0.0
         valid_class_count = 0
         class_centers = []
         class_withins = []
 
         for class_id in labels.unique(sorted=True):
-            class_mask = labels == class_id
+            class_mask = (labels == class_id) & valid_sample_mask
             class_count = int(class_mask.sum().item())
             if class_count < 2:
                 continue
@@ -216,6 +368,7 @@ def compute_source_phase_compactness_loss(spatial_feats, positions, labels, weig
         if valid_class_count > 0:
             phase_loss = phase_loss / (valid_class_count + eps)
             phase_logs[f"phase_compactness_loss_p{phase_idx + 1}"] = float(phase_loss.detach().item())
+            phase_logs[f"phase_valid_samples_p{phase_idx + 1}"] = float(valid_sample_mask.sum().item())
             compactness_score = 1.0 / (phase_loss.detach() + eps)
 
             if len(class_centers) >= 2:
@@ -236,6 +389,7 @@ def compute_source_phase_compactness_loss(spatial_feats, positions, labels, weig
         else:
             phase_logs[f"phase_compactness_loss_p{phase_idx + 1}"] = 0.0
             phase_logs[f"phase_margin_score_p{phase_idx + 1}"] = 0.0
+            phase_logs[f"phase_valid_samples_p{phase_idx + 1}"] = float(valid_sample_mask.sum().item())
             phase_structures.append({
                 "phase_loss": phase_loss,
                 "valid_class_count": 0,

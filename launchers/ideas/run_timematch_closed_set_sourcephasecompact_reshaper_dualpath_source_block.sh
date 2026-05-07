@@ -17,6 +17,13 @@ RESHAPER_REG_TRADE_OFF="${SOURCE_FEATURE_RESHAPER_REG_TRADE_OFF:-0.05}"
 DUAL_CLS_TRADE_OFF="${SOURCE_FEATURE_DUAL_CLS_TRADE_OFF:-1.00}"
 DUAL_REL_TRADE_OFF="${SOURCE_FEATURE_DUAL_RELATION_TRADE_OFF:-0.03}"
 RESHAPER_TAG="${RESHAPER_TAG:-v223_current_s010_rel003}"
+SOURCE_PHASE_PARTITION_MODE="${SOURCE_PHASE_PARTITION_MODE:-uniform}"
+SOURCE_PHASE_COUNT="${SOURCE_PHASE_COUNT:-5}"
+SOURCE_PHASE_GAP_THRESHOLD="${SOURCE_PHASE_GAP_THRESHOLD:-45}"
+SOURCE_PHASE_MIN_POINTS="${SOURCE_PHASE_MIN_POINTS:-3}"
+SOURCE_PHASE_MAX_POINTS="${SOURCE_PHASE_MAX_POINTS:-8}"
+SOURCE_PHASE_MAX_SPAN="${SOURCE_PHASE_MAX_SPAN:-120}"
+SOURCE_PHASE_MIN_SAMPLE_POINTS="${SOURCE_PHASE_MIN_SAMPLE_POINTS:-2}"
 
 SOURCE_MODEL="${SOURCE_MODEL:-pseltae_${SOURCE_TILE}_closedset_noshift_sourcephasecompact_p5_${RESHAPER_TAG}}"
 
@@ -33,6 +40,13 @@ python train.py \
   --source_feature_dual_path True \
   --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
   --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
+  --source_phase_partition_mode "$SOURCE_PHASE_PARTITION_MODE" \
+  --source_phase_count "$SOURCE_PHASE_COUNT" \
+  --source_phase_gap_threshold "$SOURCE_PHASE_GAP_THRESHOLD" \
+  --source_phase_min_points "$SOURCE_PHASE_MIN_POINTS" \
+  --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
+  --source_phase_max_span "$SOURCE_PHASE_MAX_SPAN" \
+  --source_phase_min_sample_points "$SOURCE_PHASE_MIN_SAMPLE_POINTS" \
   -e "$SOURCE_MODEL" \
   --source "$SOURCE" \
   --target "$SOURCE" \
@@ -57,6 +71,13 @@ while IFS= read -r TARGET; do
     --source_feature_dual_path True \
     --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
     --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
+    --source_phase_partition_mode "$SOURCE_PHASE_PARTITION_MODE" \
+    --source_phase_count "$SOURCE_PHASE_COUNT" \
+    --source_phase_gap_threshold "$SOURCE_PHASE_GAP_THRESHOLD" \
+    --source_phase_min_points "$SOURCE_PHASE_MIN_POINTS" \
+    --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
+    --source_phase_max_span "$SOURCE_PHASE_MAX_SPAN" \
+    --source_phase_min_sample_points "$SOURCE_PHASE_MIN_SAMPLE_POINTS" \
     -e "$SOURCE_MODEL" \
     --source "$SOURCE" \
     --target "$TARGET" \
@@ -73,6 +94,13 @@ while IFS= read -r TARGET; do
     --source_feature_dual_path True \
     --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
     --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
+    --source_phase_partition_mode "$SOURCE_PHASE_PARTITION_MODE" \
+    --source_phase_count "$SOURCE_PHASE_COUNT" \
+    --source_phase_gap_threshold "$SOURCE_PHASE_GAP_THRESHOLD" \
+    --source_phase_min_points "$SOURCE_PHASE_MIN_POINTS" \
+    --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
+    --source_phase_max_span "$SOURCE_PHASE_MAX_SPAN" \
+    --source_phase_min_sample_points "$SOURCE_PHASE_MIN_SAMPLE_POINTS" \
     -e "$TIMEMATCH_MODEL" \
     --source "$SOURCE" \
     --target "$TARGET" \
