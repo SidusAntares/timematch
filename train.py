@@ -156,7 +156,7 @@ def main(config):
             config.classes,
             mode='test',
             source_feature_reshaper=source_feature_reshaper,
-            apply_source_feature_reshaper=(config.target == config.source and source_feature_reshaper is not None),
+            apply_source_feature_reshaper=False,
         )
 
         print(f"Test result for {config.experiment_name}: accuracy={test_metrics['accuracy']:.4f}, f1={test_metrics['macro_f1']:.4f}")
@@ -271,7 +271,7 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
             val_loader,
             writer,
             source_feature_reshaper=source_feature_reshaper,
-            apply_source_feature_reshaper=(config.target == config.source and source_feature_reshaper is not None),
+            apply_source_feature_reshaper=False,
         )
 
 
