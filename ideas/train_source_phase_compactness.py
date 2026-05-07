@@ -222,5 +222,5 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             val_loader,
             writer,
             source_feature_reshaper=source_feature_reshaper,
-            apply_source_feature_reshaper=(config.target == config.source),
+            apply_source_feature_reshaper=False,
         )
