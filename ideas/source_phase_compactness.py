@@ -13,6 +13,7 @@ SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF = 0.25
 SOURCE_STRUCTURE_SHAPE_TRADE_OFF = 0.15
 SOURCE_STRUCTURE_TREND_TRADE_OFF = 0.05
 SOURCE_STRUCTURE_SEASON_TRADE_OFF = 0.02
+SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF = 0.02
 SHAPE_REG_DIRECTION_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_MARGIN = 0.35
@@ -497,6 +498,7 @@ def compute_source_structure_loss(
     shape_trade_off=SOURCE_STRUCTURE_SHAPE_TRADE_OFF,
     trend_trade_off=SOURCE_STRUCTURE_TREND_TRADE_OFF,
     season_trade_off=SOURCE_STRUCTURE_SEASON_TRADE_OFF,
+    segment_inter_trade_off=SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF,
     anchor_spatial_feats=None,
     anchor_positions=None,
 ):
@@ -533,6 +535,11 @@ def compute_source_structure_loss(
         v2.4.0 framework-refactor alias of v2.3.4:
           * keep residual/noise suppression + trend regularization unchanged
           * switch the code path onto the new temporal-segment abstraction
+    - segment_transition_residual:
+        v2.4.1 first segment-aware structural split:
+          * keep residual/noise suppression as the main intra-segment term
+          * keep trend regularization
+          * add a weak adjacent inter-segment transition regularizer
     """
     version = str(version).lower()
     if version == "compactness":
@@ -557,6 +564,10 @@ def compute_source_structure_loss(
         "segment_trend_residual",
         "segment_trend",
         "v240",
+        "segment_transition_residual",
+        "segment_transition",
+        "segment_inter",
+        "v241",
         "trend_seasonal_residual",
         "trend_season",
         "season_pattern",
@@ -680,11 +691,13 @@ def compute_source_structure_loss(
     season_loss = zero
     season_coherence_loss = zero
     season_redundancy_loss = zero
+    segment_inter_loss = zero
     amplitude_class_count = 0
     interphase_class_count = 0
     shape_class_count = 0
     trend_class_count = 0
     season_class_count = 0
+    segment_inter_class_count = 0
 
     if version in {"profiled_components", "profiled", "v233"}:
         for class_id in class_ids:
@@ -744,6 +757,10 @@ def compute_source_structure_loss(
         "segment_trend_residual",
         "segment_trend",
         "v240",
+        "segment_transition_residual",
+        "segment_transition",
+        "segment_inter",
+        "v241",
         "trend_seasonal_residual",
         "trend_season",
         "season_pattern",
@@ -774,6 +791,31 @@ def compute_source_structure_loss(
             class_trend = (second_diffs.pow(2).sum(dim=1) * interior_weights).sum()
             trend_loss = trend_loss + class_trend
             trend_class_count += 1
+
+            if version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241"}:
+                seasonal_centers = centers - trend_centers
+                if seasonal_centers.shape[0] >= 3:
+                    seasonal_diffs = seasonal_centers[1:] - seasonal_centers[:-1]
+                    if seasonal_diffs.shape[0] >= 2:
+                        seasonal_cos = torch.nn.functional.cosine_similarity(
+                            seasonal_diffs[:-1],
+                            seasonal_diffs[1:],
+                            dim=1,
+                            eps=eps,
+                        )
+                        seasonal_pair_weights = 0.5 * (class_weights[1:] + class_weights[:-1])
+                        seasonal_transition_weights = 0.5 * (
+                            seasonal_pair_weights[1:] + seasonal_pair_weights[:-1]
+                        )
+                        seasonal_transition_weights = (
+                            seasonal_transition_weights
+                            / seasonal_transition_weights.sum().clamp_min(eps)
+                        )
+                        class_segment_inter = (
+                            (1.0 - seasonal_cos) * seasonal_transition_weights
+                        ).sum()
+                        segment_inter_loss = segment_inter_loss + class_segment_inter
+                        segment_inter_class_count += 1
 
             if version in {"trend_seasonal_residual", "trend_season", "season_pattern", "v235"}:
                 seasonal_centers = centers - trend_centers
@@ -850,6 +892,8 @@ def compute_source_structure_loss(
         trend_loss = trend_loss / trend_class_count
     if season_class_count > 0:
         season_coherence_loss = season_coherence_loss / season_class_count
+    if segment_inter_class_count > 0:
+        segment_inter_loss = segment_inter_loss / segment_inter_class_count
     if version in {"trend_seasonal_residual", "trend_season", "season_pattern", "v235"}:
         season_loss = (
             season_coherence_loss
@@ -866,6 +910,12 @@ def compute_source_structure_loss(
             float(intra_trade_off) * intra_loss
             + float(trend_trade_off) * trend_loss
             + float(season_trade_off) * season_loss
+        )
+    elif version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241"}:
+        total_loss = (
+            float(intra_trade_off) * intra_loss
+            + float(trend_trade_off) * trend_loss
+            + float(segment_inter_trade_off) * segment_inter_loss
         )
     elif version in {"trend_residual", "trend", "v234", "segment_trend_residual", "segment_trend", "v240"}:
         total_loss = (
@@ -917,11 +967,15 @@ def compute_source_structure_loss(
     phase_logs["source_structure_season_redundancy_loss"] = float(
         (SOURCE_PHASE_COMPACTNESS_LAMBDA * season_redundancy_loss).detach().item()
     )
+    phase_logs["source_structure_segment_inter_loss"] = float(
+        (SOURCE_PHASE_COMPACTNESS_LAMBDA * segment_inter_loss).detach().item()
+    )
     phase_logs["source_structure_amplitude_classes"] = float(amplitude_class_count)
     phase_logs["source_structure_interphase_classes"] = float(interphase_class_count)
     phase_logs["source_structure_shape_classes"] = float(shape_class_count)
     phase_logs["source_structure_trend_classes"] = float(trend_class_count)
     phase_logs["source_structure_season_classes"] = float(season_class_count)
+    phase_logs["source_structure_segment_inter_classes"] = float(segment_inter_class_count)
     phase_logs["source_structure_segment_count"] = float(len(phase_structures))
     phase_logs["structure_loss"] = float(total_loss.detach().item())
     phase_logs["compactness_loss"] = phase_logs["structure_loss"]

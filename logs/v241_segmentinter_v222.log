@@ -1,0 +1,8 @@
+nohup: 忽略输入
+Logs saved to: /data/user/timematch/logs/v241_segmentinter_v222_rerun_and_structure_20260508_090425
+Training logs:
+  /data/user/timematch/logs/v241_segmentinter_v222_rerun_and_structure_20260508_090425/gpu0_30TXT_v241_segmentinter_v222_tasks.log
+  /data/user/timematch/logs/v241_segmentinter_v222_rerun_and_structure_20260508_090425/gpu1_31TCJ_v241_segmentinter_v222_tasks.log
+  /data/user/timematch/logs/v241_segmentinter_v222_rerun_and_structure_20260508_090425/gpu2_32VNH_v241_segmentinter_v222_tasks.log
+  /data/user/timematch/logs/v241_segmentinter_v222_rerun_and_structure_20260508_090425/gpu3_33UVP_v241_segmentinter_v222_tasks.log
+Structure analysis skipped for RUN_TAG=v241_segmentinter_v222

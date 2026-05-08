@@ -493,8 +493,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual'],
-        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, or v2.4.0 segment-trend-residual',
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual'],
+        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, or v2.4.1 segment-transition-residual',
     )
     parser.add_argument(
         '--source_structure_intra_trade_off',
@@ -531,6 +531,12 @@ if __name__ == '__main__':
         default=0.02,
         type=float,
         help='seasonal-pattern regularization weight in trend-seasonal-residual source structure loss variants',
+    )
+    parser.add_argument(
+        '--source_structure_segment_inter_trade_off',
+        default=0.02,
+        type=float,
+        help='adjacent inter-segment transition regularization weight in v2.4.1 segment-transition-residual source structure loss',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')

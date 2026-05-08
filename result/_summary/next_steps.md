@@ -396,7 +396,103 @@ If `v2.3.5` fails, then the next redesign should focus on:
 
 ---
 
-## 8. Current Short Summary
+## 8. Confirmed Next Route
+
+The later route is now much clearer and can be explicitly separated into three lines.
+
+### 8.1 `v2.4.2`: sliding-window / finer segment line
+
+After `v2.4.0` and `v2.4.1`, the next structural line should move toward:
+
+- finer local temporal units
+- window-based local structure
+- and eventually more adaptive segment construction
+
+This should not be treated as one single jump, but as a small iteration line.
+
+Recommended progression:
+
+- `v2.4.2a`
+  - fixed sliding window
+  - fixed stride
+  - verify whether local window structure is useful at all
+- `v2.4.2b`
+  - overlapping windows
+  - compare different window lengths / strides
+- `v2.4.2c`
+  - time-gap-aware windows
+  - incorporate observation density / temporal gaps
+- `v2.4.2d`
+  - only if earlier steps are effective, consider adaptive windows
+
+The key reason for this line is:
+
+> current hard segments are still a coarse temporal unit;  
+> sliding windows may provide a more general and more local structural view.
+
+### 8.2 `v2.5`: source-sensitive weighting / gating
+
+This should be treated as a new stage after the segment framework is stable.
+
+Its goal is:
+
+> **given different source-domain structures, adaptively determine which structure-loss parts should be stronger and which should be weaker.**
+
+This is the natural place for:
+
+- `moe`
+- gating
+- source-conditioned component weighting
+
+What this stage should answer:
+
+- which source domains need stronger residual suppression
+- which source domains need stronger trend regularization
+- which source domains should weaken inter-segment constraints
+- whether different source domains should use different structural priorities
+
+This should belong to:
+
+- **`v2.5`**
+
+and not be mixed into `v2.4`, because `v2.4` is still solving:
+
+- the temporal unit itself
+- the intra/inter structural organization itself
+
+### 8.3 Reshaper backbone line
+
+The current reshaper remains:
+
+- convolutional
+
+This is acceptable for now because the main bottleneck is still:
+
+- temporal unit design
+- loss organization
+
+not yet the reshaper backbone itself.
+
+However, a later comparison line should still be recorded:
+
+- convolution reshaper
+- transformer reshaper
+- Mamba reshaper
+
+Current judgment:
+
+- transformer and Mamba are both worth considering later
+- but they should not block the current `v2.4` line
+- there is not yet a sufficiently general reason to assume Mamba is automatically better than transformer here
+
+Therefore:
+
+> backbone replacement should be treated as a later comparison / extension line,  
+> not as the current mainline bottleneck.
+
+---
+
+## 9. Current Short Summary
 
 Many previously recorded “reasonable ideas” have **already** been gradually considered and partially implemented.
 
