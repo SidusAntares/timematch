@@ -33,6 +33,7 @@ SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF="${SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF:-
 SOURCE_STRUCTURE_SHAPE_TRADE_OFF="${SOURCE_STRUCTURE_SHAPE_TRADE_OFF:-0.15}"
 SOURCE_STRUCTURE_TREND_TRADE_OFF="${SOURCE_STRUCTURE_TREND_TRADE_OFF:-0.05}"
 SOURCE_STRUCTURE_SEASON_TRADE_OFF="${SOURCE_STRUCTURE_SEASON_TRADE_OFF:-0.02}"
+SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF="${SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF:-0.02}"
 SOURCE_PRETRAIN_EPOCHS="${SOURCE_PRETRAIN_EPOCHS:-100}"
 TIMEMATCH_EPOCHS="${TIMEMATCH_EPOCHS:-20}"
 
@@ -67,6 +68,7 @@ python train.py \
   --source_structure_shape_trade_off "$SOURCE_STRUCTURE_SHAPE_TRADE_OFF" \
   --source_structure_trend_trade_off "$SOURCE_STRUCTURE_TREND_TRADE_OFF" \
   --source_structure_season_trade_off "$SOURCE_STRUCTURE_SEASON_TRADE_OFF" \
+  --source_structure_segment_inter_trade_off "$SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF" \
   --epochs "$SOURCE_PRETRAIN_EPOCHS" \
   -e "$SOURCE_MODEL" \
   --source "$SOURCE" \
@@ -108,6 +110,7 @@ while IFS= read -r TARGET; do
     --source_structure_shape_trade_off "$SOURCE_STRUCTURE_SHAPE_TRADE_OFF" \
     --source_structure_trend_trade_off "$SOURCE_STRUCTURE_TREND_TRADE_OFF" \
     --source_structure_season_trade_off "$SOURCE_STRUCTURE_SEASON_TRADE_OFF" \
+    --source_structure_segment_inter_trade_off "$SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF" \
     -e "$SOURCE_MODEL" \
     --source "$SOURCE" \
     --target "$TARGET" \
@@ -140,6 +143,7 @@ while IFS= read -r TARGET; do
     --source_structure_shape_trade_off "$SOURCE_STRUCTURE_SHAPE_TRADE_OFF" \
     --source_structure_trend_trade_off "$SOURCE_STRUCTURE_TREND_TRADE_OFF" \
     --source_structure_season_trade_off "$SOURCE_STRUCTURE_SEASON_TRADE_OFF" \
+    --source_structure_segment_inter_trade_off "$SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF" \
     -e "$TIMEMATCH_MODEL" \
     --source "$SOURCE" \
     --target "$TARGET" \
