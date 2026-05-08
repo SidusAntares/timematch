@@ -1,0 +1,5 @@
+family,top_metric,top_abs_corr,top_corr,avg_abs_corr,metric_count
+inter_phase_contrast,source_encoded_interphase_adjacent_jump_cv,0.741349200298632,0.741349200298632,0.6667556873118078,5
+intra_phase_compact_smooth,source_encoded_intraphase_radius_mean,0.8524686110228135,-0.8524686110228135,0.660276803074101,4
+trend_activity,source_encoded_trend_burstiness_mean,0.8481958833302939,0.8481958833302939,0.6448234706687084,4
+amplitude_spread,source_encoded_amplitude_phase_energy_cv_mean,0.9449344989767359,0.9449344989767359,0.638746279409108,4

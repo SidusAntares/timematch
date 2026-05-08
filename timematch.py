@@ -13,10 +13,10 @@ from tqdm import tqdm
 from dataset import PixelSetData
 from evaluation import validation
 from ideas.source_phase_compactness import (
-    SourcePhaseWeightTracker,
-    build_source_phase_partition_spec,
+    SourceSegmentWeightTracker,
+    build_source_segment_partition_spec,
     compute_source_structure_loss,
-    describe_source_phase_partition_spec,
+    describe_source_segment_partition_spec,
 )
 from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
@@ -94,17 +94,17 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         params += list(source_feature_reshaper.parameters())
     optimizer = torch.optim.Adam(params, lr=config.lr, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs * steps_per_epoch, eta_min=0)
-    source_phase_partition_spec = build_source_phase_partition_spec(
+    source_phase_partition_spec = build_source_segment_partition_spec(
         source_loader.dataset.date_positions,
-        mode=getattr(config, "source_phase_partition_mode", "uniform"),
-        phase_count=getattr(config, "source_phase_count", 5),
+        mode=getattr(config, "source_segment_partition_mode", getattr(config, "source_phase_partition_mode", "uniform")),
+        segment_count=getattr(config, "source_segment_count", getattr(config, "source_phase_count", 5)),
         gap_threshold=getattr(config, "source_phase_gap_threshold", 45),
         min_points=getattr(config, "source_phase_min_points", 3),
         max_points=getattr(config, "source_phase_max_points", 8),
         max_span=getattr(config, "source_phase_max_span", 120),
     )
-    print("source phase partition:", describe_source_phase_partition_spec(source_phase_partition_spec))
-    phase_weight_tracker = SourcePhaseWeightTracker(
+    print("source segment partition:", describe_source_segment_partition_spec(source_phase_partition_spec))
+    phase_weight_tracker = SourceSegmentWeightTracker(
         phase_count=source_phase_partition_spec["phase_count"],
         phase_partition_spec=source_phase_partition_spec,
         min_sample_points_per_phase=getattr(config, "source_phase_min_sample_points", 2),

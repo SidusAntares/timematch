@@ -32,6 +32,7 @@ SOURCE_PHASE_MIN_POINTS = 3
 SOURCE_PHASE_MAX_POINTS = 8
 SOURCE_PHASE_MAX_SPAN = 120
 SOURCE_PHASE_MIN_SAMPLE_POINTS = 2
+SOURCE_SEGMENT_PARTITION_MODE = SOURCE_PHASE_PARTITION_MODE
 
 
 def _uniform_phase_slices(sequence_length, phase_count):
@@ -149,6 +150,7 @@ def build_source_phase_partition_spec(
     return {
         "mode": "doy_gap",
         "phase_count": len(intervals),
+        "segment_count": len(intervals),
         "intervals": intervals,
         "date_positions": sorted_positions.tolist(),
         "gap_threshold": int(gap_threshold),
@@ -169,6 +171,33 @@ def describe_source_phase_partition_spec(spec):
     )
 
 
+def build_source_segment_partition_spec(
+    date_positions,
+    mode=SOURCE_SEGMENT_PARTITION_MODE,
+    segment_count=UNIFORM_PHASE_COUNT,
+    gap_threshold=SOURCE_PHASE_GAP_THRESHOLD,
+    min_points=SOURCE_PHASE_MIN_POINTS,
+    max_points=SOURCE_PHASE_MAX_POINTS,
+    max_span=SOURCE_PHASE_MAX_SPAN,
+):
+    spec = build_source_phase_partition_spec(
+        date_positions=date_positions,
+        mode=mode,
+        phase_count=segment_count,
+        gap_threshold=gap_threshold,
+        min_points=min_points,
+        max_points=max_points,
+        max_span=max_span,
+    )
+    spec["segment_count"] = int(spec["phase_count"])
+    return spec
+
+
+def describe_source_segment_partition_spec(spec):
+    text = describe_source_phase_partition_spec(spec)
+    return text.replace("phase_count", "segment_count")
+
+
 def _phase_masks_from_spec(ordered_positions, phase_partition_spec):
     batch_size, sequence_length = ordered_positions.shape
     if phase_partition_spec is None or phase_partition_spec["mode"] == "uniform":
@@ -185,6 +214,10 @@ def _phase_masks_from_spec(ordered_positions, phase_partition_spec):
     for start, end in phase_partition_spec["intervals"]:
         phase_masks.append((ordered_positions >= start) & (ordered_positions <= end))
     return phase_masks
+
+
+def _segment_masks_from_spec(ordered_positions, segment_partition_spec):
+    return _phase_masks_from_spec(ordered_positions, segment_partition_spec)
 
 
 def _zscore_or_zero(values, eps):
@@ -324,7 +357,12 @@ class SourcePhaseWeightTracker:
             logs[f"source_valid_count_p{phase_idx + 1}"] = float(self.valid_counts[phase_idx].item())
         if self.phase_partition_spec is not None:
             logs["source_phase_count"] = float(self.phase_partition_spec["phase_count"])
+            logs["source_segment_count"] = float(self.phase_partition_spec["phase_count"])
         return logs
+
+
+class SourceSegmentWeightTracker(SourcePhaseWeightTracker):
+    pass
 
 
 def compute_source_phase_compactness_loss(spatial_feats, positions, labels, weight_tracker=None, eps=1e-6):
@@ -491,6 +529,10 @@ def compute_source_structure_loss(
           * seasonal-pattern regularization
             - discourage fragmented seasonal transitions
             - discourage redundant class-wise seasonal patterns
+    - segment_trend_residual:
+        v2.4.0 framework-refactor alias of v2.3.4:
+          * keep residual/noise suppression + trend regularization unchanged
+          * switch the code path onto the new temporal-segment abstraction
     """
     version = str(version).lower()
     if version == "compactness":
@@ -512,6 +554,9 @@ def compute_source_structure_loss(
         "trend_residual",
         "trend",
         "v234",
+        "segment_trend_residual",
+        "segment_trend",
+        "v240",
         "trend_seasonal_residual",
         "trend_season",
         "season_pattern",
@@ -534,7 +579,7 @@ def compute_source_structure_loss(
         else SOURCE_PHASE_MIN_SAMPLE_POINTS
     )
     ordered_feats, ordered_positions = _sorted_sequence_features(spatial_feats, positions)
-    phase_masks = _phase_masks_from_spec(ordered_positions, phase_partition_spec)
+    phase_masks = _segment_masks_from_spec(ordered_positions, phase_partition_spec)
     zero = spatial_feats.sum() * 0.0
     phase_logs = {}
     phase_structures = []
@@ -692,7 +737,18 @@ def compute_source_structure_loss(
             shape_collapse_loss = shape_collapse_loss + class_collapse
             shape_loss = shape_loss + class_shape
             shape_class_count += 1
-    elif version in {"trend_residual", "trend", "v234", "trend_seasonal_residual", "trend_season", "season_pattern", "v235"}:
+    elif version in {
+        "trend_residual",
+        "trend",
+        "v234",
+        "segment_trend_residual",
+        "segment_trend",
+        "v240",
+        "trend_seasonal_residual",
+        "trend_season",
+        "season_pattern",
+        "v235",
+    }:
         season_vectors = []
         for class_id in class_ids:
             valid_phase_indices = [
@@ -811,7 +867,7 @@ def compute_source_structure_loss(
             + float(trend_trade_off) * trend_loss
             + float(season_trade_off) * season_loss
         )
-    elif version in {"trend_residual", "trend", "v234"}:
+    elif version in {"trend_residual", "trend", "v234", "segment_trend_residual", "segment_trend", "v240"}:
         total_loss = (
             float(intra_trade_off) * intra_loss
             + float(trend_trade_off) * trend_loss
@@ -866,6 +922,7 @@ def compute_source_structure_loss(
     phase_logs["source_structure_shape_classes"] = float(shape_class_count)
     phase_logs["source_structure_trend_classes"] = float(trend_class_count)
     phase_logs["source_structure_season_classes"] = float(season_class_count)
+    phase_logs["source_structure_segment_count"] = float(len(phase_structures))
     phase_logs["structure_loss"] = float(total_loss.detach().item())
     phase_logs["compactness_loss"] = phase_logs["structure_loss"]
     return total_loss, phase_logs
