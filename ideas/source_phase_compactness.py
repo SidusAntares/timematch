@@ -1,7 +1,9 @@
 import math
+from collections import defaultdict
 
 import numpy as np
 import torch
+import zarr
 
 
 UNIFORM_PHASE_COUNT = 5
@@ -34,6 +36,17 @@ SOURCE_PHASE_MAX_POINTS = 8
 SOURCE_PHASE_MAX_SPAN = 120
 SOURCE_PHASE_MIN_SAMPLE_POINTS = 2
 SOURCE_SEGMENT_PARTITION_MODE = SOURCE_PHASE_PARTITION_MODE
+SOURCE_SEGMENT_SEMANTIC_QUANTILE = 0.75
+SOURCE_SEGMENT_SEMANTIC_MAX_SAMPLES_PER_CLASS = 128
+SOURCE_SEGMENT_SEMANTIC_CURVATURE_TRADE_OFF = 0.5
+SOURCE_SEGMENT_SEMANTIC_ENERGY_TRADE_OFF = 0.25
+SOURCE_SEGMENT_SEMANTIC_SIMILARITY_TRADE_OFF = 0.25
+SOURCE_SEGMENT_SEMANTIC_MAX_EXTRA_CUTS_PER_BASE = 2
+SOURCE_SEGMENT_SEMANTIC_MERGE_BOUNDARY_TRADE_OFF = 0.5
+SOURCE_SEGMENT_SEMANTIC_AGGL_MIN_POINTS = SOURCE_PHASE_MIN_POINTS
+SOURCE_SEGMENT_SEMANTIC_AGGL_TARGET_SLACK = 1
+SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE = 1.15
+SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF = 0.35
 
 
 def _uniform_phase_slices(sequence_length, phase_count):
@@ -66,6 +79,416 @@ def _moving_average_same(sequence_tensor):
         + padded[1:-1]
         + padded[2:]
     ) / 3.0
+
+
+def _standardize_temporal_curve(curve, eps=1e-6):
+    mean = curve.mean(axis=0, keepdims=True)
+    std = curve.std(axis=0, keepdims=True)
+    return (curve - mean) / np.clip(std, eps, None)
+
+
+def _safe_cosine_dissimilarity(left, right, eps=1e-6):
+    left_norm = np.linalg.norm(left, axis=1)
+    right_norm = np.linalg.norm(right, axis=1)
+    denom = np.clip(left_norm * right_norm, eps, None)
+    cosine = np.sum(left * right, axis=1) / denom
+    cosine = np.clip(cosine, -1.0, 1.0)
+    return 1.0 - cosine
+
+
+def _compute_dataset_semantic_boundary_scores(
+    dataset,
+    max_samples_per_class=SOURCE_SEGMENT_SEMANTIC_MAX_SAMPLES_PER_CLASS,
+    curvature_trade_off=SOURCE_SEGMENT_SEMANTIC_CURVATURE_TRADE_OFF,
+    energy_trade_off=SOURCE_SEGMENT_SEMANTIC_ENERGY_TRADE_OFF,
+    similarity_trade_off=SOURCE_SEGMENT_SEMANTIC_SIMILARITY_TRADE_OFF,
+    eps=1e-6,
+):
+    if dataset is None or not hasattr(dataset, "samples") or not hasattr(dataset, "date_positions"):
+        return None
+    sequence_length = len(dataset.date_positions)
+    if sequence_length < 2:
+        return None
+
+    class_sums = {}
+    class_counts = defaultdict(int)
+    max_samples_per_class = max(1, int(max_samples_per_class))
+    curvature_trade_off = float(curvature_trade_off)
+    energy_trade_off = float(energy_trade_off)
+    similarity_trade_off = float(similarity_trade_off)
+
+    for path, _parcel_idx, label, _extra in dataset.samples:
+        if class_counts[int(label)] >= max_samples_per_class:
+            continue
+        pixels = zarr.load(path)
+        if pixels.ndim != 3 or pixels.shape[0] != sequence_length:
+            continue
+        temporal_curve = pixels.mean(axis=-1).astype(np.float64, copy=False)
+        label = int(label)
+        if label not in class_sums:
+            class_sums[label] = temporal_curve.copy()
+        else:
+            class_sums[label] += temporal_curve
+        class_counts[label] += 1
+
+    if not class_sums:
+        return None
+
+    class_scores = []
+    for label, summed_curve in class_sums.items():
+        count = max(class_counts[label], 1)
+        mean_curve = summed_curve / float(count)
+        standardized_curve = _standardize_temporal_curve(mean_curve, eps=eps)
+        slope = np.linalg.norm(standardized_curve[1:] - standardized_curve[:-1], axis=1)
+        score = slope.copy()
+
+        energy = np.linalg.norm(mean_curve, axis=1)
+        energy_change = np.abs(energy[1:] - energy[:-1])
+        score = score + energy_trade_off * energy_change
+
+        similarity_drop = _safe_cosine_dissimilarity(
+            standardized_curve[:-1],
+            standardized_curve[1:],
+            eps=eps,
+        )
+        score = score + similarity_trade_off * similarity_drop
+
+        if standardized_curve.shape[0] >= 3:
+            curvature = np.linalg.norm(
+                standardized_curve[2:] - 2.0 * standardized_curve[1:-1] + standardized_curve[:-2],
+                axis=1,
+            )
+            boundary_curvature = np.zeros_like(slope)
+            boundary_curvature_counts = np.zeros_like(slope)
+            boundary_curvature[:-1] += curvature
+            boundary_curvature[1:] += curvature
+            boundary_curvature_counts[:-1] += 1.0
+            boundary_curvature_counts[1:] += 1.0
+            boundary_curvature = boundary_curvature / np.clip(boundary_curvature_counts, 1.0, None)
+            score = score + curvature_trade_off * boundary_curvature
+
+        class_scores.append(score)
+
+    if not class_scores:
+        return None
+    return np.mean(np.stack(class_scores, axis=0), axis=0)
+
+
+def _compute_dataset_semantic_time_embeddings(
+    dataset,
+    max_samples_per_class=SOURCE_SEGMENT_SEMANTIC_MAX_SAMPLES_PER_CLASS,
+    eps=1e-6,
+):
+    if dataset is None or not hasattr(dataset, "samples") or not hasattr(dataset, "date_positions"):
+        return None
+    sequence_length = len(dataset.date_positions)
+    if sequence_length < 1:
+        return None
+
+    class_sums = {}
+    class_counts = defaultdict(int)
+    max_samples_per_class = max(1, int(max_samples_per_class))
+
+    for path, _parcel_idx, label, _extra in dataset.samples:
+        if class_counts[int(label)] >= max_samples_per_class:
+            continue
+        pixels = zarr.load(path)
+        if pixels.ndim != 3 or pixels.shape[0] != sequence_length:
+            continue
+        temporal_curve = pixels.mean(axis=-1).astype(np.float64, copy=False)
+        label = int(label)
+        if label not in class_sums:
+            class_sums[label] = temporal_curve.copy()
+        else:
+            class_sums[label] += temporal_curve
+        class_counts[label] += 1
+
+    if not class_sums:
+        return None
+
+    embeddings = []
+    for label, summed_curve in sorted(class_sums.items(), key=lambda item: item[0]):
+        count = max(class_counts[label], 1)
+        mean_curve = summed_curve / float(count)
+        standardized_curve = _standardize_temporal_curve(mean_curve, eps=eps)
+        energy = np.linalg.norm(mean_curve, axis=1, keepdims=True)
+        energy = _standardize_temporal_curve(energy, eps=eps)
+        embeddings.append(np.concatenate([standardized_curve, energy], axis=1))
+
+    if not embeddings:
+        return None
+    return np.concatenate(embeddings, axis=1)
+
+
+def _select_semantic_cut_indices(boundary_scores, quantile, base_segments, sorted_positions, min_points, max_extra_cuts_per_base):
+    if boundary_scores is None:
+        return []
+
+    boundary_scores = np.asarray(boundary_scores, dtype=np.float64)
+    if boundary_scores.ndim != 1 or boundary_scores.size == 0:
+        return []
+    finite_scores = boundary_scores[np.isfinite(boundary_scores)]
+    if finite_scores.size == 0:
+        return []
+
+    quantile = float(np.clip(quantile, 0.0, 1.0))
+    threshold = float(np.quantile(finite_scores, quantile))
+    sorted_positions = np.asarray(sorted_positions, dtype=np.int64)
+    min_points = max(1, int(min_points))
+    max_extra_cuts_per_base = max(0, int(max_extra_cuts_per_base))
+    cut_indices = []
+    for segment in base_segments:
+        segment = np.asarray(segment, dtype=np.int64)
+        if len(segment) < (2 * min_points + 1) or max_extra_cuts_per_base <= 0:
+            continue
+        start_idx = int(np.searchsorted(sorted_positions, segment[0]))
+        end_idx = int(np.searchsorted(sorted_positions, segment[-1]))
+        candidates = []
+        for cut_idx in range(start_idx + min_points, end_idx - min_points + 2):
+            boundary_idx = cut_idx - 1
+            if boundary_idx < 0 or boundary_idx >= boundary_scores.size:
+                continue
+            score = boundary_scores[boundary_idx]
+            if not np.isfinite(score) or score <= 0.0 or score < threshold:
+                continue
+            left = boundary_scores[boundary_idx - 1] if boundary_idx > 0 else -np.inf
+            right = boundary_scores[boundary_idx + 1] if boundary_idx < boundary_scores.size - 1 else -np.inf
+            if score >= left and score >= right:
+                candidates.append((float(score), int(cut_idx)))
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        selected = sorted(cut_idx for _score, cut_idx in candidates[:max_extra_cuts_per_base])
+        cut_indices.extend(selected)
+    return cut_indices
+
+
+def _segments_from_cut_indices(sorted_positions, cut_indices):
+    cut_indices = sorted({int(idx) for idx in cut_indices if 0 < int(idx) < len(sorted_positions)})
+    segments = []
+    start_idx = 0
+    for cut_idx in cut_indices:
+        segments.append(sorted_positions[start_idx:cut_idx])
+        start_idx = cut_idx
+    segments.append(sorted_positions[start_idx:])
+    return [segment for segment in segments if len(segment) > 0]
+
+
+def _allocate_block_segment_targets(block_lengths, block_caps, target_count):
+    num_blocks = len(block_lengths)
+    if num_blocks == 0:
+        return []
+    target_count = int(target_count)
+    target_count = max(num_blocks, min(target_count, int(sum(block_caps))))
+    allocations = np.ones(num_blocks, dtype=np.int64)
+    remaining = target_count - num_blocks
+    if remaining <= 0:
+        return allocations.tolist()
+
+    capacities = np.maximum(np.asarray(block_caps, dtype=np.int64) - 1, 0)
+    weights = np.asarray(block_lengths, dtype=np.float64)
+    if weights.sum() <= 0:
+        weights = np.ones_like(weights)
+    weights = weights / weights.sum()
+
+    while remaining > 0 and capacities.sum() > 0:
+        scores = np.where(capacities > 0, weights / np.clip(allocations, 1, None), -np.inf)
+        chosen = int(np.argmax(scores))
+        if not np.isfinite(scores[chosen]):
+            break
+        allocations[chosen] += 1
+        capacities[chosen] -= 1
+        remaining -= 1
+    return allocations.tolist()
+
+
+def _build_semantic_agglomerative_segments(
+    sorted_positions,
+    boundary_scores,
+    time_embeddings,
+    mandatory_cut_indices,
+    target_count,
+    min_points,
+    max_points,
+    max_span,
+    merge_boundary_trade_off,
+    aggl_min_points,
+    aggl_target_slack,
+    aggl_merge_cost_tolerance,
+    aggl_dynamics_trade_off,
+):
+    sorted_positions = np.asarray(sorted_positions, dtype=np.int64)
+    time_embeddings = None if time_embeddings is None else np.asarray(time_embeddings, dtype=np.float64)
+    boundary_scores = None if boundary_scores is None else np.asarray(boundary_scores, dtype=np.float64)
+    min_points = max(1, int(min_points))
+    max_points = max(1, int(max_points))
+    max_span = max(1, int(max_span))
+    merge_boundary_trade_off = float(merge_boundary_trade_off)
+    aggl_min_points = max(1, int(aggl_min_points))
+    aggl_target_slack = max(0, int(aggl_target_slack))
+    aggl_merge_cost_tolerance = max(0.0, float(aggl_merge_cost_tolerance))
+    aggl_dynamics_trade_off = max(0.0, float(aggl_dynamics_trade_off))
+
+    base_segments = _segments_from_cut_indices(sorted_positions, mandatory_cut_indices)
+    if time_embeddings is None or time_embeddings.shape[0] != sorted_positions.size:
+        return _merge_small_segments(base_segments, min_points)
+
+    block_lengths = [len(segment) for segment in base_segments]
+    block_caps = [
+        max(1, min(len(segment), len(segment) // aggl_min_points if aggl_min_points > 1 else len(segment)))
+        for segment in base_segments
+    ]
+    allocations = _allocate_block_segment_targets(block_lengths, block_caps, target_count)
+
+    def segment_repr(start_idx, end_idx):
+        return time_embeddings[start_idx:end_idx].mean(axis=0)
+
+    def segment_dynamics(start_idx, end_idx):
+        segment_embed = time_embeddings[start_idx:end_idx]
+        if segment_embed.shape[0] <= 1:
+            return np.zeros(segment_embed.shape[1], dtype=np.float64)
+        diffs = segment_embed[1:] - segment_embed[:-1]
+        return diffs.mean(axis=0)
+
+    def merge_cost(left, right):
+        _, left_end = left
+        boundary_idx = left_end - 1
+        boundary_penalty = 0.0
+        if boundary_scores is not None and 0 <= boundary_idx < boundary_scores.size and np.isfinite(boundary_scores[boundary_idx]):
+            boundary_penalty = float(boundary_scores[boundary_idx])
+        semantic_distance = float(np.linalg.norm(segment_repr(*left) - segment_repr(*right)))
+        dynamics_distance = float(np.linalg.norm(segment_dynamics(*left) - segment_dynamics(*right)))
+        return (
+            semantic_distance
+            + aggl_dynamics_trade_off * dynamics_distance
+            + merge_boundary_trade_off * boundary_penalty
+        )
+
+    refined_segments = []
+    base_start_idx = 0
+    for segment, block_target in zip(base_segments, allocations):
+        block_size = len(segment)
+        block_target = max(1, min(int(block_target), block_size))
+        min_segment_count = max(1, min(block_size, block_target - aggl_target_slack))
+        max_segment_count = max(min_segment_count, min(block_size, block_target + aggl_target_slack))
+        block_segments = [(base_start_idx + idx, base_start_idx + idx + 1) for idx in range(block_size)]
+        initial_pair_costs = [
+            merge_cost(block_segments[idx], block_segments[idx + 1])
+            for idx in range(len(block_segments) - 1)
+        ]
+        merge_cost_threshold = (
+            float(np.median(initial_pair_costs)) * aggl_merge_cost_tolerance
+            if initial_pair_costs
+            else np.inf
+        )
+
+        while len(block_segments) > max_segment_count:
+            best_pair_idx = None
+            best_cost = np.inf
+            for idx in range(len(block_segments) - 1):
+                left = block_segments[idx]
+                right = block_segments[idx + 1]
+                merged_points = right[1] - left[0]
+                merged_span = int(sorted_positions[right[1] - 1] - sorted_positions[left[0]])
+                if merged_points > max_points or merged_span > max_span:
+                    continue
+                cost = merge_cost(left, right)
+                if cost < best_cost:
+                    best_cost = cost
+                    best_pair_idx = idx
+
+            if best_pair_idx is None:
+                for idx in range(len(block_segments) - 1):
+                    cost = merge_cost(block_segments[idx], block_segments[idx + 1])
+                    if cost < best_cost:
+                        best_cost = cost
+                        best_pair_idx = idx
+            if best_pair_idx is None:
+                break
+
+            merged = (block_segments[best_pair_idx][0], block_segments[best_pair_idx + 1][1])
+            block_segments = block_segments[:best_pair_idx] + [merged] + block_segments[best_pair_idx + 2:]
+
+        while len(block_segments) > min_segment_count:
+            best_pair_idx = None
+            best_cost = np.inf
+            for idx in range(len(block_segments) - 1):
+                left = block_segments[idx]
+                right = block_segments[idx + 1]
+                merged_points = right[1] - left[0]
+                merged_span = int(sorted_positions[right[1] - 1] - sorted_positions[left[0]])
+                if merged_points > max_points or merged_span > max_span:
+                    continue
+                cost = merge_cost(left, right)
+                if cost < best_cost:
+                    best_cost = cost
+                    best_pair_idx = idx
+            if best_pair_idx is None or not np.isfinite(best_cost) or best_cost > merge_cost_threshold:
+                break
+            merged = (block_segments[best_pair_idx][0], block_segments[best_pair_idx + 1][1])
+            block_segments = block_segments[:best_pair_idx] + [merged] + block_segments[best_pair_idx + 2:]
+
+        merged_block = [sorted_positions[start:end] for start, end in block_segments]
+        merged_block = _merge_small_segments(merged_block, min_points)
+        refined_segments.extend(merged_block)
+        base_start_idx += block_size
+
+    return refined_segments
+
+
+def _split_large_segments_by_semantics(
+    segments,
+    sorted_positions,
+    boundary_scores,
+    max_points,
+    max_span,
+    min_points,
+):
+    sorted_positions = np.asarray(sorted_positions, dtype=np.int64)
+    boundary_scores = None if boundary_scores is None else np.asarray(boundary_scores, dtype=np.float64)
+    max_points = max(1, int(max_points))
+    max_span = max(1, int(max_span))
+    min_points = max(1, int(min_points))
+
+    def split_segment(segment):
+        segment = np.asarray(segment, dtype=np.int64)
+        if len(segment) == 0:
+            return []
+        span = int(segment[-1] - segment[0]) if len(segment) > 0 else 0
+        if len(segment) <= max_points and span <= max_span:
+            return [segment]
+
+        start_idx = int(np.searchsorted(sorted_positions, segment[0]))
+        end_idx = int(np.searchsorted(sorted_positions, segment[-1]))
+        valid_cut_indices = []
+        for cut_idx in range(start_idx + min_points, end_idx - min_points + 2):
+            if cut_idx <= start_idx or cut_idx > end_idx:
+                continue
+            valid_cut_indices.append(cut_idx)
+
+        if not valid_cut_indices:
+            midpoint = start_idx + max(1, len(segment) // 2)
+            valid_cut_indices = [min(max(midpoint, start_idx + 1), end_idx)]
+
+        best_cut_idx = None
+        best_score = -np.inf
+        if boundary_scores is not None:
+            for cut_idx in valid_cut_indices:
+                score_idx = cut_idx - 1
+                score = boundary_scores[score_idx] if 0 <= score_idx < boundary_scores.size else -np.inf
+                if score > best_score:
+                    best_score = score
+                    best_cut_idx = cut_idx
+
+        if best_cut_idx is None:
+            best_cut_idx = valid_cut_indices[len(valid_cut_indices) // 2]
+
+        left = sorted_positions[start_idx:best_cut_idx]
+        right = sorted_positions[best_cut_idx:end_idx + 1]
+        return split_segment(left) + split_segment(right)
+
+    refined_segments = []
+    for segment in segments:
+        refined_segments.extend(split_segment(segment))
+    return refined_segments
 
 
 def _merge_small_segments(segments, min_points):
@@ -107,6 +530,18 @@ def build_source_phase_partition_spec(
     min_points=SOURCE_PHASE_MIN_POINTS,
     max_points=SOURCE_PHASE_MAX_POINTS,
     max_span=SOURCE_PHASE_MAX_SPAN,
+    dataset=None,
+    semantic_quantile=SOURCE_SEGMENT_SEMANTIC_QUANTILE,
+    semantic_max_samples_per_class=SOURCE_SEGMENT_SEMANTIC_MAX_SAMPLES_PER_CLASS,
+    semantic_curvature_trade_off=SOURCE_SEGMENT_SEMANTIC_CURVATURE_TRADE_OFF,
+    semantic_energy_trade_off=SOURCE_SEGMENT_SEMANTIC_ENERGY_TRADE_OFF,
+    semantic_similarity_trade_off=SOURCE_SEGMENT_SEMANTIC_SIMILARITY_TRADE_OFF,
+    semantic_max_extra_cuts_per_base=SOURCE_SEGMENT_SEMANTIC_MAX_EXTRA_CUTS_PER_BASE,
+    semantic_merge_boundary_trade_off=SOURCE_SEGMENT_SEMANTIC_MERGE_BOUNDARY_TRADE_OFF,
+    semantic_aggl_min_points=SOURCE_SEGMENT_SEMANTIC_AGGL_MIN_POINTS,
+    semantic_aggl_target_slack=SOURCE_SEGMENT_SEMANTIC_AGGL_TARGET_SLACK,
+    semantic_aggl_merge_cost_tolerance=SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE,
+    semantic_aggl_dynamics_trade_off=SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF,
 ):
     mode = str(mode).lower()
     sorted_positions = np.asarray(sorted({int(pos) for pos in date_positions}), dtype=np.int64)
@@ -121,35 +556,100 @@ def build_source_phase_partition_spec(
             "date_positions": sorted_positions.tolist(),
         }
 
-    if mode != "doy_gap":
+    if mode not in {"doy_gap", "semantic_doy_gap", "semantic_doy", "semantic_gap", "semantic_agglomerative"}:
         raise ValueError(f"Unsupported source phase partition mode: {mode}")
 
-    base_segments = []
-    start_idx = 0
+    mandatory_cut_indices = []
     for idx in range(1, sorted_positions.size):
         if int(sorted_positions[idx] - sorted_positions[idx - 1]) > int(gap_threshold):
-            base_segments.append(sorted_positions[start_idx:idx])
-            start_idx = idx
-    base_segments.append(sorted_positions[start_idx:])
+            mandatory_cut_indices.append(idx)
 
-    split_segments = []
-    max_points = max(1, int(max_points))
-    max_span = max(1, int(max_span))
-    for segment in base_segments:
-        span = int(segment[-1] - segment[0]) if len(segment) > 0 else 0
-        split_count = max(
-            1,
-            int(math.ceil(len(segment) / max_points)),
-            int(math.ceil(max(span, 1) / max_span)),
+    semantic_boundary_scores = None
+    semantic_cut_indices = []
+    base_segments = _segments_from_cut_indices(sorted_positions, mandatory_cut_indices)
+    if mode in {"semantic_doy_gap", "semantic_doy", "semantic_gap", "semantic_agglomerative"}:
+        semantic_boundary_scores = _compute_dataset_semantic_boundary_scores(
+            dataset,
+            max_samples_per_class=semantic_max_samples_per_class,
+            curvature_trade_off=semantic_curvature_trade_off,
+            energy_trade_off=semantic_energy_trade_off,
+            similarity_trade_off=semantic_similarity_trade_off,
         )
-        for split_segment in np.array_split(segment, split_count):
-            if len(split_segment) > 0:
-                split_segments.append(split_segment)
+        if mode in {"semantic_doy_gap", "semantic_doy", "semantic_gap"}:
+            semantic_cut_indices = _select_semantic_cut_indices(
+                semantic_boundary_scores,
+                quantile=semantic_quantile,
+                base_segments=base_segments,
+                sorted_positions=sorted_positions,
+                min_points=min_points,
+                max_extra_cuts_per_base=semantic_max_extra_cuts_per_base,
+            )
 
+    if mode == "semantic_agglomerative":
+        semantic_time_embeddings = _compute_dataset_semantic_time_embeddings(
+            dataset,
+            max_samples_per_class=semantic_max_samples_per_class,
+        )
+        merged_segments = _build_semantic_agglomerative_segments(
+            sorted_positions=sorted_positions,
+            boundary_scores=semantic_boundary_scores,
+            time_embeddings=semantic_time_embeddings,
+            mandatory_cut_indices=mandatory_cut_indices,
+            target_count=int(max(1, min(int(phase_count), int(sorted_positions.size)))),
+            min_points=min_points,
+            max_points=max_points,
+            max_span=max_span,
+            merge_boundary_trade_off=semantic_merge_boundary_trade_off,
+            aggl_min_points=semantic_aggl_min_points,
+            aggl_target_slack=semantic_aggl_target_slack,
+            aggl_merge_cost_tolerance=semantic_aggl_merge_cost_tolerance,
+            aggl_dynamics_trade_off=semantic_aggl_dynamics_trade_off,
+        )
+        intervals = [(int(segment[0]), int(segment[-1])) for segment in merged_segments]
+        spec = {
+            "mode": mode,
+            "phase_count": len(intervals),
+            "segment_count": len(intervals),
+            "intervals": intervals,
+            "date_positions": sorted_positions.tolist(),
+            "gap_threshold": int(gap_threshold),
+            "min_points": int(min_points),
+            "max_points": int(max_points),
+            "max_span": int(max_span),
+            "semantic_mode": True,
+            "semantic_quantile": float(semantic_quantile),
+            "semantic_max_samples_per_class": int(semantic_max_samples_per_class),
+            "semantic_curvature_trade_off": float(semantic_curvature_trade_off),
+            "semantic_energy_trade_off": float(semantic_energy_trade_off),
+            "semantic_similarity_trade_off": float(semantic_similarity_trade_off),
+            "semantic_max_extra_cuts_per_base": int(semantic_max_extra_cuts_per_base),
+            "semantic_merge_boundary_trade_off": float(semantic_merge_boundary_trade_off),
+            "semantic_aggl_min_points": int(semantic_aggl_min_points),
+            "semantic_aggl_target_slack": int(semantic_aggl_target_slack),
+            "semantic_aggl_merge_cost_tolerance": float(semantic_aggl_merge_cost_tolerance),
+            "semantic_aggl_dynamics_trade_off": float(semantic_aggl_dynamics_trade_off),
+            "semantic_target_count": int(max(1, min(int(phase_count), int(sorted_positions.size)))),
+        }
+        if semantic_boundary_scores is not None:
+            spec["semantic_boundary_scores"] = [float(x) for x in semantic_boundary_scores.tolist()]
+        return spec
+
+    base_segments = _segments_from_cut_indices(
+        sorted_positions,
+        mandatory_cut_indices + semantic_cut_indices,
+    )
+    split_segments = _split_large_segments_by_semantics(
+        base_segments,
+        sorted_positions=sorted_positions,
+        boundary_scores=semantic_boundary_scores,
+        max_points=max_points,
+        max_span=max_span,
+        min_points=min_points,
+    )
     merged_segments = _merge_small_segments(split_segments, max(1, int(min_points)))
     intervals = [(int(segment[0]), int(segment[-1])) for segment in merged_segments]
-    return {
-        "mode": "doy_gap",
+    spec = {
+        "mode": mode,
         "phase_count": len(intervals),
         "segment_count": len(intervals),
         "intervals": intervals,
@@ -158,17 +658,52 @@ def build_source_phase_partition_spec(
         "min_points": int(min_points),
         "max_points": int(max_points),
         "max_span": int(max_span),
+        "semantic_mode": mode in {"semantic_doy_gap", "semantic_doy", "semantic_gap", "semantic_agglomerative"},
+        "semantic_quantile": float(semantic_quantile),
+        "semantic_max_samples_per_class": int(semantic_max_samples_per_class),
+        "semantic_curvature_trade_off": float(semantic_curvature_trade_off),
+        "semantic_energy_trade_off": float(semantic_energy_trade_off),
+        "semantic_similarity_trade_off": float(semantic_similarity_trade_off),
+        "semantic_max_extra_cuts_per_base": int(semantic_max_extra_cuts_per_base),
+        "semantic_merge_boundary_trade_off": float(semantic_merge_boundary_trade_off),
+        "semantic_aggl_min_points": int(semantic_aggl_min_points),
+        "semantic_aggl_target_slack": int(semantic_aggl_target_slack),
+        "semantic_aggl_merge_cost_tolerance": float(semantic_aggl_merge_cost_tolerance),
+        "semantic_aggl_dynamics_trade_off": float(semantic_aggl_dynamics_trade_off),
     }
+    if semantic_boundary_scores is not None:
+        spec["semantic_boundary_scores"] = [float(x) for x in semantic_boundary_scores.tolist()]
+    return spec
 
 
 def describe_source_phase_partition_spec(spec):
     if spec["mode"] == "uniform":
         return f"mode=uniform, phase_count={spec['phase_count']}"
     interval_text = ", ".join([f"[{start},{end}]" for start, end in spec["intervals"]])
+    semantic_suffix = ""
+    if spec.get("semantic_mode", False):
+        semantic_suffix = (
+            f", semantic_quantile={spec['semantic_quantile']:.2f}, "
+            f"semantic_max_samples_per_class={spec['semantic_max_samples_per_class']}, "
+            f"semantic_curvature_trade_off={spec['semantic_curvature_trade_off']:.2f}, "
+            f"semantic_energy_trade_off={spec['semantic_energy_trade_off']:.2f}, "
+            f"semantic_similarity_trade_off={spec['semantic_similarity_trade_off']:.2f}, "
+            f"semantic_max_extra_cuts_per_base={spec['semantic_max_extra_cuts_per_base']}, "
+            f"semantic_merge_boundary_trade_off={spec['semantic_merge_boundary_trade_off']:.2f}"
+        )
+        if "semantic_target_count" in spec:
+            semantic_suffix += f", semantic_target_count={spec['semantic_target_count']}"
+        if spec["mode"] == "semantic_agglomerative":
+            semantic_suffix += (
+                f", semantic_aggl_min_points={spec['semantic_aggl_min_points']}, "
+                f"semantic_aggl_target_slack={spec['semantic_aggl_target_slack']}, "
+                f"semantic_aggl_merge_cost_tolerance={spec['semantic_aggl_merge_cost_tolerance']:.2f}, "
+                f"semantic_aggl_dynamics_trade_off={spec['semantic_aggl_dynamics_trade_off']:.2f}"
+            )
     return (
-        f"mode=doy_gap, phase_count={spec['phase_count']}, "
+        f"mode={spec['mode']}, phase_count={spec['phase_count']}, "
         f"gap_threshold={spec['gap_threshold']}, min_points={spec['min_points']}, "
-        f"max_points={spec['max_points']}, max_span={spec['max_span']}, intervals={interval_text}"
+        f"max_points={spec['max_points']}, max_span={spec['max_span']}{semantic_suffix}, intervals={interval_text}"
     )
 
 
@@ -180,6 +715,18 @@ def build_source_segment_partition_spec(
     min_points=SOURCE_PHASE_MIN_POINTS,
     max_points=SOURCE_PHASE_MAX_POINTS,
     max_span=SOURCE_PHASE_MAX_SPAN,
+    dataset=None,
+    semantic_quantile=SOURCE_SEGMENT_SEMANTIC_QUANTILE,
+    semantic_max_samples_per_class=SOURCE_SEGMENT_SEMANTIC_MAX_SAMPLES_PER_CLASS,
+    semantic_curvature_trade_off=SOURCE_SEGMENT_SEMANTIC_CURVATURE_TRADE_OFF,
+    semantic_energy_trade_off=SOURCE_SEGMENT_SEMANTIC_ENERGY_TRADE_OFF,
+    semantic_similarity_trade_off=SOURCE_SEGMENT_SEMANTIC_SIMILARITY_TRADE_OFF,
+    semantic_max_extra_cuts_per_base=SOURCE_SEGMENT_SEMANTIC_MAX_EXTRA_CUTS_PER_BASE,
+    semantic_merge_boundary_trade_off=SOURCE_SEGMENT_SEMANTIC_MERGE_BOUNDARY_TRADE_OFF,
+    semantic_aggl_min_points=SOURCE_SEGMENT_SEMANTIC_AGGL_MIN_POINTS,
+    semantic_aggl_target_slack=SOURCE_SEGMENT_SEMANTIC_AGGL_TARGET_SLACK,
+    semantic_aggl_merge_cost_tolerance=SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE,
+    semantic_aggl_dynamics_trade_off=SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF,
 ):
     spec = build_source_phase_partition_spec(
         date_positions=date_positions,
@@ -189,6 +736,18 @@ def build_source_segment_partition_spec(
         min_points=min_points,
         max_points=max_points,
         max_span=max_span,
+        dataset=dataset,
+        semantic_quantile=semantic_quantile,
+        semantic_max_samples_per_class=semantic_max_samples_per_class,
+        semantic_curvature_trade_off=semantic_curvature_trade_off,
+        semantic_energy_trade_off=semantic_energy_trade_off,
+        semantic_similarity_trade_off=semantic_similarity_trade_off,
+        semantic_max_extra_cuts_per_base=semantic_max_extra_cuts_per_base,
+        semantic_merge_boundary_trade_off=semantic_merge_boundary_trade_off,
+        semantic_aggl_min_points=semantic_aggl_min_points,
+        semantic_aggl_target_slack=semantic_aggl_target_slack,
+        semantic_aggl_merge_cost_tolerance=semantic_aggl_merge_cost_tolerance,
+        semantic_aggl_dynamics_trade_off=semantic_aggl_dynamics_trade_off,
     )
     spec["segment_count"] = int(spec["phase_count"])
     return spec
@@ -540,6 +1099,11 @@ def compute_source_structure_loss(
           * keep residual/noise suppression as the main intra-segment term
           * keep trend regularization
           * add a weak adjacent inter-segment transition regularizer
+    - segment_transition_semantic:
+        v2.4.2 semantic-segment refinement:
+          * keep the v2.4.1 loss unchanged
+          * upgrade the segment partition builder from geometry-only DOY-gap rules
+            to semantic-enhanced source-driven segmentation
     """
     version = str(version).lower()
     if version == "compactness":
@@ -568,6 +1132,8 @@ def compute_source_structure_loss(
         "segment_transition",
         "segment_inter",
         "v241",
+        "segment_transition_semantic",
+        "v242",
         "trend_seasonal_residual",
         "trend_season",
         "season_pattern",
@@ -761,6 +1327,8 @@ def compute_source_structure_loss(
         "segment_transition",
         "segment_inter",
         "v241",
+        "segment_transition_semantic",
+        "v242",
         "trend_seasonal_residual",
         "trend_season",
         "season_pattern",
@@ -792,7 +1360,7 @@ def compute_source_structure_loss(
             trend_loss = trend_loss + class_trend
             trend_class_count += 1
 
-            if version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241"}:
+            if version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241", "segment_transition_semantic", "v242"}:
                 seasonal_centers = centers - trend_centers
                 if seasonal_centers.shape[0] >= 3:
                     seasonal_diffs = seasonal_centers[1:] - seasonal_centers[:-1]
@@ -911,7 +1479,7 @@ def compute_source_structure_loss(
             + float(trend_trade_off) * trend_loss
             + float(season_trade_off) * season_loss
         )
-    elif version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241"}:
+    elif version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241", "segment_transition_semantic", "v242"}:
         total_loss = (
             float(intra_trade_off) * intra_loss
             + float(trend_trade_off) * trend_loss

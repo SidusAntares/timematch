@@ -66,12 +66,24 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
     phase_partition_spec = build_source_segment_partition_spec(
         dataset.date_positions,
+        dataset=dataset,
         mode=getattr(config, "source_segment_partition_mode", getattr(config, "source_phase_partition_mode", "uniform")),
         segment_count=getattr(config, "source_segment_count", getattr(config, "source_phase_count", 5)),
         gap_threshold=getattr(config, "source_phase_gap_threshold", 45),
         min_points=getattr(config, "source_phase_min_points", 3),
         max_points=getattr(config, "source_phase_max_points", 8),
         max_span=getattr(config, "source_phase_max_span", 120),
+        semantic_quantile=getattr(config, "source_segment_semantic_quantile", 0.75),
+        semantic_max_samples_per_class=getattr(config, "source_segment_semantic_max_samples_per_class", 128),
+        semantic_curvature_trade_off=getattr(config, "source_segment_semantic_curvature_trade_off", 0.5),
+        semantic_energy_trade_off=getattr(config, "source_segment_semantic_energy_trade_off", 0.25),
+        semantic_similarity_trade_off=getattr(config, "source_segment_semantic_similarity_trade_off", 0.25),
+        semantic_max_extra_cuts_per_base=getattr(config, "source_segment_semantic_max_extra_cuts_per_base", 2),
+        semantic_merge_boundary_trade_off=getattr(config, "source_segment_semantic_merge_boundary_trade_off", 0.5),
+        semantic_aggl_min_points=getattr(config, "source_segment_semantic_aggl_min_points", 3),
+        semantic_aggl_target_slack=getattr(config, "source_segment_semantic_aggl_target_slack", 1),
+        semantic_aggl_merge_cost_tolerance=getattr(config, "source_segment_semantic_aggl_merge_cost_tolerance", 1.15),
+        semantic_aggl_dynamics_trade_off=getattr(config, "source_segment_semantic_aggl_dynamics_trade_off", 0.35),
     )
     print("source segment partition:", describe_source_segment_partition_spec(phase_partition_spec))
 

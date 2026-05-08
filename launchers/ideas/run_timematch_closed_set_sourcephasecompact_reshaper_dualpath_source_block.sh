@@ -26,6 +26,17 @@ SOURCE_PHASE_MIN_POINTS="${SOURCE_PHASE_MIN_POINTS:-3}"
 SOURCE_PHASE_MAX_POINTS="${SOURCE_PHASE_MAX_POINTS:-8}"
 SOURCE_PHASE_MAX_SPAN="${SOURCE_PHASE_MAX_SPAN:-120}"
 SOURCE_PHASE_MIN_SAMPLE_POINTS="${SOURCE_PHASE_MIN_SAMPLE_POINTS:-2}"
+SOURCE_SEGMENT_SEMANTIC_QUANTILE="${SOURCE_SEGMENT_SEMANTIC_QUANTILE:-0.75}"
+SOURCE_SEGMENT_SEMANTIC_MAX_SAMPLES_PER_CLASS="${SOURCE_SEGMENT_SEMANTIC_MAX_SAMPLES_PER_CLASS:-128}"
+SOURCE_SEGMENT_SEMANTIC_CURVATURE_TRADE_OFF="${SOURCE_SEGMENT_SEMANTIC_CURVATURE_TRADE_OFF:-0.50}"
+SOURCE_SEGMENT_SEMANTIC_ENERGY_TRADE_OFF="${SOURCE_SEGMENT_SEMANTIC_ENERGY_TRADE_OFF:-0.25}"
+SOURCE_SEGMENT_SEMANTIC_SIMILARITY_TRADE_OFF="${SOURCE_SEGMENT_SEMANTIC_SIMILARITY_TRADE_OFF:-0.25}"
+SOURCE_SEGMENT_SEMANTIC_MAX_EXTRA_CUTS_PER_BASE="${SOURCE_SEGMENT_SEMANTIC_MAX_EXTRA_CUTS_PER_BASE:-2}"
+SOURCE_SEGMENT_SEMANTIC_MERGE_BOUNDARY_TRADE_OFF="${SOURCE_SEGMENT_SEMANTIC_MERGE_BOUNDARY_TRADE_OFF:-0.50}"
+SOURCE_SEGMENT_SEMANTIC_AGGL_MIN_POINTS="${SOURCE_SEGMENT_SEMANTIC_AGGL_MIN_POINTS:-3}"
+SOURCE_SEGMENT_SEMANTIC_AGGL_TARGET_SLACK="${SOURCE_SEGMENT_SEMANTIC_AGGL_TARGET_SLACK:-1}"
+SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE="${SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE:-1.15}"
+SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF="${SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF:-0.35}"
 SOURCE_STRUCTURE_LOSS_VERSION="${SOURCE_STRUCTURE_LOSS_VERSION:-compactness}"
 SOURCE_STRUCTURE_INTRA_TRADE_OFF="${SOURCE_STRUCTURE_INTRA_TRADE_OFF:-1.0}"
 SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF="${SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF:-0.25}"
@@ -61,6 +72,17 @@ python train.py \
   --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
   --source_phase_max_span "$SOURCE_PHASE_MAX_SPAN" \
   --source_phase_min_sample_points "$SOURCE_PHASE_MIN_SAMPLE_POINTS" \
+  --source_segment_semantic_quantile "$SOURCE_SEGMENT_SEMANTIC_QUANTILE" \
+  --source_segment_semantic_max_samples_per_class "$SOURCE_SEGMENT_SEMANTIC_MAX_SAMPLES_PER_CLASS" \
+  --source_segment_semantic_curvature_trade_off "$SOURCE_SEGMENT_SEMANTIC_CURVATURE_TRADE_OFF" \
+  --source_segment_semantic_energy_trade_off "$SOURCE_SEGMENT_SEMANTIC_ENERGY_TRADE_OFF" \
+  --source_segment_semantic_similarity_trade_off "$SOURCE_SEGMENT_SEMANTIC_SIMILARITY_TRADE_OFF" \
+  --source_segment_semantic_max_extra_cuts_per_base "$SOURCE_SEGMENT_SEMANTIC_MAX_EXTRA_CUTS_PER_BASE" \
+  --source_segment_semantic_merge_boundary_trade_off "$SOURCE_SEGMENT_SEMANTIC_MERGE_BOUNDARY_TRADE_OFF" \
+  --source_segment_semantic_aggl_min_points "$SOURCE_SEGMENT_SEMANTIC_AGGL_MIN_POINTS" \
+  --source_segment_semantic_aggl_target_slack "$SOURCE_SEGMENT_SEMANTIC_AGGL_TARGET_SLACK" \
+  --source_segment_semantic_aggl_merge_cost_tolerance "$SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE" \
+  --source_segment_semantic_aggl_dynamics_trade_off "$SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF" \
   --source_structure_loss_version "$SOURCE_STRUCTURE_LOSS_VERSION" \
   --source_structure_intra_trade_off "$SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
   --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
@@ -103,6 +125,17 @@ while IFS= read -r TARGET; do
     --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
     --source_phase_max_span "$SOURCE_PHASE_MAX_SPAN" \
     --source_phase_min_sample_points "$SOURCE_PHASE_MIN_SAMPLE_POINTS" \
+    --source_segment_semantic_quantile "$SOURCE_SEGMENT_SEMANTIC_QUANTILE" \
+    --source_segment_semantic_max_samples_per_class "$SOURCE_SEGMENT_SEMANTIC_MAX_SAMPLES_PER_CLASS" \
+    --source_segment_semantic_curvature_trade_off "$SOURCE_SEGMENT_SEMANTIC_CURVATURE_TRADE_OFF" \
+    --source_segment_semantic_energy_trade_off "$SOURCE_SEGMENT_SEMANTIC_ENERGY_TRADE_OFF" \
+    --source_segment_semantic_similarity_trade_off "$SOURCE_SEGMENT_SEMANTIC_SIMILARITY_TRADE_OFF" \
+    --source_segment_semantic_max_extra_cuts_per_base "$SOURCE_SEGMENT_SEMANTIC_MAX_EXTRA_CUTS_PER_BASE" \
+    --source_segment_semantic_merge_boundary_trade_off "$SOURCE_SEGMENT_SEMANTIC_MERGE_BOUNDARY_TRADE_OFF" \
+    --source_segment_semantic_aggl_min_points "$SOURCE_SEGMENT_SEMANTIC_AGGL_MIN_POINTS" \
+    --source_segment_semantic_aggl_target_slack "$SOURCE_SEGMENT_SEMANTIC_AGGL_TARGET_SLACK" \
+    --source_segment_semantic_aggl_merge_cost_tolerance "$SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE" \
+    --source_segment_semantic_aggl_dynamics_trade_off "$SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF" \
     --source_structure_loss_version "$SOURCE_STRUCTURE_LOSS_VERSION" \
     --source_structure_intra_trade_off "$SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
     --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
@@ -136,6 +169,17 @@ while IFS= read -r TARGET; do
     --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
     --source_phase_max_span "$SOURCE_PHASE_MAX_SPAN" \
     --source_phase_min_sample_points "$SOURCE_PHASE_MIN_SAMPLE_POINTS" \
+    --source_segment_semantic_quantile "$SOURCE_SEGMENT_SEMANTIC_QUANTILE" \
+    --source_segment_semantic_max_samples_per_class "$SOURCE_SEGMENT_SEMANTIC_MAX_SAMPLES_PER_CLASS" \
+    --source_segment_semantic_curvature_trade_off "$SOURCE_SEGMENT_SEMANTIC_CURVATURE_TRADE_OFF" \
+    --source_segment_semantic_energy_trade_off "$SOURCE_SEGMENT_SEMANTIC_ENERGY_TRADE_OFF" \
+    --source_segment_semantic_similarity_trade_off "$SOURCE_SEGMENT_SEMANTIC_SIMILARITY_TRADE_OFF" \
+    --source_segment_semantic_max_extra_cuts_per_base "$SOURCE_SEGMENT_SEMANTIC_MAX_EXTRA_CUTS_PER_BASE" \
+    --source_segment_semantic_merge_boundary_trade_off "$SOURCE_SEGMENT_SEMANTIC_MERGE_BOUNDARY_TRADE_OFF" \
+    --source_segment_semantic_aggl_min_points "$SOURCE_SEGMENT_SEMANTIC_AGGL_MIN_POINTS" \
+    --source_segment_semantic_aggl_target_slack "$SOURCE_SEGMENT_SEMANTIC_AGGL_TARGET_SLACK" \
+    --source_segment_semantic_aggl_merge_cost_tolerance "$SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE" \
+    --source_segment_semantic_aggl_dynamics_trade_off "$SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF" \
     --source_structure_loss_version "$SOURCE_STRUCTURE_LOSS_VERSION" \
     --source_structure_intra_trade_off "$SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
     --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \

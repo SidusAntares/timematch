@@ -1,0 +1,8 @@
+nohup: 忽略输入
+Logs saved to: /data/user/timematch/logs/v242c_semanticaggl_v222_rerun_and_structure_20260508_172417
+Training logs:
+  /data/user/timematch/logs/v242c_semanticaggl_v222_rerun_and_structure_20260508_172417/gpu0_30TXT_v242c_semanticaggl_v222_tasks.log
+  /data/user/timematch/logs/v242c_semanticaggl_v222_rerun_and_structure_20260508_172417/gpu1_31TCJ_v242c_semanticaggl_v222_tasks.log
+  /data/user/timematch/logs/v242c_semanticaggl_v222_rerun_and_structure_20260508_172417/gpu2_32VNH_v242c_semanticaggl_v222_tasks.log
+  /data/user/timematch/logs/v242c_semanticaggl_v222_rerun_and_structure_20260508_172417/gpu3_33UVP_v242c_semanticaggl_v222_tasks.log
+Structure analysis skipped for RUN_TAG=v242c_semanticaggl_v222

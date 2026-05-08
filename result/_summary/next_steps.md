@@ -151,7 +151,8 @@ Its current design adds a weak source-only seasonal pattern term on top of:
 Status:
 
 - implementation completed
-- full 12-task run should be treated as the next formal verification
+- full 12-task verification completed
+- result shows this line is informative, but not the next mainline
 
 ---
 
@@ -252,7 +253,18 @@ This boundary should remain explicit.
 
 ### `v2.3.5`
 - `residual + trend + source-only seasonal-pattern`
-- current active next verification line
+- full run completed
+- useful as a negative-but-informative structural attempt
+
+### `v2.4.0`
+- `phase` was lifted into a more general `segment` abstraction
+- kept the `v2.3.4` loss unchanged
+- first framework-level refactor toward segment-aware structure loss
+
+### `v2.4.1`
+- first explicit weak `inter-segment` transition regularization
+- improved over `v2.4.0`
+- confirmed that segment-aware intra/inter split is a valid mainline direction
 
 ---
 
@@ -373,26 +385,29 @@ rather than remote-sensing-specific `DOY` heuristics.
 
 ---
 
-## 7. Immediate Next Formal Check
+## 7. Current Transition Point
 
-The next formal step is:
+The project is no longer waiting for `v2.3.5` verification.
 
-- finish validating **`v2.3.5`** on the full 12 tasks
+What is now established:
 
-Main question:
+- `v2.3.5` full run completed and did **not** outperform `v2.3.4`
+- `v2.4.0` confirmed that `phase -> segment` abstraction can be introduced without breaking the mainline
+- `v2.4.1` confirmed that a weak `inter-segment` transition term can improve over `v2.4.0`
 
-> can a weak source-only seasonal-pattern term improve over `v2.3.4` without reintroducing the failure mode of `v2.3.2`
+So the immediate question is no longer:
 
-If `v2.3.5` works, then the next stage can move toward:
+- whether seasonal pattern can simply be added on top of `v2.3.4`
 
-- more explicit source-sensitive component weighting
-- but still source-only
+The immediate question is now:
 
-If `v2.3.5` fails, then the next redesign should focus on:
+> **how to improve the temporal unit itself and how to make segment boundaries more semantically meaningful**
 
-- coherent temporal segment formulation
-- intra-segment vs inter-segment loss separation
-- window-based local structural constraints
+This leads directly to:
+
+- `v2.4.2`: semantic segment refinement
+- `v2.4.3`: boundary-centered sliding-window inter-segment modeling
+- `v2.5`: source-sensitive weighting / gating
 
 ---
 
@@ -400,37 +415,103 @@ If `v2.3.5` fails, then the next redesign should focus on:
 
 The later route is now much clearer and can be explicitly separated into three lines.
 
-### 8.1 `v2.4.2`: sliding-window / finer segment line
+### 8.1 `v2.4.2`: semantic segment refinement line
 
-After `v2.4.0` and `v2.4.1`, the next structural line should move toward:
+After `v2.4.0` and `v2.4.1`, the next structural line should first improve the quality of the segment unit itself.
 
-- finer local temporal units
-- window-based local structure
-- and eventually more adaptive segment construction
+Current judgment:
 
-This should not be treated as one single jump, but as a small iteration line.
+- the current `segment` is still largely geometry-driven
+- it uses time support structure better than old phase splitting
+- but it still does not truly group **semantically similar local regimes**
+
+So `v2.4.2` should focus on:
+
+- semantic segment refinement
+- source-driven boundary detection
+- possibly coarse/fine segment hierarchy later
+- while keeping the main loss framework relatively stable
 
 Recommended progression:
 
 - `v2.4.2a`
-  - fixed sliding window
-  - fixed stride
-  - verify whether local window structure is useful at all
+  - semantic enhancement of current `DOY-gap-aware` segmentation
+  - keep loss nearly unchanged
 - `v2.4.2b`
-  - overlapping windows
-  - compare different window lengths / strides
+  - test additional local semantic signals:
+    - slope
+    - curvature
+    - local variance
+    - local autocorrelation / periodic cues
 - `v2.4.2c`
-  - time-gap-aware windows
-  - incorporate observation density / temporal gaps
-- `v2.4.2d`
-  - only if earlier steps are effective, consider adaptive windows
+  - if useful, consider coarse/fine two-level segment views
 
-The key reason for this line is:
+The main conceptual shift is:
 
-> current hard segments are still a coarse temporal unit;  
-> sliding windows may provide a more general and more local structural view.
+> **before making inter-segment windows more complex, first make the segment unit itself more semantically correct.**
 
-### 8.2 `v2.5`: source-sensitive weighting / gating
+Relevant paper inspiration for this line:
+
+- **AMD / Adaptive multi-scale decomposition**
+  - explicit multi-scale decomposition
+  - coarse-to-fine structural organization
+- **MSGNet**
+  - scale discovery from periodic / frequency cues
+  - scale importance from amplitude / energy
+
+These are useful not because we do forecasting, but because they support:
+
+- multi-scale segment design
+- semantically informed temporal partitioning
+
+### 8.2 `v2.4.3`: boundary-centered sliding-window line
+
+Only after segment quality is improved should we introduce sliding windows for **inter-segment** modeling.
+
+Current judgment:
+
+- sliding windows should **not** replace the segment unit everywhere
+- segment should remain the main unit for intra-segment structure
+- windows should be used specifically around **segment boundaries**
+
+So `v2.4.3` should focus on:
+
+- boundary-centered sliding windows
+- local transition modeling
+- optional keypoint / turning-point emphasis
+- later multi-scale windows
+
+Recommended progression:
+
+- `v2.4.3a`
+  - fixed boundary-centered window
+  - simple local encoder
+- `v2.4.3b`
+  - keypoint-aware boundary window
+  - emphasize local extrema / turning points / strong transition cues
+- `v2.4.3c`
+  - multi-scale boundary windows
+  - different window lengths around the same boundary
+
+Relevant paper inspiration for this line:
+
+- **TRNN**
+  - sliding window is useful
+  - but local structure should emphasize turning points, not all points equally
+- **multi-head CNN / XAI window paper**
+  - fixed look-back windows are a strong practical baseline
+  - local conv encoding is a stable first choice
+- **Pathformer**
+  - multi-scale patch/window idea
+  - supports later moving from one fixed window to multiple candidate windows
+- **TT-ConvLSTM**
+  - supports the idea that local detail and global structure can be handled by different pathways
+
+This line should therefore be understood as:
+
+> **window-based local structure for inter-segment boundaries, not full replacement of semantic segments.**
+
+### 8.3 `v2.5`: source-sensitive weighting / gating
 
 This should be treated as a new stage after the segment framework is stable.
 
@@ -460,7 +541,21 @@ and not be mixed into `v2.4`, because `v2.4` is still solving:
 - the temporal unit itself
 - the intra/inter structural organization itself
 
-### 8.3 Reshaper backbone line
+Relevant paper inspiration for this line:
+
+- **Pathformer**
+  - adaptive pathway selection
+  - multi-scale router / top-k scale choice
+- **MSGNet**
+  - scale weighting by amplitude / importance
+
+These are the most natural conceptual sources for later:
+
+- `moe`
+- gating
+- source-conditioned structural weighting
+
+### 8.4 Reshaper backbone line
 
 The current reshaper remains:
 
@@ -504,6 +599,8 @@ In particular, we have already gone through:
 - conservative profile regularization
 - trend-residual restructuring
 - source-only seasonal pattern regularization
+- segment abstraction
+- first explicit inter-segment transition regularization
 
 So the project is no longer at the stage of “what if we try structure”.
 
