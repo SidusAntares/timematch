@@ -441,10 +441,24 @@ if __name__ == '__main__':
         help='phase partition mode for source phase compactness regularization',
     )
     parser.add_argument(
+        '--source_segment_partition_mode',
+        dest='source_segment_partition_mode',
+        default=None,
+        choices=['uniform', 'doy_gap'],
+        help='segment partition mode alias for v2.4.0 temporal-segment abstraction; defaults to source_phase_partition_mode when omitted',
+    )
+    parser.add_argument(
         '--source_phase_count',
         default=5,
         type=int,
         help='phase count used only when source_phase_partition_mode=uniform',
+    )
+    parser.add_argument(
+        '--source_segment_count',
+        dest='source_segment_count',
+        default=None,
+        type=int,
+        help='segment count alias for v2.4.0 temporal-segment abstraction; defaults to source_phase_count when omitted',
     )
     parser.add_argument(
         '--source_phase_gap_threshold',
@@ -479,8 +493,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual'],
-        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, or v2.3.5 trend-seasonal-residual',
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual'],
+        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, or v2.4.0 segment-trend-residual',
     )
     parser.add_argument(
         '--source_structure_intra_trade_off',

@@ -1,1 +1,10 @@
 nohup: 忽略输入
+Logs saved to: /data/user/timematch/logs/v234_trend_v222_rerun_and_structure_20260507_170312
+Training logs:
+  /data/user/timematch/logs/v234_trend_v222_rerun_and_structure_20260507_170312/gpu0_30TXT_v234_trend_v222_tasks.log
+  /data/user/timematch/logs/v234_trend_v222_rerun_and_structure_20260507_170312/gpu1_31TCJ_v234_trend_v222_tasks.log
+  /data/user/timematch/logs/v234_trend_v222_rerun_and_structure_20260507_170312/gpu2_32VNH_v234_trend_v222_tasks.log
+  /data/user/timematch/logs/v234_trend_v222_rerun_and_structure_20260507_170312/gpu3_33UVP_v234_trend_v222_tasks.log
+Analysis logs:
+  /data/user/timematch/logs/v234_trend_v222_rerun_and_structure_20260507_170312/gpu0_v234_trend_v222_transfer_metrics.log
+  /data/user/timematch/logs/v234_trend_v222_rerun_and_structure_20260507_170312/gpu0_v234_trend_v222_dimension_analysis.log

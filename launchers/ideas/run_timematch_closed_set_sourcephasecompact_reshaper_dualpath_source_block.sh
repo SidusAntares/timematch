@@ -19,6 +19,8 @@ DUAL_REL_TRADE_OFF="${SOURCE_FEATURE_DUAL_RELATION_TRADE_OFF:-0.03}"
 RESHAPER_TAG="${RESHAPER_TAG:-v223_current_s010_rel003}"
 SOURCE_PHASE_PARTITION_MODE="${SOURCE_PHASE_PARTITION_MODE:-uniform}"
 SOURCE_PHASE_COUNT="${SOURCE_PHASE_COUNT:-5}"
+SOURCE_SEGMENT_PARTITION_MODE="${SOURCE_SEGMENT_PARTITION_MODE:-$SOURCE_PHASE_PARTITION_MODE}"
+SOURCE_SEGMENT_COUNT="${SOURCE_SEGMENT_COUNT:-$SOURCE_PHASE_COUNT}"
 SOURCE_PHASE_GAP_THRESHOLD="${SOURCE_PHASE_GAP_THRESHOLD:-45}"
 SOURCE_PHASE_MIN_POINTS="${SOURCE_PHASE_MIN_POINTS:-3}"
 SOURCE_PHASE_MAX_POINTS="${SOURCE_PHASE_MAX_POINTS:-8}"
@@ -50,7 +52,9 @@ python train.py \
   --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
   --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
   --source_phase_partition_mode "$SOURCE_PHASE_PARTITION_MODE" \
+  --source_segment_partition_mode "$SOURCE_SEGMENT_PARTITION_MODE" \
   --source_phase_count "$SOURCE_PHASE_COUNT" \
+  --source_segment_count "$SOURCE_SEGMENT_COUNT" \
   --source_phase_gap_threshold "$SOURCE_PHASE_GAP_THRESHOLD" \
   --source_phase_min_points "$SOURCE_PHASE_MIN_POINTS" \
   --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
@@ -89,7 +93,9 @@ while IFS= read -r TARGET; do
     --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
     --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
     --source_phase_partition_mode "$SOURCE_PHASE_PARTITION_MODE" \
+    --source_segment_partition_mode "$SOURCE_SEGMENT_PARTITION_MODE" \
     --source_phase_count "$SOURCE_PHASE_COUNT" \
+    --source_segment_count "$SOURCE_SEGMENT_COUNT" \
     --source_phase_gap_threshold "$SOURCE_PHASE_GAP_THRESHOLD" \
     --source_phase_min_points "$SOURCE_PHASE_MIN_POINTS" \
     --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
@@ -119,7 +125,9 @@ while IFS= read -r TARGET; do
     --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
     --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
     --source_phase_partition_mode "$SOURCE_PHASE_PARTITION_MODE" \
+    --source_segment_partition_mode "$SOURCE_SEGMENT_PARTITION_MODE" \
     --source_phase_count "$SOURCE_PHASE_COUNT" \
+    --source_segment_count "$SOURCE_SEGMENT_COUNT" \
     --source_phase_gap_threshold "$SOURCE_PHASE_GAP_THRESHOLD" \
     --source_phase_min_points "$SOURCE_PHASE_MIN_POINTS" \
     --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \

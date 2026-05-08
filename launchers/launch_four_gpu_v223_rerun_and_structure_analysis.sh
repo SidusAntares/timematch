@@ -16,6 +16,7 @@ OUTPUTS_ROOT="${OUTPUTS_ROOT:-outputs}"
 DEVICE="${DEVICE:-cuda}"
 RESHAPER_TAG="${RESHAPER_TAG:-v223_current_s010_rel003}"
 SOURCE_EXPERIMENT_SUFFIX="_sourcephasecompact_p5_${RESHAPER_TAG}"
+SKIP_STRUCTURE_ANALYSIS="${SKIP_STRUCTURE_ANALYSIS:-0}"
 
 export DATA_ROOT
 export OUTPUTS_ROOT
@@ -51,39 +52,41 @@ run_source_block 3 "austria/33UVP/2017" $'france/30TXT/2017\nfrance/31TCJ/2017\n
 
 wait
 
-CUDA_VISIBLE_DEVICES=0 python "$ROOT_DIR/analysis/recompute_transfer_metrics.py" \
-  --data_root "$DATA_ROOT" \
-  --outputs_root "$OUTPUTS_ROOT" \
-  --output_csv "$ROOT_DIR/result/${ANALYSIS_SUBDIR}/transfer_metrics_${RUN_TAG}.csv" \
-  --phase_output_csv "$ROOT_DIR/result/${ANALYSIS_SUBDIR}/phase_metrics_${RUN_TAG}.csv" \
-  --closed_set True \
-  --device "$DEVICE" \
-  --phase_partition_mode structure \
-  --phase_count 5 \
-  --max_feature_samples 2048 \
-  --temporal_grid_size 30 \
-  --max_acf_lag 10 \
-  --num_workers 8 \
-  --batch_size 128 \
-  --seed 111 \
-  --experiment_suffix "$SOURCE_EXPERIMENT_SUFFIX" \
-  > "$LOG_DIR/gpu0_${RUN_TAG}_transfer_metrics.log" 2>&1
+if [ "$SKIP_STRUCTURE_ANALYSIS" != "1" ]; then
+  CUDA_VISIBLE_DEVICES=0 python "$ROOT_DIR/analysis/recompute_transfer_metrics.py" \
+    --data_root "$DATA_ROOT" \
+    --outputs_root "$OUTPUTS_ROOT" \
+    --output_csv "$ROOT_DIR/result/${ANALYSIS_SUBDIR}/transfer_metrics_${RUN_TAG}.csv" \
+    --phase_output_csv "$ROOT_DIR/result/${ANALYSIS_SUBDIR}/phase_metrics_${RUN_TAG}.csv" \
+    --closed_set True \
+    --device "$DEVICE" \
+    --phase_partition_mode structure \
+    --phase_count 5 \
+    --max_feature_samples 2048 \
+    --temporal_grid_size 30 \
+    --max_acf_lag 10 \
+    --num_workers 8 \
+    --batch_size 128 \
+    --seed 111 \
+    --experiment_suffix "$SOURCE_EXPERIMENT_SUFFIX" \
+    > "$LOG_DIR/gpu0_${RUN_TAG}_transfer_metrics.log" 2>&1
 
-CUDA_VISIBLE_DEVICES=0 python "$ROOT_DIR/analysis/analyze_encoded_structure_dimensions.py" \
-  --data_root "$DATA_ROOT" \
-  --outputs_root "$OUTPUTS_ROOT" \
-  --transfer_csv "$ROOT_DIR/result/${ANALYSIS_SUBDIR}/transfer_metrics_${RUN_TAG}.csv" \
-  --output_dir "$ROOT_DIR/result/${ANALYSIS_SUBDIR}/encoded_structure_dimension_analysis" \
-  --source_experiment_suffix "$SOURCE_EXPERIMENT_SUFFIX" \
-  --closed_set True \
-  --device "$DEVICE" \
-  --batch_size 128 \
-  --num_workers 8 \
-  --seed 111 \
-  --temporal_grid_size 30 \
-  --max_acf_lag 10 \
-  --phase_count 5 \
-  > "$LOG_DIR/gpu0_${RUN_TAG}_dimension_analysis.log" 2>&1
+  CUDA_VISIBLE_DEVICES=0 python "$ROOT_DIR/analysis/analyze_encoded_structure_dimensions.py" \
+    --data_root "$DATA_ROOT" \
+    --outputs_root "$OUTPUTS_ROOT" \
+    --transfer_csv "$ROOT_DIR/result/${ANALYSIS_SUBDIR}/transfer_metrics_${RUN_TAG}.csv" \
+    --output_dir "$ROOT_DIR/result/${ANALYSIS_SUBDIR}/encoded_structure_dimension_analysis" \
+    --source_experiment_suffix "$SOURCE_EXPERIMENT_SUFFIX" \
+    --closed_set True \
+    --device "$DEVICE" \
+    --batch_size 128 \
+    --num_workers 8 \
+    --seed 111 \
+    --temporal_grid_size 30 \
+    --max_acf_lag 10 \
+    --phase_count 5 \
+    > "$LOG_DIR/gpu0_${RUN_TAG}_dimension_analysis.log" 2>&1
+fi
 
 echo "Logs saved to: $LOG_DIR"
 echo "Training logs:"
@@ -91,6 +94,10 @@ echo "  $LOG_DIR/gpu0_30TXT_${RUN_TAG}_tasks.log"
 echo "  $LOG_DIR/gpu1_31TCJ_${RUN_TAG}_tasks.log"
 echo "  $LOG_DIR/gpu2_32VNH_${RUN_TAG}_tasks.log"
 echo "  $LOG_DIR/gpu3_33UVP_${RUN_TAG}_tasks.log"
-echo "Analysis logs:"
-echo "  $LOG_DIR/gpu0_${RUN_TAG}_transfer_metrics.log"
-echo "  $LOG_DIR/gpu0_${RUN_TAG}_dimension_analysis.log"
+if [ "$SKIP_STRUCTURE_ANALYSIS" != "1" ]; then
+  echo "Analysis logs:"
+  echo "  $LOG_DIR/gpu0_${RUN_TAG}_transfer_metrics.log"
+  echo "  $LOG_DIR/gpu0_${RUN_TAG}_dimension_analysis.log"
+else
+  echo "Structure analysis skipped for RUN_TAG=$RUN_TAG"
+fi

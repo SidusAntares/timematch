@@ -1,0 +1,10 @@
+nohup: 忽略输入
+Logs saved to: /data/user/timematch/logs/v235_trendseason_v222_rerun_and_structure_20260507_192635
+Training logs:
+  /data/user/timematch/logs/v235_trendseason_v222_rerun_and_structure_20260507_192635/gpu0_30TXT_v235_trendseason_v222_tasks.log
+  /data/user/timematch/logs/v235_trendseason_v222_rerun_and_structure_20260507_192635/gpu1_31TCJ_v235_trendseason_v222_tasks.log
+  /data/user/timematch/logs/v235_trendseason_v222_rerun_and_structure_20260507_192635/gpu2_32VNH_v235_trendseason_v222_tasks.log
+  /data/user/timematch/logs/v235_trendseason_v222_rerun_and_structure_20260507_192635/gpu3_33UVP_v235_trendseason_v222_tasks.log
+Analysis logs:
+  /data/user/timematch/logs/v235_trendseason_v222_rerun_and_structure_20260507_192635/gpu0_v235_trendseason_v222_transfer_metrics.log
+  /data/user/timematch/logs/v235_trendseason_v222_rerun_and_structure_20260507_192635/gpu0_v235_trendseason_v222_dimension_analysis.log
