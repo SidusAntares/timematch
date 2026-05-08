@@ -437,14 +437,14 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_phase_partition_mode',
         default='uniform',
-        choices=['uniform', 'doy_gap'],
+        choices=['uniform', 'doy_gap', 'semantic_doy_gap', 'semantic_agglomerative'],
         help='phase partition mode for source phase compactness regularization',
     )
     parser.add_argument(
         '--source_segment_partition_mode',
         dest='source_segment_partition_mode',
         default=None,
-        choices=['uniform', 'doy_gap'],
+        choices=['uniform', 'doy_gap', 'semantic_doy_gap', 'semantic_agglomerative'],
         help='segment partition mode alias for v2.4.0 temporal-segment abstraction; defaults to source_phase_partition_mode when omitted',
     )
     parser.add_argument(
@@ -491,10 +491,76 @@ if __name__ == '__main__':
         help='minimum sampled time points required for one sample to contribute to a phase loss',
     )
     parser.add_argument(
+        '--source_segment_semantic_quantile',
+        default=0.75,
+        type=float,
+        help='quantile threshold for selecting semantic split candidates in semantic_doy_gap segment partition mode',
+    )
+    parser.add_argument(
+        '--source_segment_semantic_max_samples_per_class',
+        default=128,
+        type=int,
+        help='maximum number of source samples per class used to estimate semantic boundary scores',
+    )
+    parser.add_argument(
+        '--source_segment_semantic_curvature_trade_off',
+        default=0.5,
+        type=float,
+        help='trade-off weight for curvature when constructing semantic boundary scores in semantic_doy_gap mode',
+    )
+    parser.add_argument(
+        '--source_segment_semantic_energy_trade_off',
+        default=0.25,
+        type=float,
+        help='trade-off weight for local energy change when constructing semantic boundary scores in semantic_doy_gap mode',
+    )
+    parser.add_argument(
+        '--source_segment_semantic_similarity_trade_off',
+        default=0.25,
+        type=float,
+        help='trade-off weight for local cosine dissimilarity when constructing semantic boundary scores in semantic_doy_gap mode',
+    )
+    parser.add_argument(
+        '--source_segment_semantic_max_extra_cuts_per_base',
+        default=2,
+        type=int,
+        help='maximum number of semantic split candidates inserted inside each gap-based base segment',
+    )
+    parser.add_argument(
+        '--source_segment_semantic_merge_boundary_trade_off',
+        default=0.5,
+        type=float,
+        help='trade-off weight for preserving high-score boundaries during semantic agglomerative segmentation',
+    )
+    parser.add_argument(
+        '--source_segment_semantic_aggl_min_points',
+        default=3,
+        type=int,
+        help='minimum preferred segment length used when allocating semantic agglomerative segment capacity',
+    )
+    parser.add_argument(
+        '--source_segment_semantic_aggl_target_slack',
+        default=1,
+        type=int,
+        help='allow semantic agglomerative segmentation to end within target_count +/- this slack',
+    )
+    parser.add_argument(
+        '--source_segment_semantic_aggl_merge_cost_tolerance',
+        default=1.15,
+        type=float,
+        help='relative tolerance on initial merge costs when deciding whether semantic agglomerative merging should continue past the upper target count',
+    )
+    parser.add_argument(
+        '--source_segment_semantic_aggl_dynamics_trade_off',
+        default=0.35,
+        type=float,
+        help='trade-off weight for local dynamics similarity in semantic agglomerative merge cost',
+    )
+    parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual'],
-        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, or v2.4.1 segment-transition-residual',
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic'],
+        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, v2.4.1 segment-transition-residual, or v2.4.2 semantic-segment transition residual',
     )
     parser.add_argument(
         '--source_structure_intra_trade_off',
