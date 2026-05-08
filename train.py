@@ -559,8 +559,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic'],
-        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, v2.4.1 segment-transition-residual, or v2.4.2 semantic-segment transition residual',
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual'],
+        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, v2.4.1 segment-transition-residual, v2.4.2 semantic-segment transition residual, or v2.4.3 boundary-window segment transition residual',
     )
     parser.add_argument(
         '--source_structure_intra_trade_off',
@@ -603,6 +603,18 @@ if __name__ == '__main__':
         default=0.02,
         type=float,
         help='adjacent inter-segment transition regularization weight in v2.4.1 segment-transition-residual source structure loss',
+    )
+    parser.add_argument(
+        '--source_structure_boundary_window_trade_off',
+        default=0.02,
+        type=float,
+        help='boundary-centered local window regularization weight in v2.4.3 boundary-window segment source structure loss',
+    )
+    parser.add_argument(
+        '--source_structure_boundary_window_size',
+        default=2,
+        type=int,
+        help='half-window size per side used for v2.4.3 boundary-centered local segment transition windows',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')

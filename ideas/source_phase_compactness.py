@@ -16,6 +16,8 @@ SOURCE_STRUCTURE_SHAPE_TRADE_OFF = 0.15
 SOURCE_STRUCTURE_TREND_TRADE_OFF = 0.05
 SOURCE_STRUCTURE_SEASON_TRADE_OFF = 0.02
 SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF = 0.02
+SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF = 0.20
+SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE = 2
 SHAPE_REG_DIRECTION_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_MARGIN = 0.35
@@ -1058,6 +1060,8 @@ def compute_source_structure_loss(
     trend_trade_off=SOURCE_STRUCTURE_TREND_TRADE_OFF,
     season_trade_off=SOURCE_STRUCTURE_SEASON_TRADE_OFF,
     segment_inter_trade_off=SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF,
+    boundary_window_trade_off=SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF,
+    boundary_window_size=SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE,
     anchor_spatial_feats=None,
     anchor_positions=None,
 ):
@@ -1104,6 +1108,11 @@ def compute_source_structure_loss(
           * keep the v2.4.1 loss unchanged
           * upgrade the segment partition builder from geometry-only DOY-gap rules
             to semantic-enhanced source-driven segmentation
+    - segment_boundary_window_residual:
+        v2.4.3b boundary-centered sliding-window weighting:
+          * keep the v2.4.1 segment-aware residual + trend + weak inter-segment loss
+          * use local boundary windows only to modulate the strength of adjacent
+            inter-segment regularization
     """
     version = str(version).lower()
     if version == "compactness":
@@ -1134,6 +1143,10 @@ def compute_source_structure_loss(
         "v241",
         "segment_transition_semantic",
         "v242",
+        "segment_boundary_window_residual",
+        "segment_boundary_window",
+        "boundary_window_segment",
+        "v243",
         "trend_seasonal_residual",
         "trend_season",
         "season_pattern",
@@ -1258,12 +1271,14 @@ def compute_source_structure_loss(
     season_coherence_loss = zero
     season_redundancy_loss = zero
     segment_inter_loss = zero
+    boundary_window_weight_signal = zero
     amplitude_class_count = 0
     interphase_class_count = 0
     shape_class_count = 0
     trend_class_count = 0
     season_class_count = 0
     segment_inter_class_count = 0
+    boundary_window_class_count = 0
 
     if version in {"profiled_components", "profiled", "v233"}:
         for class_id in class_ids:
@@ -1329,6 +1344,10 @@ def compute_source_structure_loss(
         "v241",
         "segment_transition_semantic",
         "v242",
+        "segment_boundary_window_residual",
+        "segment_boundary_window",
+        "boundary_window_segment",
+        "v243",
         "trend_seasonal_residual",
         "trend_season",
         "season_pattern",
@@ -1336,6 +1355,7 @@ def compute_source_structure_loss(
     }:
         season_vectors = []
         for class_id in class_ids:
+            class_mask = (labels == class_id)
             valid_phase_indices = [
                 phase_idx
                 for phase_idx, stats in enumerate(phase_structures)
@@ -1360,7 +1380,7 @@ def compute_source_structure_loss(
             trend_loss = trend_loss + class_trend
             trend_class_count += 1
 
-            if version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241", "segment_transition_semantic", "v242"}:
+            if version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241", "segment_transition_semantic", "v242", "segment_boundary_window_residual", "segment_boundary_window", "boundary_window_segment", "v243"}:
                 seasonal_centers = centers - trend_centers
                 if seasonal_centers.shape[0] >= 3:
                     seasonal_diffs = seasonal_centers[1:] - seasonal_centers[:-1]
@@ -1379,11 +1399,83 @@ def compute_source_structure_loss(
                             seasonal_transition_weights
                             / seasonal_transition_weights.sum().clamp_min(eps)
                         )
-                        class_segment_inter = (
-                            (1.0 - seasonal_cos) * seasonal_transition_weights
-                        ).sum()
-                        segment_inter_loss = segment_inter_loss + class_segment_inter
-                        segment_inter_class_count += 1
+                        boundary_pair_modulator = None
+
+                if version in {"segment_boundary_window_residual", "segment_boundary_window", "boundary_window_segment", "v243"} and phase_partition_spec is not None:
+                    if class_mask.sum().item() >= 2:
+                        class_time_curve = ordered_feats[class_mask].mean(dim=0)
+                        class_time_trend = _moving_average_same(class_time_curve)
+                        class_time_seasonal = class_time_curve - class_time_trend
+                        phase_index_tensor = torch.tensor(valid_phase_indices, device=weights.device, dtype=torch.long)
+                        if phase_index_tensor.numel() >= 2:
+                            consecutive_pairs = []
+                            for local_idx in range(phase_index_tensor.numel() - 1):
+                                left_idx = int(phase_index_tensor[local_idx].item())
+                                right_idx = int(phase_index_tensor[local_idx + 1].item())
+                                if right_idx == left_idx + 1:
+                                    consecutive_pairs.append((left_idx, right_idx, local_idx))
+                            if consecutive_pairs:
+                                spec_positions = phase_partition_spec.get("date_positions")
+                                spec_intervals = phase_partition_spec.get("intervals")
+                                if spec_positions is not None and spec_intervals is not None:
+                                    spec_positions = np.asarray(spec_positions, dtype=np.int64)
+                                    boundary_terms = []
+                                    boundary_weights = []
+                                    boundary_local_indices = []
+                                    window_size = max(1, int(boundary_window_size))
+                                    for left_phase_idx, right_phase_idx, local_idx in consecutive_pairs:
+                                        left_end_pos = int(spec_intervals[left_phase_idx][1])
+                                        boundary_candidates = np.where(spec_positions == left_end_pos)[0]
+                                        if boundary_candidates.size == 0:
+                                            continue
+                                        boundary_idx = int(boundary_candidates[-1])
+                                        left_start = max(0, boundary_idx - window_size + 1)
+                                        right_end = min(class_time_seasonal.shape[0], boundary_idx + 1 + window_size)
+                                        left_window = class_time_seasonal[left_start:boundary_idx + 1]
+                                        right_window = class_time_seasonal[boundary_idx + 1:right_end]
+                                        if left_window.shape[0] == 0 or right_window.shape[0] == 0:
+                                            continue
+                                        window_transition = right_window.mean(dim=0) - left_window.mean(dim=0)
+                                        boundary_terms.append(window_transition.norm())
+                                        boundary_weights.append(
+                                            0.5 * (
+                                                class_weights[local_idx]
+                                                + class_weights[local_idx + 1]
+                                            )
+                                        )
+                                        boundary_local_indices.append(local_idx)
+                                    if boundary_terms:
+                                        boundary_terms = torch.stack(boundary_terms)
+                                        boundary_weights = torch.stack(boundary_weights)
+                                        boundary_weights = boundary_weights / boundary_weights.sum().clamp_min(eps)
+                                        normalized_boundary_terms = boundary_terms / boundary_terms.mean().clamp_min(eps)
+                                        class_boundary_window = (normalized_boundary_terms * boundary_weights).sum()
+                                        boundary_window_weight_signal = boundary_window_weight_signal + class_boundary_window
+                                        boundary_window_class_count += 1
+                                        if seasonal_centers.shape[0] >= 3 and seasonal_diffs.shape[0] >= 2:
+                                            boundary_strengths = centers.new_ones(seasonal_diffs.shape[0])
+                                            for local_idx, normalized_term in zip(boundary_local_indices, normalized_boundary_terms):
+                                                if 0 <= local_idx < boundary_strengths.shape[0]:
+                                                    boundary_strengths[local_idx] = normalized_term
+                                            boundary_pair_modulator = 0.5 * (
+                                                boundary_strengths[:-1] + boundary_strengths[1:]
+                                            )
+
+                if seasonal_centers.shape[0] >= 3 and seasonal_diffs.shape[0] >= 2:
+                    if boundary_pair_modulator is not None:
+                        seasonal_transition_weights = (
+                            seasonal_transition_weights
+                            * (1.0 + float(boundary_window_trade_off) * boundary_pair_modulator)
+                        )
+                        seasonal_transition_weights = (
+                            seasonal_transition_weights
+                            / seasonal_transition_weights.sum().clamp_min(eps)
+                        )
+                    class_segment_inter = (
+                        (1.0 - seasonal_cos) * seasonal_transition_weights
+                    ).sum()
+                    segment_inter_loss = segment_inter_loss + class_segment_inter
+                    segment_inter_class_count += 1
 
             if version in {"trend_seasonal_residual", "trend_season", "season_pattern", "v235"}:
                 seasonal_centers = centers - trend_centers
@@ -1462,6 +1554,8 @@ def compute_source_structure_loss(
         season_coherence_loss = season_coherence_loss / season_class_count
     if segment_inter_class_count > 0:
         segment_inter_loss = segment_inter_loss / segment_inter_class_count
+    if boundary_window_class_count > 0:
+        boundary_window_weight_signal = boundary_window_weight_signal / boundary_window_class_count
     if version in {"trend_seasonal_residual", "trend_season", "season_pattern", "v235"}:
         season_loss = (
             season_coherence_loss
@@ -1480,6 +1574,12 @@ def compute_source_structure_loss(
             + float(season_trade_off) * season_loss
         )
     elif version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241", "segment_transition_semantic", "v242"}:
+        total_loss = (
+            float(intra_trade_off) * intra_loss
+            + float(trend_trade_off) * trend_loss
+            + float(segment_inter_trade_off) * segment_inter_loss
+        )
+    elif version in {"segment_boundary_window_residual", "segment_boundary_window", "boundary_window_segment", "v243"}:
         total_loss = (
             float(intra_trade_off) * intra_loss
             + float(trend_trade_off) * trend_loss
@@ -1538,12 +1638,16 @@ def compute_source_structure_loss(
     phase_logs["source_structure_segment_inter_loss"] = float(
         (SOURCE_PHASE_COMPACTNESS_LAMBDA * segment_inter_loss).detach().item()
     )
+    phase_logs["source_structure_boundary_window_weight_signal"] = float(
+        boundary_window_weight_signal.detach().item()
+    )
     phase_logs["source_structure_amplitude_classes"] = float(amplitude_class_count)
     phase_logs["source_structure_interphase_classes"] = float(interphase_class_count)
     phase_logs["source_structure_shape_classes"] = float(shape_class_count)
     phase_logs["source_structure_trend_classes"] = float(trend_class_count)
     phase_logs["source_structure_season_classes"] = float(season_class_count)
     phase_logs["source_structure_segment_inter_classes"] = float(segment_inter_class_count)
+    phase_logs["source_structure_boundary_window_classes"] = float(boundary_window_class_count)
     phase_logs["source_structure_segment_count"] = float(len(phase_structures))
     phase_logs["structure_loss"] = float(total_loss.detach().item())
     phase_logs["compactness_loss"] = phase_logs["structure_loss"]
