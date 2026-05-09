@@ -154,6 +154,8 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
                     boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
                     boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
+                    boundary_keypoint_turn_trade_off=getattr(config, "source_structure_boundary_keypoint_turn_trade_off", 0.50),
+                    boundary_keypoint_curvature_trade_off=getattr(config, "source_structure_boundary_keypoint_curvature_trade_off", 0.25),
                     anchor_spatial_feats=spatial_feats_anchor,
                     anchor_positions=positions,
                 )
