@@ -26,21 +26,19 @@ ssh "${REMOTE_USER}@${REMOTE_HOST}" "
     cd '${REMOTE_PROJECT_DIR}'
     TMP_LIST=\$(mktemp)
 
-    for path in logs outputs result runs; do
+    for path in logs; do
         if [ -e \"\$path\" ]; then
             printf '%s\n' \"\$path\" >> \"\$TMP_LIST\"
         fi
     done
 
-    find . -maxdepth 1 -type f \\( -name '*.log' -o -name '*.txt' -o -name '*.csv' -o -name '*.json' \\) -print >> \"\$TMP_LIST\"
+    if [ -d result ]; then
+        find result -type f -name '*.csv' -print >> \"\$TMP_LIST\"
+    fi
 
     tar \
         --ignore-failed-read \
         --warning=no-file-changed \
-        --exclude='outputs/**/*.pt' \
-        --exclude='outputs/**/*.pth' \
-        --exclude='outputs/**/*.ckpt' \
-        --exclude='runs/**/events.out.tfevents*' \
         -czf '${REMOTE_ARCHIVE_PATH}' \
         -T \"\$TMP_LIST\"
 
@@ -60,10 +58,7 @@ Pulled from: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PROJECT_DIR}
 Pulled at: ${STAMP}
 Contents:
 - logs/
-- outputs/ (excluding checkpoints)
-- result/
-- runs/ (excluding tensorboard event files)
-- root-level *.log, *.txt, *.csv, *.json
+- result/ (*.csv only)
 EOF
 fi
 
