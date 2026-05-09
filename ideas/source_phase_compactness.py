@@ -18,8 +18,6 @@ SOURCE_STRUCTURE_SEASON_TRADE_OFF = 0.02
 SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF = 0.02
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF = 0.20
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE = 2
-SOURCE_STRUCTURE_BOUNDARY_KEYPOINT_TURN_TRADE_OFF = 0.50
-SOURCE_STRUCTURE_BOUNDARY_KEYPOINT_CURVATURE_TRADE_OFF = 0.25
 SHAPE_REG_DIRECTION_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_MARGIN = 0.35
@@ -1064,8 +1062,6 @@ def compute_source_structure_loss(
     segment_inter_trade_off=SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF,
     boundary_window_trade_off=SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF,
     boundary_window_size=SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE,
-    boundary_keypoint_turn_trade_off=SOURCE_STRUCTURE_BOUNDARY_KEYPOINT_TURN_TRADE_OFF,
-    boundary_keypoint_curvature_trade_off=SOURCE_STRUCTURE_BOUNDARY_KEYPOINT_CURVATURE_TRADE_OFF,
     anchor_spatial_feats=None,
     anchor_positions=None,
 ):
@@ -1117,11 +1113,6 @@ def compute_source_structure_loss(
           * keep the v2.4.1 segment-aware residual + trend + weak inter-segment loss
           * use local boundary windows only to modulate the strength of adjacent
             inter-segment regularization
-    - segment_boundary_keypoint_residual:
-        v2.4.3c keypoint-aware boundary-window weighting:
-          * keep the v2.4.3b weighting-only role of boundary windows
-          * replace plain window-mean difference with keypoint-aware local boundary
-            saliency built from jump, turning, and curvature signals
     """
     version = str(version).lower()
     if version == "compactness":
@@ -1156,10 +1147,6 @@ def compute_source_structure_loss(
         "segment_boundary_window",
         "boundary_window_segment",
         "v243",
-        "segment_boundary_keypoint_residual",
-        "segment_boundary_keypoint",
-        "boundary_keypoint_segment",
-        "v243c",
         "trend_seasonal_residual",
         "trend_season",
         "season_pattern",
@@ -1393,22 +1380,7 @@ def compute_source_structure_loss(
             trend_loss = trend_loss + class_trend
             trend_class_count += 1
 
-            if version in {
-                "segment_transition_residual",
-                "segment_transition",
-                "segment_inter",
-                "v241",
-                "segment_transition_semantic",
-                "v242",
-                "segment_boundary_window_residual",
-                "segment_boundary_window",
-                "boundary_window_segment",
-                "v243",
-                "segment_boundary_keypoint_residual",
-                "segment_boundary_keypoint",
-                "boundary_keypoint_segment",
-                "v243c",
-            }:
+            if version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241", "segment_transition_semantic", "v242", "segment_boundary_window_residual", "segment_boundary_window", "boundary_window_segment", "v243"}:
                 seasonal_centers = centers - trend_centers
                 if seasonal_centers.shape[0] >= 3:
                     seasonal_diffs = seasonal_centers[1:] - seasonal_centers[:-1]
@@ -1429,16 +1401,7 @@ def compute_source_structure_loss(
                         )
                         boundary_pair_modulator = None
 
-                if version in {
-                    "segment_boundary_window_residual",
-                    "segment_boundary_window",
-                    "boundary_window_segment",
-                    "v243",
-                    "segment_boundary_keypoint_residual",
-                    "segment_boundary_keypoint",
-                    "boundary_keypoint_segment",
-                    "v243c",
-                } and phase_partition_spec is not None:
+                if version in {"segment_boundary_window_residual", "segment_boundary_window", "boundary_window_segment", "v243"} and phase_partition_spec is not None:
                     if class_mask.sum().item() >= 2:
                         class_time_curve = ordered_feats[class_mask].mean(dim=0)
                         class_time_trend = _moving_average_same(class_time_curve)
@@ -1472,54 +1435,8 @@ def compute_source_structure_loss(
                                         right_window = class_time_seasonal[boundary_idx + 1:right_end]
                                         if left_window.shape[0] == 0 or right_window.shape[0] == 0:
                                             continue
-                                        if version in {
-                                            "segment_boundary_keypoint_residual",
-                                            "segment_boundary_keypoint",
-                                            "boundary_keypoint_segment",
-                                            "v243c",
-                                        }:
-                                            center_jump = right_window[0] - left_window[-1]
-                                            jump_strength = center_jump.norm()
-
-                                            if left_window.shape[0] >= 2:
-                                                left_slope = left_window[1:] - left_window[:-1]
-                                                left_slope_mean = left_slope.mean(dim=0)
-                                            else:
-                                                left_slope_mean = center_jump
-
-                                            if right_window.shape[0] >= 2:
-                                                right_slope = right_window[1:] - right_window[:-1]
-                                                right_slope_mean = right_slope.mean(dim=0)
-                                            else:
-                                                right_slope_mean = center_jump
-
-                                            turning_strength = 1.0 - torch.nn.functional.cosine_similarity(
-                                                left_slope_mean.unsqueeze(0),
-                                                right_slope_mean.unsqueeze(0),
-                                                dim=1,
-                                                eps=eps,
-                                            ).squeeze(0)
-
-                                            stacked_window = torch.cat([left_window, right_window], dim=0)
-                                            if stacked_window.shape[0] >= 3:
-                                                curvature_seq = (
-                                                    stacked_window[2:]
-                                                    - 2.0 * stacked_window[1:-1]
-                                                    + stacked_window[:-2]
-                                                )
-                                                curvature_strength = curvature_seq.norm(dim=1).mean()
-                                            else:
-                                                curvature_strength = jump_strength.new_zeros(())
-
-                                            boundary_signal = (
-                                                jump_strength
-                                                * (1.0 + float(boundary_keypoint_turn_trade_off) * turning_strength)
-                                                + float(boundary_keypoint_curvature_trade_off) * curvature_strength
-                                            )
-                                        else:
-                                            window_transition = right_window.mean(dim=0) - left_window.mean(dim=0)
-                                            boundary_signal = window_transition.norm()
-                                        boundary_terms.append(boundary_signal)
+                                        window_transition = right_window.mean(dim=0) - left_window.mean(dim=0)
+                                        boundary_terms.append(window_transition.norm())
                                         boundary_weights.append(
                                             0.5 * (
                                                 class_weights[local_idx]
@@ -1662,16 +1579,7 @@ def compute_source_structure_loss(
             + float(trend_trade_off) * trend_loss
             + float(segment_inter_trade_off) * segment_inter_loss
         )
-    elif version in {
-        "segment_boundary_window_residual",
-        "segment_boundary_window",
-        "boundary_window_segment",
-        "v243",
-        "segment_boundary_keypoint_residual",
-        "segment_boundary_keypoint",
-        "boundary_keypoint_segment",
-        "v243c",
-    }:
+    elif version in {"segment_boundary_window_residual", "segment_boundary_window", "boundary_window_segment", "v243"}:
         total_loss = (
             float(intra_trade_off) * intra_loss
             + float(trend_trade_off) * trend_loss
