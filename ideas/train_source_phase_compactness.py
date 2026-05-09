@@ -1,6 +1,7 @@
 import torch
 from torchvision import transforms
 from tqdm import tqdm
+import os
 
 from dataset import PixelSetData, create_train_loader
 from evaluation import validation
@@ -25,6 +26,25 @@ from transforms import (
 )
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda
+
+
+def _parse_checkpoint_epochs(spec):
+    if spec is None:
+        return set()
+    if isinstance(spec, (list, tuple, set)):
+        return {int(x) for x in spec}
+    text = str(spec).strip()
+    if not text:
+        return set()
+    tokens = [tok.strip() for tok in text.replace(";", ",").replace("\n", ",").split(",")]
+    return {int(tok) for tok in tokens if tok}
+
+
+def _save_source_checkpoint(model, source_feature_reshaper, path):
+    checkpoint = {"state_dict": model.state_dict()}
+    if source_feature_reshaper is not None:
+        checkpoint["source_feature_reshaper_state_dict"] = source_feature_reshaper.state_dict()
+    torch.save(checkpoint, path)
 
 
 def train_supervised_source_phase_compactness(model, config, writer, splits, val_loader, device, best_model_path):
@@ -108,6 +128,10 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
     )
 
     best_f1 = 0
+    checkpoint_epochs = _parse_checkpoint_epochs(getattr(config, "source_checkpoint_epochs", ""))
+    checkpoint_dir = os.path.join(config.fold_dir, getattr(config, "source_checkpoint_dirname", "checkpoints"))
+    if checkpoint_epochs:
+        os.makedirs(checkpoint_dir, exist_ok=True)
     for epoch in range(config.epochs):
         model.train()
         loss_meter = AverageMeter()
@@ -244,3 +268,8 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             source_feature_reshaper=source_feature_reshaper,
             apply_source_feature_reshaper=False,
         )
+        current_epoch = epoch + 1
+        if current_epoch in checkpoint_epochs:
+            checkpoint_path = os.path.join(checkpoint_dir, f"epoch_{current_epoch}.pt")
+            _save_source_checkpoint(model, source_feature_reshaper, checkpoint_path)
+            print(f"Saved source checkpoint at epoch {current_epoch}: {checkpoint_path}")

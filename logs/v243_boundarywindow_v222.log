@@ -1,0 +1,8 @@
+nohup: 忽略输入
+Logs saved to: /data/user/timematch/logs/v243_boundarywindow_v222_rerun_and_structure_20260508_192221
+Training logs:
+  /data/user/timematch/logs/v243_boundarywindow_v222_rerun_and_structure_20260508_192221/gpu0_30TXT_v243_boundarywindow_v222_tasks.log
+  /data/user/timematch/logs/v243_boundarywindow_v222_rerun_and_structure_20260508_192221/gpu1_31TCJ_v243_boundarywindow_v222_tasks.log
+  /data/user/timematch/logs/v243_boundarywindow_v222_rerun_and_structure_20260508_192221/gpu2_32VNH_v243_boundarywindow_v222_tasks.log
+  /data/user/timematch/logs/v243_boundarywindow_v222_rerun_and_structure_20260508_192221/gpu3_33UVP_v243_boundarywindow_v222_tasks.log
+Structure analysis skipped for RUN_TAG=v243_boundarywindow_v222

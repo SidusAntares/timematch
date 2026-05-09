@@ -2,6 +2,7 @@ from torch.utils.data.sampler import WeightedRandomSampler
 import sklearn.metrics
 from collections import Counter
 from copy import deepcopy
+import os
 
 import numpy as np
 import torch
@@ -62,7 +63,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
     # Setup model
     pretrained_path = f"{config.weights}/fold_{fold_num}"
-    pretrained_checkpoint = torch.load(f"{pretrained_path}/model.pt", weights_only=False)
+    checkpoint_name = getattr(config, "weights_checkpoint", "model.pt")
+    checkpoint_path = checkpoint_name if os.path.isabs(checkpoint_name) else os.path.join(pretrained_path, checkpoint_name)
+    pretrained_checkpoint = torch.load(checkpoint_path, weights_only=False)
     pretrained_weights = pretrained_checkpoint["state_dict"]
     student.load_state_dict(pretrained_weights)
     teacher = deepcopy(student)

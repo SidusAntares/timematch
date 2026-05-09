@@ -1,0 +1,7 @@
+nohup: 忽略输入
+Logs saved to: /data/user/timematch/logs/v243_boundarywindow_quickcheck_v222_20260508_220001
+Quick-check training logs:
+  /data/user/timematch/logs/v243_boundarywindow_quickcheck_v222_20260508_220001/gpu0_30TXT_v243_boundarywindow_quickcheck_v222.log
+  /data/user/timematch/logs/v243_boundarywindow_quickcheck_v222_20260508_220001/gpu1_31TCJ_v243_boundarywindow_quickcheck_v222.log
+  /data/user/timematch/logs/v243_boundarywindow_quickcheck_v222_20260508_220001/gpu2_32VNH_v243_boundarywindow_quickcheck_v222.log
+  /data/user/timematch/logs/v243_boundarywindow_quickcheck_v222_20260508_220001/gpu3_33UVP_v243_boundarywindow_quickcheck_v222.log

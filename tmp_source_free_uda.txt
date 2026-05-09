@@ -1,0 +1,1237 @@
+                                                              Remote Sensing of Environment 314 (2024) 114385
+
+
+                                                                   Contents lists available at ScienceDirect
+
+
+                                                         Remote Sensing of Environment
+                                                           journal homepage: www.elsevier.com/locate/rse
+
+
+
+
+A source-free unsupervised domain adaptation method for cross-regional and
+cross-time crop mapping from satellite image time series
+Sina Mohammadi ∗, Mariana Belgiu, Alfred Stein
+Faculty of Geo-Information Science and Earth Observation (ITC), University of Twente, Enschede, the Netherlands
+
+
+
+ARTICLE               INFO                               ABSTRACT
+
+Edited by Zhe Zhu                                        Precise and timely information about crop types plays a crucial role in various agriculture-related applications.
+                                                         However, crop type mapping methods often face significant challenges in cross-regional and cross-time
+Dataset link: https://github.com/Sina-Mohamm             scenarios with high discrepancies between temporal-spectral characteristics of crops from different regions
+adi/SFUDA-CropMapping
+                                                         and years. Unsupervised domain adaptation (UDA) methods have been employed to mitigate the problem of
+Keywords:                                                domain shift between the source and target domains. Since these methods require source domain data during
+Crop classification                                      the adaptation phase, they demand significant computational resources and data storage, especially when large
+Deep learning                                            labeled crop mapping source datasets are available. This leads to increased energy consumption and financial
+Source-free unsupervised domain adaptation               costs. To address this limitation, we developed a source-free UDA method for cross-regional and cross-time
+Model generalization                                     crop mapping, capable of adapting the source-pretrained models to the target datasets without requiring the
+Transfer learning                                        source datasets. The method mitigates the domain shift problem by leveraging mutual information loss. The
+In-season crop type mapping
+                                                         diversity and discriminability terms in the loss function are balanced through a novel unsupervised weighting
+Multi-temporal
+                                                         strategy based on mean confidence scores of the predicted categories. Our experiments on mapping corn,
+                                                         soybean, and the class Other from Landsat image time series in the U.S. demonstrated that the adapted models
+                                                         using different backbone networks outperformed their non-adapted counterparts. With CNN, Transformer, and
+                                                         LSTM backbone networks, our adaptation method increased the macro F1 scores by 12.9%, 7.1%, and 5.8%
+                                                         on average in cross-time tests and by 20.1%, 12.5%, and 8.8% on average in cross-regional tests, respectively.
+                                                         Additionally, in an experiment covering a large study area of 450 km × 300 km, the adapted model with the
+                                                         CNN backbone network obtained a macro F1 score of 92.6%, outperforming its non-adapted counterpart with a
+                                                         macro F1 score of 89.2%. Our experiments on mapping the same classes using Sentinel-2 image times series in
+                                                         France demonstrated the effectiveness of our method across different countries and sensors. We also tested our
+                                                         method in more diverse agricultural areas in Denmark and France containing six classes. The results showed
+                                                         that the adapted models outperformed the non-adapted models. Moreover, in within-season experiments, the
+                                                         adapted models performed better than the non-adapted models in the vast majority of weeks. These results
+                                                         and their comparison to those obtained by the other investigated UDA methods demonstrated the efficiency
+                                                         of our proposed method for both end-of-season and within-season crop mapping tasks. Additionally, our study
+                                                         showed that the method is modular and flexible in employing various backbone networks. The code and data
+                                                         are available at https://github.com/Sina-Mohammadi/SFUDA-CropMapping.
+
+
+
+1. Introduction                                                                               capable of capturing the dynamics of crops over their entire growing
+                                                                                              season and across large areas.
+    Accurate information on cultivated crops plays a crucial role in food                         Crop mapping has been accomplished through the implementation
+security research (Sagan et al., 2021), monitoring crop growth (Ma                            of both machine learning (Duro et al., 2012; Yan et al., 2021) and deep
+et al., 2022), and understanding how climate change might impact the                          learning methods (Turkoglu et al., 2021; Pelletier et al., 2019; Mo-
+production and nutritional quality of crops (Belgiu et al., 2023). This                       hammadi et al., 2023). Deep learning methods, in particular, achieved
+information is usually collected through costly and time-consuming
+                                                                                              promising results due to their ability to learn complex patterns from
+field campaigns (Wang et al., 2020). Consequently, in recent years,
+                                                                                              remote sensing image time series (Zhong et al., 2019; Xu et al., 2020).
+there has been an increasing interest in developing efficient methods
+                                                                                              To obtain good classification results, these methods require a large
+to classify crops, especially using satellite image time series that are
+
+
+  ∗ Corresponding author.
+     E-mail addresses: s.mohammadi@utwente.nl (S. Mohammadi), m.belgiu@utwente.nl (M. Belgiu), a.stein@utwente.nl (A. Stein).
+
+https://doi.org/10.1016/j.rse.2024.114385
+Received 6 August 2023; Received in revised form 19 July 2024; Accepted 19 August 2024
+Available online 3 September 2024
+0034-4257/© 2024 The Author(s). Published by Elsevier Inc. This is an open access article under the CC BY license (http://creativecommons.org/licenses/by/4.0/).
+S. Mohammadi et al.                                                                                                  Remote Sensing of Environment 314 (2024) 114385
+
+
+amount of labeled data from the target study areas for training (Nyborg            the target datasets (Boudiaf et al., 2022). These methods, called source-
+et al., 2022). Unfortunately, generating labeled samples of cultivated             free unsupervised domain adaptation (SFUDA), resolve the dependency
+crops is a time-consuming and expensive task in many areas across                  of the conventional UDA methods on the source data and only require
+the globe (Wang et al., 2019; Belgiu et al., 2021). To address this                the target data during the adaptation stage (Kundu et al., 2020; Liang
+challenge, transferring a model trained in an area with rich annotated             et al., 2020; Yang et al., 2022). In remote sensing, SFUDA has been
+labels, i.e. the source domain, to the unlabeled target study area, i.e. the       successfully applied for image scene classification (Xu et al., 2022a)
+target domain, has been investigated as a potential solution for crop              and hyperspectral image classification (Xu et al., 2022b). Moreover,
+mapping (Xu et al., 2020, 2021; Pelletier et al., 2019; Mohammadi                  source-free semi-supervised domain adaptation has also been used for
+et al., 2023; Nowakowski et al., 2021). Despite showing promising                  land cover mapping, where some labeled samples are available in the
+results, these methods often suffer from being localized (Wang et al.,             target domain. For example, Lucas et al. (2021) used a CNN model
+2023, 2022), meaning that they are applied to target study areas                   trained on the source domain as a starting point and enhanced its
+with similar agroecological conditions to those of the source domain.              performance in the target domain through additional training on the
+Their generalization ability could be seriously challenged when applied            provided labeled target data. They used a novel regularizer during the
+directly beyond those study areas due to the discrepancies between                 target data training phase, which helps the model to gradually place
+the spectral and temporal properties of the source and target crops                more emphasis on knowledge derived from the target domain as the
+caused by different climatic and environmental conditions. Moreover,               quantity of labeled target data grows.
+these discrepancies can also persist between the source and target crops               Despite the advantages of SFUDA, they have not been developed
+across different years. It becomes difficult for the aforementioned meth-          for crop mapping. In this study, we proposed an SFUDA method for
+ods to explicitly mitigate the domain shift problem in cross-regional and          corn and soybean mapping across different regions and years in the
+cross-time scenarios.                                                              U.S. using Landsat image time series in the presence of domain shift. We
+    Unsupervised domain adaptation (UDA) methods have been em-                     also assessed the transferability of our method across different countries
+ployed in crop mapping and land cover mapping studies to reduce                    and sensors using Sentinel-2 image time series collected from France.
+domain shift and improve knowledge transfer from a label-rich source               Moreover, we tested our method in more diverse agricultural areas
+domain to an unlabeled target domain (Nyborg et al., 2022; Wang                    in Denmark and France containing six classes. Many previous studies
+et al., 2022, 2023). Nyborg et al. (2022) developed the TimeMatch                  developed efficient methodological workflows to map crops at the end
+UDA method capable of explicitly taking into account the temporal                  of the growing season. In contrast, a limited number of studies focused
+shifts that occur when crops are cultivated in different areas with                on identifying crops during the growing season (Cai et al., 2018; Khan
+varying climatic and agriculture management conditions. Wang et al.                et al., 2023; Lin et al., 2022; Rußwurm et al., 2023; Konduri et al.,
+(2022, 2023) employed a feature extractor to project the source and                2020), which is required for timely decision-making (Rußwurm et al.,
+target domain data to high-level features. Subsequently, their method              2023). Therefore, the developed SFUDA method has been tested for
+minimized the maximum mean discrepancy metric to learn domain-                     both end-of-season and within-season crop type mapping. The main
+invariant feature embeddings. Capliez et al. (2023) proposed a UDA                 contributions of this study are as follows:
+method for land-cover mapping from image time series. Their method
+combined adversarial learning and self-training to progressively adapt                 • We developed an SFUDA method for crop mapping based on
+a neural network from a source domain to a target domain.                                mutual information loss, in which diversity and discriminability
+    Although previous studies have demonstrated the benefits of UDA                      terms are balanced using a novel weighting strategy based on the
+methods, their limitation is that they require the source domain dataset                 mean confidence scores of the predicted categories.
+during the adaptation phase. Unfortunately, there are scenarios where                  • Our method eliminates the need for the source domain dataset
+the labeled source samples cannot be employed and consequently, the                      during adaptation, leading to reduced financial and environmen-
+discrepancy between the two domains cannot be resolved using the                         tal costs compared to the conventional UDA methods. To the best
+above-presented conventional UDA methods. This might happen due to                       of our knowledge, this is the first study focused on SFUDA for
+computational resources and storage requirements (Yu et al., 2023). In                   crop mapping.
+the context of crop mapping, an increasing number of crop mapping                      • We demonstrated that our method is beneficial for both end-
+datasets consisting of vast numbers of labeled samples are becom-                        of-season and within-season crop mapping by conducting exper-
+ing progressively available. Since the ultimate goal of crop mapping                     iments across different regions and years and comparing our
+studies is to develop large-scale mapping and monitoring applica-                        method to other UDA methods. Additionally, we demonstrated
+tions (Boogaard et al., 2023; Rußwurm et al., 2023), it is required to                   the effectiveness of our method across different countries and
+leverage these extremely large labeled source datasets to achieve better                 sensors.
+results in a different target region or year. To this end, if the conven-              • We verified that our method is model-agnostic and modular by
+tional UDA methods are employed, extremely large storage and high                        employing CNN, LSTM, and Transformer, which are widely used
+computational resources are required to store the massive datasets and                   in crop mapping.
+train these methods on them (Fang et al., 2022; Kim et al., 2021). This
+can be excessively costly, particularly for organizations with budget              2. The method
+constraints (Tuia et al., 2022). Moreover, training these deep learning-
+based methods on large amounts of data uses significant amounts of                    Our SFUDA framework (Fig. 1) consists of two stages, namely the
+energy (Tuia et al., 2022). For example, researchers have approximated             source-free adaptation stage and the label prediction stage, given that
+that the training process of GPT-3 (Brown et al., 2020) generates an               a model pretrained on the source domain data is available prior to
+equivalent of 552 tons of CO2, roughly equal to the emissions from                 conducting SFUDA (Stage 0).
+six flights between New York and San Francisco (Patterson et al.,
+2021; Boudiaf et al., 2022). Therefore, it is high time to give due                2.1. Stage 0: Pretraining stage
+consideration to these financial costs and environmental consequences,
+topics that are often overlooked by the AI applications (Tuia et al.,                 Stage 0 is performed prior to SFUDA and obtains an off-the-shelf
+2022).                                                                             source-pretrained model. We employed three main deep learning ar-
+    Recently, there has been increasing interest in developing methods             chitectures used in crop mapping, namely CNN (Zhong et al., 2019;
+in which models are trained once on a large source dataset and subse-              Pelletier et al., 2019), Transformer (Rußwurm and Körner, 2020; Gar-
+quently can be adapted to as many target domains as desired using only             not et al., 2022), and LSTM (Xu et al., 2020; Rußwurm et al., 2023)
+
+                                                                               2
+S. Mohammadi et al.                                                                                                              Remote Sensing of Environment 314 (2024) 114385
+
+
+
+
+Fig. 1. Our framework for SFUDA for crop mapping, consisting of two stages: (1) source-free adaptation stage and (2) label prediction stage. Prior to performing SFUDA, it is
+assumed that we are given a source-pretrained model (Stage 0). Solid lines indicate that the network is being trained, while dashed lines indicate that the network is already
+trained during the previous stage and fixed in the current stage. Note that {𝐹1 ...𝐹𝑀 } and {𝐺1 ...𝐺𝑀 } denote the models obtained from training F and G with different 𝛾 and 𝛽
+values, and {𝑤1 ...𝑤𝑀 } denote the weights obtained from the mean confidence scores generated by {𝐺1 ...𝐺𝑀 }. In the visualization of the features, different shapes correspond to
+different true classes while different colors represent different predicted classes.
+
+                                                                                                        (           )
+as the backbone networks of the off-the-shelf source-pretrained model.                      i.e. 𝑝𝑐 = P 𝑌𝑡 = 𝑐; 𝜃, 𝜙 . Assuming 𝑝𝑖 ∶= P(𝑋𝑡 = 𝑥𝑡𝑖 ) denote the prior
+Typically, these models are trained using a supervised loss function,                       distribution over the target data samples, 𝑝𝑐 is obtained as:
+such as the cross-entropy loss, on the source domain data (Xu et al.,                              𝑁𝑡
+                                                                                                   ∑
+2020, 2021; Pelletier et al., 2019; Turkoglu et al., 2021).                                 𝑝𝑐 =         𝑝𝑖𝑐 𝑝𝑖                                                               (4)
+                                                                                                   𝑖=1
+2.2. Stage 1: Source-free adaptation stage                                                      Since all target data samples are considered to have equal influence
+                                                                                                                                                                  𝑁
+                                                                                            in the learning process, the prior distribution is uniform, i.e. {𝑝𝑖 }𝑖=1𝑡 =
+    If the off-the-shelf source-pretrained model is directly applied to the                  1
+                                                                                            𝑁
+                                                                                               . Thus, 𝑝𝑐 is computed as:
+                                                                                              𝑡
+target data, it often shows poor performance due to the domain shift
+                                                                                                          𝑁𝑡
+caused by temporal-spectral differences between the crops from the                                 1 ∑
+source and target domains (Wang et al., 2022). To mitigate the domain                       𝑝𝑐 =         𝑝                                                                    (5)
+                                                                                                   𝑁𝑡 𝑖=1 𝑖𝑐
+shift problem and improve knowledge transfer, Stage 1 employs an
+unsupervised loss function based on mutual information maximization,                            According to Eq. (1), ( minimizing
+                                                                                                                                )       𝑀𝐼 results in decreasing the
+which achieved promising results in domain adaptation and few-shot                          conditional
+                                                                                                ( )      entropy
+                                                                                                            (     (
+                                                                                                                   )   𝑌𝑡 ∣ 𝑋 𝑡  ) and increasing the marginal entropy
+learning in computer vision studies (Boudiaf et al., 2020; Veilleux et al.,                 ( 𝑌𝑡 ). If  𝑌𝑡 ∣ 𝑋𝑡 is low, then 𝑋𝑡 provides relevant information
+                                                                                            for predicting 𝑌𝑡 , meaning that after observing the values of 𝑋𝑡 , there
+2021; Liang et al., 2020).
+                                                                                            is a low( uncertainty
+                                                                                                         )          about the possible values of 𝑌𝑡 . On the other
+    Here, we define the unsupervised adaptation loss function used in
+                                                                                            hand,  𝑌𝑡 represents the inherent uncertainty or randomness   ( ) in the
+Stage 1. Let 𝑋𝑡 denote the random variable associated with the raw fea-
+                                                                                            variable 𝑌𝑡 without considering any other variable. If  𝑌𝑡 is high,
+tures for the target domain samples and 𝑌𝑡 denote the random variable
+                                                                                            there is high uncertainty in 𝑌𝑡 , indicating a diverse
+                                                                                                                                                (     )range of predic-
+associated with the target domain labels. The mutual information loss
+                                                                                            tions. Based on these explanations, reducing  𝑌𝑡 ∣ 𝑋𝑡 encourages the
+is defined as:
+                                                                                            model to generate confident predictions with high separability between
+            (       )      ( )
+𝑀𝐼 ∶=  𝑌𝑡 ∣ 𝑋𝑡 −  𝑌𝑡                                                 (1)                 different classes and unambiguous cluster assignments. This, however,
+                                                                                            may easily lead to non-suitable solutions, i.e. to( mapping
+                                                                                                                                                    )       all samples
+   Minimizing this loss function is equivalent to maximizing the mu-                        into a single class. To mitigate this issue,  𝑌𝑡 is maximized to
+                                       𝑁
+tual information between 𝑋𝑡 ∈ {𝑥𝑡𝑖 }𝑖=1𝑡 with 𝑁𝑡 samples and their                          encourage predictions to be diverse, thereby
+                           𝐶                                                                                                          (      )avoiding trivial solutions
+label predictions 𝑌𝑡 ∈ {𝑐}𝑐=1 with 𝐶 classes. 𝐿𝑀𝐼 consists of two
+                                     (      )                                               obtained when        ) minimizing  𝑌𝑡 ∣ 𝑋𝑡( . )Therefore, by minimiz-
+                                                                                                           ( solely
+terms: a conditional entropy term  𝑌𝑡 ∣ 𝑋𝑡 and a marginal entropy                          ing 𝑀𝐼 ,  𝑌𝑡 ∣ 𝑋𝑡 is minimized and  𝑌𝑡 is maximized, which
+        ( )
+term  𝑌𝑡 . Following Veilleux et al. (2021), these are obtained using                      encourages discriminability and diversity of the predictions, respec-
+𝛼-entropy as:                                                                               tively. Obtaining high performance in different target datasets requires
+                         𝑁𝑡 𝐶                                                               different trade-offs between
+                                                                                                                    (                    ( ) and diversity. Therefore,
+                                                                                                                            discriminability
+                                                                                                                             )
+ (       )       1    1 ∑∑ 𝛼                                                                simple addition of  𝑌𝑡 ∣ 𝑋𝑡 and − 𝑌𝑡 can lead to performance
+ 𝑌𝑡 ∣ 𝑋𝑡 = −(      )( )       𝑝                                                  (2)
+               𝛼 − 1 𝑁𝑡 𝑖=1 𝑐=1 𝑖𝑐                                                          degradation. To address this issue, we focused on balancing these two
+                                                                                            terms. Therefore, the unsupervised adaptation loss function in Stage 1
+            1 ∑ 𝛼
+                 𝐶
+ ( )
+ 𝑌𝑡 = −(      )   𝑝                                                              (3)       of our framework is defined as:
+          𝛼 − 1 𝑐=1 𝑐                                                                                (       )      ( )
+                                                                                            min{𝛾 𝑌𝑡 ∣ 𝑋𝑡 − 𝛽 𝑌𝑡 }                                                 (6)
+where 𝛼 is a hyperparameter and 𝑝𝑖𝑐 is the posterior distribution over                      𝜽,𝝓
+
+labels given raw features, outputted by the G network. Let 𝜃 and 𝜙                          where the hyperparameters 𝛾 and 𝛽 are balancing weights assigned to
+denote the parameters of the F and G networks (Fig. 1), then 𝑝𝑖𝑐 ∶=                         the two entropy terms that can be viewed as the discriminability tuner
+  (                       )
+P 𝑌𝑡 = 𝑐 ∣ 𝑋𝑡 = 𝑥𝑡𝑖 ; 𝜃, 𝜙 , and 𝑝𝑐 is the marginal distribution over labels,               and the diversity tuner, respectively.
+
+                                                                                        3
+S. Mohammadi et al.                                                                                                     Remote Sensing of Environment 314 (2024) 114385
+
+
+    An important question remains on how we can find optimal values               Algorithm 1 SFUDA for crop mapping — Stage 1: Source-free adapta-
+for 𝛾 and 𝛽. Typically in non-UDA studies, the hyperparameters are                tion stage, 𝑁𝑡 denotes the total number of the unlabeled target samples,
+tuned using the labeled source dataset as conducted in Xu et al.                  𝐵 denotes the number of batches in one epoch, 𝐾 and 𝐿 denote the
+                                                                                                                          (       )
+(2020, 2021) and Gallo et al. (2023). In UDA studies, this is done                number of the discriminability term ( 𝑌𝑡 ∣ 𝑋𝑡 ) and the diversity term
+                                                                                      ( )
+using either the labeled samples from the source domain (Wang et al.,             (- 𝑌𝑡 ) weights
+2022, 2023; Long et al., 2018) or some labeled samples from a target              Require: Source-pretrained model (F and G), unlabeled target samples (𝑋𝑡 =
+                                                                                            𝑁
+domain (Nyborg et al., 2022; Fatras et al., 2021; Hoffman et al., 2018).              {𝑥𝑡𝑖 }𝑖=1𝑡 = {𝑥𝑡𝑏 }𝐵𝑏=1 ), discriminability term weights (𝛾 = {𝛾𝑘 }𝐾
+                                                                                                                                                         𝑘=1
+                                                                                                                                                             ), diversity
+We argue that all these procedures used to select the hyperparameters                 term weights (𝛽 = {𝛽𝑙 }𝐿𝑙=1 )
+pose challenges. First, since there is no access to the source dataset in          1: 𝑚 = 1 ⊳ Index for the model and its corresponding mean confidence
+SFUDA, we cannot use the source dataset labels to tune the balancing                    score
+weights assigned to these two entropy terms. More importantly, even if            2: 𝛽 = 1
+                                                                                  3: for 𝑘 = 1 to 𝐾 ⊳ Loop for changing the discriminability term weights
+the source dataset were available in SFUDA, still using it for hyperpa-
+                                                                                     do
+rameter tuning would be suboptimal as the performance in the target
+                                                                                  4:   Initialize 𝐹𝑚 and 𝐺𝑚 using the source-pretrained model
+domain is what we care about. This cannot be reflected by the success
+                                                                                  5:   for 𝑏 = 1 to 𝐵 ⊳ Loop for training the model on all batches for one
+in the source domain due to the shift between the two domains (You                     epoch do
+et al., 2019). Second, using some labeled samples from the target                                                                      (      )    ( )
+                                                                                  6:      Train 𝐹𝑚 and 𝐺𝑚 using 𝑥𝑡𝑏 by optimizing 𝛾𝑘  𝑌𝑡 ∣ 𝑋𝑡 − 𝛽 𝑌𝑡
+domain for hyperparameter tuning is controversial to UDA and is in                7:   end for
+                                                                                             𝑁             ( ( ( ))) 𝑁
+conflict with the application of UDA in real-world scenarios since it             8:   {𝑝𝑟𝑖 }𝑖=1𝑡 = {argmax 𝐺𝑚 𝐹𝑚 𝑥𝑡𝑖 }𝑖=1𝑡 ⊳ Generating the predictions for
+is assumed that the labels from the target dataset are not available.                     all samples {         }                       {       }
+                                                                                                    ∑𝑁                             ∑𝑁
+Besides, if some labeled target data are available, these should be used          9:      if ( 𝑁1 𝑖=1𝑡 1 𝑝𝑟𝑖 = 0 > 0.05) and ( 𝑁1 𝑖=1𝑡 1 𝑝𝑟𝑖 = 1 > 0.05) and
+                                                                                               ∑ 𝑡
+                                                                                                   𝑁   {     }                   𝑡
+for semi-supervised domain adaptation rather than utilizing them for                      ( 𝑁1 𝑖=1𝑡 1 𝑝𝑟𝑖 = 2 > 0.05) ⊳ Checking the diversity of the predic-
+                                                                                            𝑡
+hyperparameter tuning since it can lead to improved results (You et al.,                  tions (0,1, and 2 represent the class index in our datasets with
+2019). These limitations call for more sophisticated procedures that                      three classes) then
+                                                                                                        1 ∑𝑁𝑡       ( ( ( )))
+can leverage the target domain data (not labels) in an unsupervised               10:        𝑃̄𝑚 =      𝑁𝑡   𝑖=1
+                                                                                                                 max 𝐺𝑚 𝐹𝑚 𝑥𝑡𝑖     ⊳ Calculating the mean
+way for hyperparameter tuning. To address this gap, we proposed a                            confidence score
+novel hyperparameter tuning strategy, which is based on the idea that             11:        Save 𝐹𝑚 , 𝐺𝑚 , and 𝑃̄𝑚 ⊳ Saving the trained model and its corre-
+correctly classified samples tend to have more confident predictions                         sponding mean confidence score if the diversity criterion is met
+than wrongly classified samples (Hendrycks and Gimpel, 2016).
+    Algorithm 1 shows the steps in the source-free adaptation stage. This         12:         𝑚=𝑚+1
+stage consists of two main ‘‘for’’ loops (line 3 and line 16 of Algorithm         13:    end if
+                                                                                  14: end for
+1). In the first loop (line 3 of Algorithm 1), we iterate over 𝐾 distinct
+                                                                                  15: 𝛾 = 1
+𝛾 values while keeping 𝛽 fixed at 1. In this way, we modify the weight
+                                                                                  16: for 𝑙 = 1 to 𝐿 ⊳ Loop for changing the diversity term weights do
+attributed to the discriminability term in the unsupervised adaptation            17:    Initialize 𝐹𝑚 and 𝐺𝑚 using the source-pretrained model
+loss, while maintaining the diversity term weight at 1. In this loop, we          18:    for 𝑏 = 1 to 𝐵 do
+train the backbone and the fully connected networks, initialized with                                                                   (       )      ( )
+                                                                                  19:         Train 𝐹𝑚 and 𝐺𝑚 using 𝑥𝑡𝑏 by optimizing 𝛾 𝑌𝑡 ∣ 𝑋𝑡 − 𝛽𝑙  𝑌𝑡
+the source-pretrained model weights, for one epoch (𝐵 batches) using              20:    end for
+                                                                                                 𝑁            ( ( ( ))) 𝑁
+the unsupervised adaptation loss with each 𝛾 value and 𝛽 = 1 (from                21:    {𝑝𝑟𝑖 }𝑖=1𝑡 = {argmax 𝐺𝑚 𝐹𝑚 𝑥𝑡𝑖 }𝑖=1𝑡
+                                                                                                 1 ∑𝑁𝑡      {     }                 ∑𝑁   {        }
+line 5 to line 7 of Algorithm 1). To determine which models to keep               22:    if ( 𝑁 𝑖=1 1 𝑝𝑟𝑖 = 0 > 0.05) and ( 𝑁1 𝑖=1𝑡 1 𝑝𝑟𝑖 = 1 > 0.05) and
+for the next stage, namely the label prediction stage, we check whether                        ∑𝑁 𝑡
+                                                                                                         {    }                   𝑡
+
+                                                                                        ( 𝑁1 𝑖=1𝑡 1 𝑝𝑟𝑖 = 2 > 0.05) then
+each predicted class encompasses at least 5% of the total sample count                      𝑡
+                                                                                                     1    ∑ 𝑁   ( ( ( )))
+                                                                                  23:         𝑃̄𝑚 = 𝑁 𝑖=1𝑡 max 𝐺𝑚 𝐹𝑚 𝑥𝑡𝑖
+to ensure diverse predictions (line 9 of Algorithm 1). If this criterion                               𝑡
+
+is satisfied, we save the trained model alongside its mean confidence             24:         Save 𝐹𝑚 ,𝐺𝑚 , and 𝑃̄𝑚
+                                                                                  25:     𝑚=𝑚+1
+score of the predicted classes (line 11 of Algorithm 1). To compute
+                                                                                  26:   end if
+the mean confidence score, we input all samples into the model and
+                                                                                  27: end for
+calculate the average of the maximum probabilities generated by the               28: M=m ⊳ The number of saved models and their corresponding mean
+softmax output of the model (line 10 of Algorithm 1). In the second                     confidence scores
+‘‘for’’ loop (line 16 of Algorithm 1), we repeat the same procedure as            29: return {𝐹𝑚 }𝑀   , {𝐺𝑚 }𝑀   , {𝑃̄𝑚 }𝑀
+                                                                                                  𝑚=1        𝑚=1         𝑚=1
+the first loop, with the distinction that this time, we explore L different
+𝛽 values while keeping 𝛾 constant at 1. Consequently, this algorithm
+produces M trained models, each accompanied by its corresponding
+mean confidence score. These models and scores are saved (line 29 of              0.1 and 1 (line 2 of Algorithm 2) to determine the weights in our
+Algorithm 1) for the subsequent label prediction stage.                           weighting strategy. Using these weights, we compute the weighted
+                                                                                  average of the softmax outputs of the models associated with these
+2.3. Stage 2: Label prediction stage                                              weights to obtain the final prediction for the target data (line 3 of
+                                                                                  Algorithm 2).
+    In this stage, the saved models along with their corresponding
+mean confidence scores obtained from the previous stage are utilized.             3. Study area and data preprocessing
+To predict the target dataset labels, the model that resulted in the
+maximum mean confidence score could be used. However, this could                  3.1. U.S. datasets
+lead to performance degradation as sometimes the model can generate
+wrong predictions with high confidence. Thus relying solely on the                   To conduct crop mapping experiments, we selected three sites situ-
+model that generated the maximum mean confidence score could be                   ated in IOWA (IA), Missouri (MO), and Mississippi (MS) states, referred
+suboptimal. To mitigate this issue, we proposed a weighting strategy              to as Site IA, Site MO, and Site MS, respectively (Fig. 2). Each site
+that leverages all mean confidence scores generated by different models           covers 45 km × 45 km (1500 pixels × 1500 pixels), i.e. 202,500 ha.
+trained with different 𝛾 and 𝛽 pairs. Algorithm 2 shows the steps of this         We chose study areas from both Dfa Cold and Cfa Temperate climatic
+stage. We linearly map the mean confidence scores to values between               zones (Beck et al., 2018) to map crops from different climatic zones
+
+                                                                              4
+S. Mohammadi et al.                                                                                                                   Remote Sensing of Environment 314 (2024) 114385
+
+
+
+
+Fig. 2. The selected four study areas in the U.S. Their climatic zones (Beck et al., 2018) are also depicted in this map. These study areas are situated in six different states, namely
+Iowa (IA), Missouri (MO), Mississippi (MS), Minnesota (MN), South Dakota (SD), and Nebraska (NE).
+
+
+Algorithm 2 SFUDA for crop mapping — Stage 2: Label prediction                                      target classes. The proportions of the target classes, calculated based on
+stage, 𝑁𝑡 denotes the total number of the unlabeled target samples, 𝑀                               Cropland Data Layer (CDL), are given in Table 1.
+denotes the number of the saved models and mean confidence scores                                        CDL (publicly available on CropScape website portal) was used as
+resulting from Algorithm 1                                                                          the labels in our experiments, which is generated by the US Department
+Require: Saved models ({𝐹𝑚 }𝑀      and {𝐺𝑚 }𝑀    ) and their corresponding mean                     of Agriculture (USDA) annually. CDL provides high mapping accuracy
+                              𝑚=1            𝑚=1
+   confidence scores ({𝑃̄𝑚 }𝑀
+                            𝑚=1
+                                ) resulting from Algorithm 1, unlabeled target                      for corn and soybean classes (Xu et al., 2020; Cai et al., 2018; Wang
+   samples (𝑋𝑡 = {𝑥𝑡𝑖 }𝑖=1𝑡 )
+                                𝑁                                                                   et al., 2020; Xu et al., 2021). We provided the producer’s and user’s
+1: 𝑤min = 0.1, 𝑤max = 1 (                                                                           accuracy of CDL for these two classes in different sites and years in
+                                         )
+               {                     𝑀
+                      𝑃̄𝑚 −min {𝑃̄𝑖 }𝑖=1        (           )       }𝑀                              the Supplementary material. Based on the high accuracies of CDL for
+2: {𝑤𝑚 }𝑀   =       (         )      (       ) × 𝑤
+                                                  max − 𝑤min + 𝑤min      ⊳ Linearly
+        𝑚=1             ̄  𝑀
+                                         ̄
+                 max {𝑃𝑖 }𝑖=1 −min {𝑃𝑖 }𝑖=1
+                                           𝑀
+                                                                     𝑚=1                            corn and soybean, many previous studies that aimed to map corn,
+    mapping the mean confidence scores to values between 0.1 and 1                                  soybean, and other classes used all the samples in CDL for testing the
+    to obtain the weights for our weighting strategy                                                performance of the developed crop mapping methods (Xu et al., 2020;
+                  { ∑𝑀                            }𝑁𝑡
+        𝑁                  (𝑤𝑚 ×𝐺𝑚 (𝐹𝑚 (𝑥𝑡𝑖 )))                                                     Cai et al., 2018; Wang et al., 2020; Xu et al., 2021; Zhong et al.,
+3: {𝑦𝑡𝑖 }𝑖=1𝑡 =      𝑚=1
+                             ∑𝑀                          ⊳ Generating the predictions by cal-
+                               𝑚=1 𝑤𝑚              𝑖=1
+    culating the weighted average of the softmax outputs of the models                              2014; Konduri et al., 2020). In line with them, we applied the same
+    using the weights obtained in the previous step                                                 procedure. However, to further assess the effectiveness of our method,
+4: return {𝑎𝑟𝑔𝑚𝑎𝑥(𝑦𝑡𝑖 )}𝑖=1𝑡
+                                    𝑁                                                               we conducted additional experiments using the samples selected based
+                                                                                                    on the confidence layer associated with the CDL. This layer represents
+                                                                                                    the predicted confidence of each pixel based on the ruleset used for
+                                                                                                    classification. The additional experiments using these selected samples
+with the domain shift problem. We carried out the main analysis                                     are provided in the Supplementary material.
+of our method using these three sites. Moreover, to demonstrate the                                      Fig. 3 depicts the crop calendar of the selected study areas based on
+effectiveness of our method on a larger spatial extent, we chose a site                             the state-level corn and soybean progress reports (Nass et al., 2010).
+in the U.S., namely Site L (Fig. 2), which covers 450 km × 300 km                                   Following Xu et al. (2020) and Xu et al. (2021), we defined the start of
+(15000 pixels × 10000 pixels), i.e. 13,500,000 ha.                                                  the overall growing season as the earliest date when planting of corn
+    In the Analysis Ready Data (ARD) grid system, Site IA, Site MO, and                             and soybean initiates across different states, and we defined the end of
+Site MS are located in the center of the tile h18v07, the lower-right cor-                          the overall growing season as the latest date when harvesting of these
+ner of the tile h20v11, and the center of the tile h20v14, respectively.                            crops starts across different states. Accordingly, the overall growing
+Site L encompasses the entire six tiles of h16v06, h16v07, h16v08,                                  season spans from March 17 to September 27. As the preprocessing
+h17v06, h17v07, and h17v08. More information about Landsat ARD                                      method used in this study generates time series data with intervals
+tile grid system can be found at https://www.usgs.gov/media/images/                                 of seven days, we used Landsat image time series from March 20 to
+conterminous-us-landsat-analysis-ready-data-ard-tiles.                                              September 25, covering a duration of 28 weeks. To preprocess the data,
+    To obtain the data for our experiments, we used Landsat C2 ARD                                  we followed the procedure proposed by Xu et al. (2020). Accordingly, a
+surface reflectance composites (ARD, USGS, 2018) (publicly available                                valid observation is defined as a pixel observation that is not labeled as
+on USGS’s EarthExplorer web portal). We employed Landsat 8 Opera-                                   filled, shadow, cloudy, dilated cloud, or unclear. Then, we selected the
+tional Land Imager (OLI) products and Landsat 7 Enhanced Thematic                                   pixels that contain at least two valid observations in every third of the
+Mapper Plus (ETM+), containing non-spatially overlapping images at                                  growing season as the valid pixels and filtered out the remaining pixels
+a spatial resolution of 30 m. Six optical bands, namely blue, green,                                (invalid pixels) as they lack sufficient multi-temporal information. The
+red, near-infrared, shortwave infrared 1, and shortwave infrared 2 at                               statistics of valid pixels are shown in Table 1. Finally, we used linear
+each observation date were employed as the input of the crop mapping                                interpolation to fill in the gaps caused by missing acquisitions and
+models.                                                                                             invalid observations, whose effectiveness was demonstrated in Xu et al.
+    In the selected study areas, corn and soybean are among the most                                (2020) and Inglada et al. (2015). Therefore, our final preprocessed data
+frequent crop types. In our study, we defined corn, soybean, and the                                contain pixels with 28 time steps at seven-day intervals from March 20
+class Other (i.e., merged class of other land cover/land use types) as the                          to September 25 and six bands.
+
+                                                                                                5
+S. Mohammadi et al.                                                                                                              Remote Sensing of Environment 314 (2024) 114385
+
+                          Table 1
+                          Statistics of valid pixels and different crop types in different sites and different years. IA, MO, MS, and L represent Iowa,
+                          Missouri, Mississippi, and the selected large study area, respectively. Site FR refers to a subset of samples in the PASTIS
+                          dataset (Garnot and Landrieu, 2021), collected from France. Since the dataset was already prepossessed by the authors, we
+                          did not apply further preprocessing, making the validity percentage 100%.
+                                                     Number of           Validity             Proportion        Proportion          Proportion
+                                                    valid pixels        percentage           of Corn           of Soybean          of Other
+                                      2019          2,235,904           99.37%               54.50%            28.00%              17.50%
+                           Site IA    2020          2,249,845           99.99%               55.73%            27.91%              16.36%
+                                      2021          2,180,602           96.92%               50.60%            32.23%              17.17%
+                                      2019          2,069,809           91.99%               13.65%            33.42%              52.93%
+                           Site MO    2020          1,943,716           86.39%               13.42%            41.77%              44.81%
+                                      2021          2,241,038           99.60%               16.50%            39.73%              43.77%
+                                      2019          2,222,642           98.78%               12.68%            25.98%              61.34%
+                           Site MS    2020          2,195,695           97.59%               10.35%            37.30%              52.35%
+                                      2021          2,242,176           99.65%               13.35%            46.66%              39.99%
+                           Site L     2021          145,729,426         97.15%               38.85%            32.55%              28.60%
+                           Site FR    2018/2019     1,331,741           100%                 54.96%            7.50%               37.54%
+
+
+
+                                                                                             mean NDVI temporal profiles are shown in the lower section of Fig. 4.
+                                                                                             For example, if the model is trained on Site IA19, it has learned to focus
+                                                                                             around week 16 for differentiating corn and soybean as this period
+                                                                                             contains a large difference between mean NDVI temporal profiles of
+                                                                                             corn and soybean. However, when this trained model is used to classify
+                                                                                             the crops in Site MS21, in the vicinity of week 16, corn and soybean do
+                                                                                             not have a large difference in terms of mean NDVI values. These crop
+                                                                                             types are more distinguishable in different periods (around week 11
+                                                                                             and around week 24). These variations in temporal discriminativeness
+                                                                                             patterns and key phenological periods across different regions and years
+                                                                                             challenge transferring knowledge from the source domain dataset to the
+                                                                                             target domain dataset.
+                                                                                                 Another challenge associated with domain shift is the challenge of
+                                                                                             label shift, which occurs when the distribution of crop types in the
+                                                                                             target domain dataset differs from that of the source domain dataset.
+Fig. 3. Corn and soybean crop calendar in the selected study areas based on the state-       This has been observed to lower classification accuracy (Waldner et al.,
+level corn and soybean progress reports (Nass et al., 2010). These study areas are           2017). Table 1 shows that the proportions of the classes vary between
+situated in six different states, namely Iowa (IA), Missouri (MO), Mississippi (MS),         different sites. For example, in site IA, Corn is the dominant class,
+Minnesota (MN), South Dakota (SD), and Nebraska (NE).
+                                                                                             while in site MO, the class Other is the dominant class. Therefore,
+                                                                                             our crop mapping experiments also entail the label shift challenge.
+                                                                                             Note that most of the sites contain over 96% valid pixels, as shown in
+    In our cross-regional and cross-time tests using the U.S. datasets,                      Table 1. This indicates that the majority of pixels from these regions
+the data collected in 2019 from different sites are the source domain                        were included for training and accuracy assessment. Therefore, the
+datasets, and the data collected in 2020 and 2021 from different sites                       imbalanced class distributions in our datasets largely reflect the real
+are the target domain datasets used to evaluate the crop mapping                             crop proportions in these areas.
+models. After the model was trained using the data of a site in 2019,
+it was tested on the same site in 2020 and 2021 in cross-time tests and                      3.2. France dataset
+tested on the other sites in 2020 and 2021 in cross-regional tests. The
+reason we used the data from two years as the target datasets is to                              To demonstrate the effectiveness of our method across different
+demonstrate the consistency of the performance of our method in our                          countries and sensors, we used an additional study area for our ex-
+experiments.                                                                                 periments (see Fig. 5). We employed the PASTIS dataset (Garnot and
+    To illustrate the domain shift present in our data, we viewed the                        Landrieu, 2021), which was collected using the Sentinel-2 satellite.
+challenges faced in cross-regional and cross-time crop mapping from                          Covering more than 4000 square kilometers, the PASTIS dataset was
+two perspectives (Wang et al., 2022). First, the phenology of the same                       collected from four distinct regions in France, each characterized by
+crop can differ significantly across different regions and years due to                      diverse climates and crop distributions. It comprises 2,433 patches with
+variations in climatic conditions. We compared the temporal profiles                         a spatial size of 128 pixels by 128 pixels, being organized into five
+of the classes in our datasets by investigating the mean NDVI temporal                       folds. The data was acquired between September 2018 and November
+profiles in the upper section of Fig. 4. As an example, assuming that                        2019, with each patch encompassing 38 to 61 time steps. In total,
+the model is trained on IA19 (Iowa 2019 data) and tested on IA21,                            there are 124,422 parcels, containing 18 different crop types and a
+MO21, or MS21, the temporal profiles of the same class (see Fig. 4)                          background class representing non-agricultural land uses. We used corn
+show the intra-class heterogeneity, hampering knowledge transfer from                        and soybean samples from the first fold of the PASTIS dataset and
+the source domain dataset to the target domain dataset.                                      randomly selected 500K samples from the remaining classes of the
+    Second, the temporal windows with large differences between the                          dataset. These randomly selected samples were then merged to form the
+spectral values of different crop types play a significant role in crop                      class Other. The class distribution of this newly formed dataset, derived
+mapping since they represent intervals when the classes are more                             from the original PASTIS dataset, is presented in Table 1. To conduct
+distinguishable (Huete et al., 2002). However, the temporal discrimi-                        the experiments using this dataset, we employed the same six optical
+nativeness patterns of the crop types vary across different regions and                      bands used for the U.S. datasets, namely blue, green, red, near-infrared,
+years (Zhao et al., 2020). The differences between the different pairs of                    shortwave infrared 1, and shortwave infrared 2.
+
+                                                                                         6
+S. Mohammadi et al.                                                                                                              Remote Sensing of Environment 314 (2024) 114385
+
+
+
+
+Fig. 4. Illustration of the domain shift problem in our study areas in the U.S. by using mean NDVI temporal profiles. The upper section shows the challenge of high dissimilarity
+between the temporal profiles of the same crop type grown in different years/regions. The lower section shows the challenge of high variance in the temporal discriminativeness
+patterns in different years/regions. Both challenges limit transferring knowledge from the source domain to the target domain.
+
+
+                                                                                            were used. We selected five major crop types in these study areas,
+                                                                                            namely corn, meadow, winter barley, winter rapeseed, and winter
+                                                                                            wheat. Additionally, we randomly selected 100K samples from the
+                                                                                            remaining classes of the dataset and merged them to form the class
+                                                                                            Other. The class distributions of the dataset are shown in Fig. 6. All
+                                                                                            bands except the atmospheric bands B01, B09, and B10 were used in
+                                                                                            the dataset. The readers are referred to Nyborg et al. (2022) for more
+                                                                                            details about this dataset.
+
+                                                                                            4. Experiments
+
+                                                                                            4.1. UDA methods used for comparison to assess the efficiency of the
+                                                                                            proposed method
+
+                                                                                               In end-of-season experiments, we compared our method with five
+                                                                                            conventional UDA methods and two SFUDA methods. These methods
+                                                                                            are listed below:
+
+Fig. 5. Location of the study areas in the PASTIS dataset (Garnot and Landrieu, 2021)           • MMD (Tzeng et al., 2014) minimizes the maximum mean dis-
+collected from France.                                                                            crepancy metric to learn domain-invariant feature embeddings.
+                                                                                                  This method was adopted by Wang et al. (2022, 2023) for crop
+                                                                                                  mapping from satellite image time series.
+3.3. The TimeMatch dataset                                                                      • DAAN (Ganin and Lempitsky, 2015) leverages a domain classifier
+                                                                                                  and adversarial training with the aim of extracting domain invari-
+    To test our method on a more diverse agricultural dataset, we                                 ant feature embeddings. This method was employed by Wilson
+employed the TimeMatch dataset (Nyborg et al., 2022), designed specif-                            et al. (2020) and Purushotham et al. (2016) to align the features
+ically for domain adaption from satellite image time series. We used                              extracted by temporal network architectures.
+Sentinel-2 images available in the study areas from Denmark and                                 • SpADANN (Capliez et al., 2023) combines DANN and pseudo-
+France. Fig. 6 shows a map of the tiles 32VNH (Denmark) and 31TCJ                                 labeling for land cover mapping from image time series.
+(France), referred to as Site DK_TM and Site FR_TM, respectively. In                            • CDAN+E (Long et al., 2018) enhances DANN by conditioning the
+the TimeMatch dataset, all available observations with cloud coverage                             domain discriminator on classifier predictions and minimizing an
+≤ 80% and coverage ≥ 50% between January 2017 and December 2017                                   entropy loss on target data.
+
+                                                                                        7
+S. Mohammadi et al.                                                                                                          Remote Sensing of Environment 314 (2024) 114385
+
+
+
+
+         Fig. 6. The study areas and class distributions in France (Site FR_TM) and Denmark (Site DK_TM) derived from the TimeMatch dataset (Nyborg et al., 2022).
+
+
+    • JUMBOT (Fatras et al., 2021) minimizes the domain discrepancy                      5, and 64, respectively. In the LSTM network, which is an attention-
+      of joint deep feature and label distributions by using mini-batch                  based bidirectional LSTM proposed by Xu et al. (2020), the number
+      unbalanced optimal transport.                                                      of hidden features and the number of layers were set to 256 and 2,
+    • SHOT (Liang et al., 2020), as an SFUDA method, first uses a mu-                    respectively. Moreover, to implement RF and MLP, we also used the
+      tual information loss to achieve domain alignment. Subsequently,                   settings suggested by Xu et al. (2020). In RF, the number of trees and
+      it uses a pseudo-labeling strategy based on class centroids to                     the number of features were set to 200 and 4, respectively. In the MLP
+      augment the target representation learning and further improve                     network, four hidden layers were used with 256, 512, 512, and 256
+      the performance. It should be noted that our mutual information                    neurons.
+      loss function is different from SHOT as we focus on balancing                          We performed Stage 0 in our study to obtain the source-pretrained
+      the discriminability and diversity terms using a novel weighting                   model and mimic a source-free domain adaptation scenario using
+      strategy, while SHOT uses a simple addition of these two terms.                    this off-the-shelf source-pretrained model. Typically, early-stopping
+    • AaD (Yang et al., 2022) is an SFUDA method that encourages                         using the validation data is a common approach to obtain the source-
+      local neighborhood features in feature space to have similar                       pretrained model (Caruana et al., 2000; Turkoglu et al., 2021; M
+      predictions while features farther away in feature space have                      Rustowicz et al., 2019; Mohammadi et al., 2021; Gadiraju and Vat-
+      dissimilar predictions.                                                            savai, 2023). To do so, we randomly selected 20% of samples of
+                                                                                         the source dataset for validation to perform early stopping and used
+    In within-season experiments, we compared our method to all the
+                                                                                         the rest for training the models. In the pretraining stage, we used
+methods included in the end-of-season performance comparison. Fur-
+                                                                                         the Adam optimizer (Kingma and Ba, 2014) with a learning rate of
+thermore, we incorporated an additional method, ELECTS (Rußwurm
+                                                                                         0.0001. In the source-free adaptation stage, we followed the training
+et al., 2023), which was specifically designed for within-season crop
+                                                                                         procedure used in Yang et al. (2022), setting the learning rate of
+mapping. While ELECTS did not focus on within-season crop mapping
+                                                                                         the backbone network ten times smaller than the fully connected
+in the presence of domain shift, our study investigated its performance
+                                                                                         network, i.e., 0.0001 for the backbone network and 0.001 for the fully
+in transfer experiments with the domain shift problem.
+                                                                                         connected network. We set 𝛾 = {0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1}
+                                                                                         and 𝛽 = {0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9} as the discriminabil-
+4.2. Implementation details
+                                                                                         ity tuner and the diversity tuner, respectively. 𝛼 was set to 5. The
+                                                                                         code and data are available at https://github.com/ Sina-Mohammadi/
+    We implemented our framework with CNN, Transformer, and LSTM
+                                                                                         SFUDA-CropMapping.
+backbone       networks      in     the   PyTorch      library      using
+                                                                                             For the methods included in the comparison experiments, we en-
+ITC Geospatial Computing Platform, equipped with an NVIDIA RTX
+                                                                                         abled fair comparison by replacing their original feature extractor
+A4000 GPU. In addition to the deep learning-based methods, we
+                                                                                         and classifier with our CNN backbone network and fully connected
+also included two conventional classification models in our compar-
+                                                                                         network. We initialized these networks using the source-pretrained
+ison, namely Random Forest (RF) and Multilayer Perceptron (MLP),
+                                                                                         model weights. The randomly selected 20% of samples of the source
+which were implemented using Scikit-learn and PyTorch libraries,
+                                                                                         datasets were used for early stopping and hyperparameter tuning.
+respectively.
+                                                                                             To evaluate the performance of the crop mapping methods in this
+    The CNN backbone in our framework consists of five 1D con-
+                                                                                         study, we used macro 𝐹 1 score formulated as:
+volutional layers with 64,128, 256, 512, and 1024 filters with the
+                                                                                                              1 ∑
+                                                                                                                  𝐶
+filter size of 5, each followed by a Batch Normalization layer and a
+Relu activation. Then a Global Average Pooling layer was used as the                     macro 𝐹 1 score =          𝐹 1𝑖                                                (7)
+                                                                                                              𝐶 𝑖=1
+output layer of this backbone network. The Transformer and LSTM
+                                                                                                     𝑃𝑖 .𝑅𝑖
+networks in our framework were implemented based on Rußwurm                              𝐹 1𝑖 = 2                                                                       (8)
+                                                                                                    𝑃𝑖 + 𝑅𝑖
+et al. (2020) and Xu et al. (2020), respectively. More specifically, in
+the Transformer network, the dimension of the self-attention hidden                      where 𝑃𝑖 and 𝑅𝑖 are computed as:
+feature, the number of self-attention heads, the number of self-attention                          𝑇 𝑃𝑖
+layers, and the dimension of fully connected layer were set to 128, 2,                   𝑃𝑖 =                                                                           (9)
+                                                                                                𝑇 𝑃𝑖 + 𝐹 𝑃𝑖
+
+                                                                                     8
+S. Mohammadi et al.                                                                                                        Remote Sensing of Environment 314 (2024) 114385
+
+
+                                                                                         backbone network using the data collected from the large study area.
+           𝑇 𝑃𝑖
+𝑅𝑖 =                                                                         (10)        For this experiment, we chose the data collected from Site IA19 as
+       𝑇 𝑃𝑖 + 𝐹 𝑁𝑖
+                                                                                         the source data and tested the models on the data collected from Site
+    In these formulas, 𝐹 1𝑖 , 𝐶, 𝑖, 𝑃𝑖 , 𝑅𝑖 , 𝑇 𝑃𝑖 , 𝐹 𝑃𝑖 , and 𝐹 𝑁𝑖 denote the F1       L21 as the target data. The results demonstrate the effectiveness of our
+score of the 𝑖th class, the number of classes, the index of the class, the               adaptation method, achieving a macro F1 score of 92.6%, which is
+precision of the 𝑖th class, the recall of the 𝑖th class, the true positives of
+                                                                                         superior to the non-adapted model results (89.2%). Considering each
+the 𝑖th class, the false positives of the 𝑖th class, and the false negatives
+                                                                                         class, our adaptation method also showed superior performance with
+of the 𝑖th class, respectively.
+                                                                                         F1 scores of 93.6%, 93.6%, and 90.7% for corn, soybean, and the class
+4.3. End-of-season crop mapping results                                                  Other. This improved performance is also reflected in the error maps,
+                                                                                         showing fewer misclassified pixels obtained by the adapted model.
+4.3.1. Classification results in the U.S.                                                   Finally, the confusion matrices of the adapted and non-adapted
+    In this section, we compare the end-of-season results of the adapted                 models using the CNN backbone network along with the precision,
+models using CNN, Transformer, and LSTM backbone networks with                           recall, and F1 scores of individual classes for three transfer experiments
+those of the non-adapted models. The non-adapted models were trained                     are shown in Fig. 9. The confusion matrices of the adapted models show
+on the source domain data and directly applied to the target domain                      improved classification performance, obtaining higher scores in most
+data. Moreover, we compared these results with the results of RF and                     cases.
+MLP.
+    The macro F1 scores in Table 2 show that the adapted models
+always outperformed the non-adapted models when using CNN as the                         4.3.2. Classification results across different countries and sensors
+backbone network. In the case of using the Transformer or LSTM as the
+                                                                                             We conducted transfer experiments from the selected sites in the
+backbone network, in most cases, our adaptation method improved the
+                                                                                         U.S. to the site in France (referred to as Site FR), and vice versa. The
+performance. In a few cases, however, the adaptation method achieved
+                                                                                         results reported in Table 3 show that our adaptation method improved
+less accurate results. Nevertheless, the average performances in Table 2
+show that the adapted models achieved better overall performance                         the results of the non-adapted models in eight out of nine transfer
+compared to the non-adapted models in both cross-regional and cross-                     experiments, demonstrating the effectiveness of our method across
+time tests using the three backbones. Specifically, in cross-time tests,                 different countries and sensors.
+our adaptation method improved the performance by 12.9% (85.3%
+vs. 72.4%), 7.1% (80.0% vs. 72.9%), and 5.8% (88.3% vs. 82.5%)
+on average when using CNN, Transformer, and LSTM, respectively. In                       4.3.3. Classification results in more diverse agricultural areas
+cross-regional tests, these improvements are 20.1% (66.2% vs. 46.1%),                       We used the data from Denmark and France to perform transfer
+12.5% (64.4% vs. 51.9%), and 8.8% (60.7% vs. 51.9%) for CNN, Trans-                      experiments in both directions: Denmark to France and France to
+former, and LSTM, respectively. To assess whether these improvements                     Denmark. The results are presented in Table 4. When the Denmark
+are statistically significant, we conducted two-sample t-tests comparing                 data is the source dataset and the France data is the target dataset
+the macro F1 scores of the adapted models with those of the non-                         (DK_TM→FR_TM), our adaptation method improves the macro F1 score
+adapted models. The corresponding p-values are presented in Table 2.                     by 4.7% (39.5% vs. 34.8%). In the FR_TM→DK_TM transfer experiment,
+The table shows that in the cross-regional experiments, the performance                  the macro F1 score increases from 25.5% to 33.9% using our adaptation
+improvements achieved by our adaptation method are statistically
+                                                                                         method.
+significant, with p-values below 0.05. In cross-time experiments, our
+adaptation method demonstrated a significant improvement in the
+results when utilizing the CNN backbone network. When employing the                      4.3.4. Comparison of the proposed SFUDA method with other adaptation
+Transformer and LSTM backbone networks in cross-time experiments,                        methods for end-of-season crop mapping
+although our adaptation method led to an increase in average macro F1
+                                                                                             We compared our method to five conventional and two source-
+scores from 72.9% to 80% and from 82.5% to 88.3%, the associated p-
+values of 0.08 and 0.06 indicate that these improvements lack statistical                free UDA methods in ten transfer experiments in Table 5, including
+significance. Furthermore, all adapted models outperformed RF and                        FR→MO20, where our adaptation method was not able to improve the
+MLP in the vast majority of cases.                                                       results of the non-adapted model. The table shows that our method
+    Additionally, the comparison between our adaptation method with                      outperformed the other methods in seven out of ten transfer exper-
+a frozen and unfrozen CNN backbone network is presented in the                           iments. It obtained an average macro F1 score of 65.9%, surpassing
+Supplementary material. Results of adding vegetation indices to the                      the second-best method, AaD, which obtained an average macro F1
+Landsat bands in the cases where our adaptation method did not im-                       score of 55.2%. The p-values from the two-sample t-test, as reported
+prove the performance are also reported in the Supplementary material.                   in the table, indicate that the performance difference between our
+These vegetation indices include the Normalized Difference Vegetation                    method and the other methods is statistically significant. These im-
+Index (NDVI), Green Chlorophyll Vegetation Index (GCVI), and En-                         proved results demonstrate the capability of our method to adapt to
+hanced Vegetation Index (EVI), which were also employed in a prior                       the target dataset using our novel adaptation method based on mutual
+study (Wang et al., 2019).
+                                                                                         information loss, in which diversity and discriminability terms are
+    To compare the classification maps generated by the non-adapted
+                                                                                         balanced using a novel weighting strategy. In two out of the three cross-
+and the adapted models, we chose the results of the models with the
+                                                                                         sensor and cross-country transfer experiments, namely MS19→FR and
+CNN backbone network using the data collected in 2021. We show
+                                                                                         FR→MS21, our adaptation method outperformed the other methods. In
+the classification maps and their comparison to the ground truth maps
+(error maps) using different possible pairs of source and target datasets                FR→MO20, all adaptation methods, including ours, could not improve
+in Fig. 7. Comparing the error maps of the adapted models with those                     the performance of the non-adapted models. However, our method still
+of the non-adapted models shows the effectiveness of our adaptation                      obtained more accurate results than the conventional UDA methods in
+method. This is consistent with the obtained scores in Table 2. More-                    this transfer experiment. These results highlight the advantage of our
+over, in Fig. 8, we show the classification maps, error maps, and F1                     method over conventional UDA methods in a variety of domain shift
+scores generated by the adapted and non-adapted models with the CNN                      settings, namely a different year, region, and sensor.
+
+                                                                                     9
+S. Mohammadi et al.                                                                                                                            Remote Sensing of Environment 314 (2024) 114385
+
+   Table 2
+   Comparison of the end-of-season results of the adapted models with those of the non-adapted models as well as RF and MLP using the U.S. datasets in terms of macro F1
+   score. The numbers in red in each backbone category display the better results obtained by either the non-adapted model or the adapted model. The site and the year on
+   the left side of the arrow (→) denote the source dataset, while those on the right side denote the target dataset. All values are reported in percentage. The p-values of
+   two-sample t-test are reported to compare the macro F1 scores of the adopted models with those of the non-adapted models.
+                                                            CNN                                      Transformer                               LSTM                     RF           MLP
+                                              Non-adapted             Adapted          Non-adapted                 Adapted       Non-adapted            Adapted
+                       IA19→IA20              89.7                    91.4             84.7                        87.4          90.6                   92.0            85.1         83.6
+                       IA19→IA21              90.2                    94.1             91.3                        92.6          92.9                   94.3            83.9         86.4
+                       MO19→MO20              79.9                    85.9             84.2                        85.3          84.4                   86.8            80.6         80.8
+    Cross-time
+
+
+
+
+                       MO19→MO21              59.2                    81.8             57.3                        77.3          68.3                   87.0            65.8         63.5
+                       MS19→MS20              62.5                    80.6             66.6                        76.4          82.4                   87.3            70.1         64.6
+                       MS19→MS21              52.8                    77.8             53.3                        60.7          76.5                   82.6            60.1         60.5
+                       Avg.                   72.4                    85.3             72.9                        80.0          82.5                   88.3            74.3         73.2
+                       𝑃 -value                           <0.05                                            0.08                                0.06
+                       MO19→IA20              30.8                    60.3             31.3                        61.5          39.0                   52.2            36.7         34.8
+                       MO19→IA21              42.2                    67.5             54.1                        73.9          59.6                   77.5            48.1         34.1
+                       MS19→IA20              29.4                    48.6             21.6                        42.9          19.8                   19.8            34.7         26.6
+                       MS19→IA21              39.5                    54.8             31.0                        57.1          20.2                   20.2            39.9         50.7
+                       IA19→MO20              58.0                    63.4             52.9                        50.9          61.4                   62.7            48.7         51.5
+                       IA19→MO21              55.3                    63.7             57.3                        59.4          60.5                   65.3            44.2         49.9
+    Cross-regional
+
+
+
+
+                       MS19→MO20              63.5                    80.9             71.4                        75.7          67.3                   73.4            57.3         65.4
+                       MS19→MO21              47.9                    83.2             59.9                        75.3          53.7                   74.0            59.8         64.6
+                       IA19→MS20              50.9                    76.3             65.6                        66.5          57.6                   69.5            42.0         44.1
+                       IA19→MS21              45.7                    66.6             59.3                        62.1          49.5                   62.0            27.7         35.1
+                       MO19→MS20              44.7                    55.2             62.1                        74.3          69.4                   79.4            55.9         54.5
+                       MO19→MS21              45.5                    73.4             55.9                        72.9          64.7                   72.8            48.2         51.8
+                       Avg.                   46.1                    66.2             51.9                        64.4          51.9                   60.7            45.3         46.9
+                       𝑃 -value                           <0.05                                        <0.05                                <0.05
+
+
+                     Table 3
+                     Comparison of the cross-country and cross-sensor end-of-season results of the adapted models with those of the non-adapted models using the CNN backbone
+                     network in terms of macro F1 score. The numbers in red display the better results obtained by either the non-adapted model or the adapted model. All
+                     values are reported in percentage.
+                                     Non-adapted            Adapted                           Non-adapted             Adapted                    Non-adapted           Adapted
+                     IA19→FR         40.6                   47.0             FR→IA20          64.8                    81.1       FR→IA21         54.4                  80.9
+                     MO19→FR         20.0                   44.2             FR→MO20          56.2                    54.5       FR→MO21         56.6                  66.1
+                     MS19→FR         21.2                   39.6             FR→MS20          53.6                    63.8       FR→MS21         41.7                  61.9
+
+
+Table 4                                                                                                     the MO19→IA21 experiment. Although in this experiment, both the
+Comparison of the end-of-season results of the adapted models with those of the non-
+                                                                                                            adapted and non-adapted models reached sufficient within-season per-
+adapted models using the CNN backbone network and the TimeMatch dataset in terms
+of macro F1 score. The numbers in red display the better results obtained by either                         formance in the same week, the performance of the adapted model
+the non-adapted model or the adapted model. All values are reported in percentage.                          was higher in this week. In the other five transfer experiments, if
+DK_TM and FR_TM refer to the subset of samples from the TimeMatch dataset that are                          our adaptation method is applied to the source-pretrained model, the
+collected from Denmark and France, respectively.                                                            earliest classification date reduces from 24 to 22, 23 to 20, 26 to 11,
+                                                Non-adapted                            Adapted              27 to 10, and 26 to 10.
+ DK_TM→FR_TM                                    34.8                                   39.5                     To visually inspect the changes over time in the classification maps
+ FR_TM→DK_TM                                    25.5                                   33.9
+                                                                                                            generated by the non-adapted and adapted models within the growing
+                                                                                                            season, we chose the transfer experiment IA19→IA21 with the CNN
+                                                                                                            backbone network as an example and displayed the maps in Fig. 11.
+4.4. Within-season crop mapping results                                                                     Comparing the error maps of the adapted models to those of the non-
+                                                                                                            adapted models demonstrates the superiority of the adapted models,
+4.4.1. Within-season performances of the adapted and non-adapted models                                     yielding fewer misclassified pixels.
+    In this section, we further demonstrate the advantages of our
+method by conducting within-season crop mapping experiments. We                                             4.4.2. Comparison of the proposed SFUDA method with other methods for
+chose six U.S. transfer experiments and CNN as the backbone network                                         within-season crop mapping
+and used the target datasets collected in 2021. The performance of                                             In this section, we compared our method to eight methods in within-
+the adapted models and the non-adapted models over time within                                              season experiments. We trained the conventional UDA methods using
+the growing season starting from week 10 are shown in Fig. 10. As                                           two procedures. As these methods have access to the source datasets,
+illustrated, the adapted models outperformed the non-adapted models                                         they can be trained using either the full time series or the trimmed
+in the vast majority of weeks, suggesting the benefit of our adaptation                                     time series of the source datasets. In the latter approach, the time series
+method for within-season crop mapping.                                                                      were trimmed to match the number of available time steps in the target
+    To determine the earliest classification date, we checked at which                                      dataset time series.
+week the classification performance reaches 90% of end-of-season                                               Fig. 12 shows the comparison results over time within the grow-
+(week 28) performance, following the criteria for sufficient within-                                        ing season starting from week 10 in two transfer experiments. In
+season performance suggested by Konduri et al. (2020). Fig. 10 demon-                                       MO19→IA21 experiment, our adaptation method and SHOT achieved
+strates that the adapted models always reached sufficient within-                                           comparable results from week 10 to 14, performing better than the
+season performance earlier than the non-adapted models, except for                                          competing methods, except for AaD performing slightly better in week
+
+                                                                                                      10
+S. Mohammadi et al.                                                                                                           Remote Sensing of Environment 314 (2024) 114385
+
+
+
+
+Fig. 7. The predicted maps and the error maps of the adapted and the non-adapted models using the CNN backbone network. The pixels that are in white are excluded from the
+dataset since they lack sufficient multi-temporal information. Note that each map covers 45 km × 45 km (1500 px × 1500 px) area.
+
+
+           Table 5
+           Comparison of our method to five conventional UDA and two source-free UDA methods using the CNN backbone network in terms of macro F1 score.
+           The numbers in red display the best results. All values are reported in percentage. The p-values of two-sample t-test are reported to compare the macro
+           F1 scores of our method with those of the other methods.
+                                                                            Conventional UDA                                           Source-free UDA
+                                Non-adapted        MMD          DANN         CDAN+E          JUMBOT          SpADANN          SHOT         AaD           Ours
+            IA19→IA21           90.2               93.1         92.4         93.8            89.1            91.5             93.8         88.3          94.1
+            IA19→MO21           55.3               48.3         53.0         58.3            55.5            56.1             63.0         56.4          63.7
+            IA19→MS21           45.7               46.2         46.5         61.9            49.4            26.3             59.1         57.4          66.6
+            MO19→MS21           45.5               75.8         58.5         62.4            73.2            32.8             68.1         48.3          73.4
+            MS19→IA21           39.5               46.3         39.6         40.0            37.0            32.9             38.3         61.1          54.8
+            MO19→IA21           42.2               53.8         50.9         61.0            58.5            59.9             50.3         53.8          67.5
+            MS19→MO21           47.9               75.6         78.4         71.2            77.0            42.7             62.5         61.4          83.2
+            MS19→FR             21.2               21.0         24.6         26.0            23.2            25.6             33.9         22.3          39.6
+            FR→MS21             41.7               29.6         27.8         22.4            43.0            31.7             11.1         47.7          61.9
+            FR→MO20             56.2               44.2         36.8         34.6            39.9            47.7             23.2         55.3          54.5
+            Avg.                48.5               53.4         50.9         53.2            54.6            44.7             50.3         55.2          65.9
+            P-value             <0.05              <0.05        <0.05        <0.05           <0.05           <0.05            <0.05        <0.05
+
+
+
+
+                                                                                     11
+S. Mohammadi et al.                                                                                                                 Remote Sensing of Environment 314 (2024) 114385
+
+
+
+
+Fig. 8. The predicted maps, the error maps, and the F1 scores of the adapted and the non-adapted models with the CNN backbone network using the data collected from Site
+IA19 as the source data and the data collected from Site L21 as the target data. The pixels that are in white are excluded from the dataset since they lack sufficient multi-temporal
+information.
+
+
+11. In the other weeks in this period, AaD obtained less accurate                             and 0, respectively. Table 6 reports these weighted average scores for
+results, even compared to the non-adapted model in weeks 12 and                               different methods. As seen, our method obtained the highest score in
+13. In weeks 15, 16 and 17, our method performed better than all                              MO19→IA21 experiment, surpassing AaD as the second-best method.
+competing methods. From week 18 to 22, our method obtained less                                   In MS19→IA21 experiment, from week 10 to week 18, our method,
+accurate results compared to several methods. In weeks 23, 24, and                            AaD, and SHOT achieved comparable performance, outperforming the
+25, our method outperformed the other methods, while in weeks 26                              other methods. From week 22 onwards, Aad achieved the best results.
+and 27, AaD achieved the best results. In this transfer experiment,                           In terms of the overall performance, Table 6 shows that AaD achieved
+the performance of AaD fluctuated largely. It achieved highly accurate                        the highest weighted average score in MS19→IA21 experiment, per-
+results in weeks 18, 21, 22, 26, and 27, while obtaining poor results in                      forming better than our method, being the second-best method.
+weeks 12, 13, and 15, performing worse than the non-adapted model.
+In this transfer experiment, it is not evident which method performs                          5. Discussion
+the best. To investigate this, a possible evaluation criterion could be
+taking the average from all the macro F1 scores obtained from week                                In crop mapping, an increasing number of large labeled source
+10 to week 27. However, this procedure is not suited to within-season                         datasets are becoming progressively available (Garnot and Landrieu,
+crop mapping as it does not take into account and reward the earliness                        2021; Turkoglu et al., 2021; Weikmann et al., 2021). This trend re-
+of the predictions. For example, using this procedure, the macro F1                           quires significantly increased storage capacity and the development of
+scores of week 12 and week 18 would have equal contributions to the                           larger deep learning models to fit the potential complexity of the grow-
+final average score, while the former should have higher importance                           ing volume of labeled source datasets. Our study focused on developing
+in within-season crop mapping. Therefore, we calculated the weighted                          an SFUDA method for the first time in the crop mapping literature. In
+average of the macro F1 scores using the weights determined by 1 −                            contrast to the conventional UDA, this method does not require source
+𝑡∕27, which is defined based on the earliness reward (Rußwurm et al.,                         domain data in the adaptation stage, and as a result, does not demand
+2023; Bilski and Jastrzębska, 2023). Here, 𝑡 denotes the week number                          extremely large storage and high computational resources. This is ben-
+ranging from 0 to 27. In this way, the weights associated with the                            eficial, especially for research institutes and other organizations that
+first week (index 0) and last week (index 27, end-of-season) equals 1                         have limited computational resources. Moreover, training deep learning
+
+                                                                                         12
+S. Mohammadi et al.                                                                                                          Remote Sensing of Environment 314 (2024) 114385
+
+
+
+
+Fig. 9. The confusion matrices of the adapted and non-adapted models using the CNN backbone network along with the precision (denoted as Pr), recall (denoted as Re), and F1
+scores of individual classes in three transfer experiments.
+
+
+models on large amounts of data has environmental consequences,                          score in Table 7. In the three chosen experiments, the two approaches
+including increase of emissions and energy consumption (Tuia et al.,                     achieved comparable performances in some cases. However, in some
+2022; Patterson et al., 2021; Boudiaf et al., 2022). The results achieved                other cases, such as MO19→MO21 with the Transformer and LSTM
+by our method in both end-of-season and within-season experiments                        backbone networks or MO19→MS21 with the LSTM backbone network,
+demonstrated its advantage for transferring knowledge from the source                    relying solely on the maximum mean confidence score resulted in
+dataset to the target dataset, being capable of tackling the domain shift                poor performances, which are even worse than the performance of
+problem.                                                                                 the non-adapted models (see Table 7). This happened because the
+                                                                                         model generated wrong predictions with high confidence in those
+5.1. Analysis of the obtained results                                                    cases. Therefore, our weighting strategy introduces a more reliable and
+                                                                                         effective method for the label prediction stage capable of tackling errors
+    Table 2 showed that out of 54 transfer scenarios using the three                     in the generated confidence scores.
+backbone networks, our adaptation method improved the performance                            To further demonstrate the advantage of the proposed weighting
+in 51 scenarios. This was achieved using the proposed weighting strat-                   strategy, we compared its results with those obtained by the model
+egy. To demonstrate the advantage of this strategy in the label predic-                  trained with 𝛾 = 1 and 𝛽 = 1 using the CNN backbone network in Ta-
+tion stage (Stage 2 of our framework in Fig. 1), we compared its results                 ble 8. In eight out of nine transfer experiments, the weighting strategy
+with those obtained by the model with the maximum mean confidence                        obtained superior results, highlighting the advantage of balancing the
+
+                                                                                    13
+S. Mohammadi et al.                                                                                                                          Remote Sensing of Environment 314 (2024) 114385
+
+
+
+
+                    Fig. 10. Within-season performances of the adapted and non-adapted models using the CNN backbone network and the illustration of the earliest classification dates.
+
+
+Table 6                                                                                                  the non-adapted models, the adapted models generated a larger number
+Within-season performance comparison based on the weighted average of the macro
+                                                                                                         of false negatives for the class Other, mistakenly predicting a larger
+F1 scores from week 10 to week 27 using the weights determined by considering the
+earliness reward. The numbers in red display the best results. All values are reported                   number of the class Other samples as corn or soybean. Moreover, fewer
+in percentage.                                                                                           true positives were generated for the class Other using our adaptation
+                                                             MO19→IA21               MS19→IA21           method. These factors led to recall score degradation for the class
+                            Non-adapted                      30.5                    26.5                Other. But why did the adapted models generate a larger number of
+                            CDAN+E                           39.9                    30.8
+                                                                                                         false negatives and fewer true positives for the class Other compared
+                            CDAN+E (Trimmed)                 40.9                    34.1                to the non-adapted models? To answer this question, we compare
+                            ELECTS                           26.6                    13.3                the confusion matrices of the adapted models to those of the non-
+ Conventional UDA
+
+
+
+
+                            SHOT                             47.5                    44.7                adapted models and investigate how our adaptation method affects the
+                            DANN                             39.5                    28.4
+                            DANN (Trimmed)                   40.0                    30.9
+                                                                                                         classification of corn and soybean samples that were wrongly predicted
+                            MMD                              41.4                    35.0                as the class Other.
+                            MMD (Trimmed)                    46.1                    37.6                    Investigating the confusion matrices of the non-adapted models
+                            JUMBOT                           33.9                    32.6
+                                                                                                         shows that these models tend to predict a relatively larger number of
+                            JUMBOT (Trimmed)                 43.0                    39.5
+                            SpADANN                          35.2                    16.0                samples as being the class Other as compared to the number of samples
+                            SpADANN (Trimmed)                33.5                    27.7                predicted as being corn and soybean. The temporal-spectral character-
+                            SHOT                             47.5                    44.7                istics of corn and soybean in the source datasets are different from the
+ SFUDA
+
+
+
+
+                            AaD                              51.6                    53.2                target datasets due to the domain shift problem. Beyond the challenge
+                            Ours                             56.2                    51.7                of domain shift, the class Other, a combination of various categories,
+                                                                                                         has high intra-class heterogeneity. Moreover, the composition of the
+                                                                                                         class Other differs between the source and target datasets. These factors
+diversity and discriminability terms over simply using them without                                      lead to less discriminative and more dispersed feature representations
+weighting.                                                                                               for the class Other. Consequently, the non-adapted models tend to
+    The confusion matrices in Fig. 9 demonstrate that the non-adapted                                    predict numerous input samples as the class Other. This resulted in
+models generated a considerable number of false positives for the class                                  more true positives and fewer false negatives, increasing the recall
+Other, mistakenly predicting many Corn and Soybean samples as the                                        score. On the other hand, this also resulted in a larger number of
+class Other. In comparison to the non-adapted models, our adaptation                                     false positives for the class Other. This is why the non-adapted models
+method notably reduced the number of false positives for the class                                       obtained higher recall scores and lower precision scores for the class
+Other, meaning that it successfully rectified a significant proportion of                                Other compared to the adapted models.
+misclassifications where Corn and Soybean samples were inaccurately                                          Investigating the confusion matrices of the adapted models
+labeled as the class Other. These significant reductions in the number                                   shows that these models tend to largely affect the classification of the
+of false positives for the class Other and significant increases in the                                  samples that were predicted as the class Other by the non-adapted mod-
+number of true positives for corn and soybean classes are important                                      els. Our adaptation method rectified the predictions of these samples by
+factors contributing to the large macro F1 score improvements, as                                        encouraging diversity and discriminability of the predictions. Despite
+reflected in Table 2.                                                                                    rectifying many predictions of these samples by correctly classifying
+    Although our adaptation method resulted in the improvement of                                        them as corn or soybean, it also wrongly assigned a subset of the class
+the most scores reported beneath the confusion matrices in Fig. 9, it                                    Other samples to either corn or soybean. This led to a reduction in
+degraded the recall score of the class Other. This is because compared to                                the number of true positives and an increase in the number of false
+
+                                                                                                    14
+S. Mohammadi et al.                                                                                                       Remote Sensing of Environment 314 (2024) 114385
+
+
+
+
+Fig. 11. The predicted maps and the error maps of the adapted models and the non-adapted model with the CNN backbone network over time within the growing season in the
+transfer experiment IA19→IA21. The pixels that are in white are excluded from the dataset since they lack sufficient multi-temporal information.
+
+
+                Table 7
+                Comparison of the results of our weighting strategy (denoted as Weighting) with the results obtained by the model with the maximum mean
+                confidence score (denoted as Max).
+                                                   CNN                              Transformer                                  LSTM
+                               Non-         Adapted       Adapted     Non-         Adapted        Adapted    Non-         Adapted       Adapted
+                               adapted      (Weighting)   (Max)       adapted      (Weighting)    (Max)      adapted      (Weighting)   (Max)
+                  MO19→IA21 42.2            67.5          69.4        54.1         73.9           57.0       59.6         77.5          77.8
+                  MO19→MO21 59.2            81.8          81.0        57.3         77.3           57.0       68.3         87.0          58.9
+                  MO19→MS21 45.5            73.4          70.7        55.9         72.9           73.3       64.7         72.8          55.4
+
+
+
+negatives. Consequently, our adaptation method resulted in a lower                     the non-adapted models. This is also reflected in the Silhouette scores
+recall score for the class Other compared to the non-adapted models.                   obtained by the adapted models. Ranging from −1 to 1, the Silhouette
+    To investigate how the adapted models affect the classification re-                score measures how well the samples are clustered (Rousseeuw, 1987).
+sults in the feature space, we used t-SNE to visualize the features before             Fig. 13 shows that the adapted models generated better-clustered fea-
+the softmax layer at the output using 100K samples from the target                     tures.
+data. We chose CNN as the backbone and three transfer experiments                         The results shown in Fig. 12 reveal that most adaptation methods
+and show the results in Fig. 13. As illustrated, our adaptation method                 performed better than the non-adapted models in within-season ex-
+generated more diverse and discriminative predictions compared to                      periments in the majority of weeks. This emphasizes the effectiveness
+
+                                                                                  15
+S. Mohammadi et al.                                                                                                        Remote Sensing of Environment 314 (2024) 114385
+
+
+
+
+Fig. 12. Comparison of the proposed SFUDA method with other methods in two within-season transfer experiments. The conventional UDA methods are trained using either the
+full or trimmed time series. In the latter case, they are referred to as Trimmed, as shown in the legend of the figure.
+
+
+Table 8                                                                                    models generated wrong predictions with high confidence scores that
+Comparison of the results of our weighting strategy (denoted as Weighting) with the
+                                                                                           even our weighting strategy could not handle, unlike the other cases.
+results obtained by the model trained with 𝛾 = 1 and 𝛽 = 1 using the CNN backbone
+network across nine transfer experiments. All values are reported in percentages,
+                                                                                           We observed that if we had been able to identify the best-performing
+displaying macro F1 scores. The numbers in red display the best results.                   models in these two transfer experiments, we would have obtained
+                         Non-                Adapted                Adapted                macro F1 scores of 62.3%, and 68.3% instead of 50.9% and 54.5%
+                         adapted             (Weighting)            (𝛾 = 1 &               in IA19→MO20 and FR→MO20, respectively, which are all superior
+                                                                    𝛽 = 1)                 to the scores obtained by the non-adapted models. Therefore, while
+ IA19→IA21               90.2                94.1                   94.0                   our weighting strategy achieved promising results in the majority of
+ MO19→MO21               59.2                81.8                   81.5                   transfer scenarios, future work can focus on proposing new unsuper-
+ MS19→MS21               52.8                77.8                   39.0
+                                                                                           vised hyperparameter tuning methods to further minimize the errors
+ MO19→IA21               42.2                67.5                   58.3
+ MS19→IA21               39.5                54.8                   29.8                   in model selection. It is important to note that in the two transfer
+ IA19→MO21               55.3                63.7                   63.1                   experiments in Table 2 where the adapted models obtained the same
+ MS19→MO21               47.9                83.2                   83.5                   results as the non-adapted models, the prediction diversity criterion
+ IA19→MS21               45.7                66.6                   34.0
+                                                                                           (lines 9 and 22 of Algorithm 1) was not satisfied, and therefore no
+ MO19→MS21               45.5                73.4                   49.6
+                                                                                           adaptation occurred.
+                                                                                               Second, we followed the experimental setting in other domain
+                                                                                           adaptation/transfer learning crop mapping studies that focused on
+of UDA for within-season crop mapping, an aspect that has not been                         identifying some classes (often major crop types) and merging all
+explored by other studies to the best of our knowledge. This finding                       the remaining classes (often minor crop types) as the other/unknown
+advocates for the integration of UDA in methodologies tailored for                         class (Nyborg et al., 2022; Wang et al., 2022, 2023; Xu et al., 2020,
+within-season crop mapping, treating it as a domain adaptation chal-                       2021). Nevertheless, despite making up only a small portion of the total
+lenge. This new perspective aligns with the idea that incomplete time                      cultivated land, the minor crop types do bring ecological advantages to
+series in within-season crop mapping can introduce greater disparities                     farmland, promote sustainability, and help ensure food and nutritional
+between the distributions of source and target datasets, justifying the                    security, especially in the face of climate change (Waldner et al., 2019;
+application of UDA to enhance performance in such scenarios.                               Mayes et al., 2012). For example, to address the hidden hunger issue,
+                                                                                           it is required to have access to up-to-date and reliable information
+5.2. Limitations and future work                                                           on agriculture production diversity, i.e., the number of crop types
+                                                                                           and their area cultivated in an agricultural area. This information
+   Despite the advantages of the presented SFUDA method for crop                           is crucial for improving the dietary diversity of household diets and
+type mapping, our study has some limitations that can be addressed in                      nutritional outcomes (Sibhatu et al., 2015). Calculating agricultural
+future research.                                                                           production diversity requires mapping not only major crop types but
+   First, as shown in Table 2, in one out of the total 54 transfer                         also minor crop types. This can bring some challenges, such as limited
+experiments using the U.S. datasets, the adapted model obtained less                       classification performance due to the lack of labeled samples and higher
+accurate results than the non-adapted model (in IA19→MO20 using                            inter-class homogeneity and intra-class heterogeneity (Hamidi et al.,
+the Transformer backbone network). This was also the case in one out                       2021) compared to mapping only the major crop types.
+of nine cross-country and cross-sensor transfer experiments shown in                           Third, the purpose of pseudo-labeling and the conditional entropy
+Table 3 (in FR→MO20). By means of inspecting the mean confidence                           term in the mutual information loss is similar as they both encourage
+scores and the corresponding test performances associated with the                         the model to generate confident predictions with more discriminative
+models trained with different 𝛾 and 𝛽 values, we realized that the gen-                    features for each class and unambiguous cluster assignments (Berthelot
+erated mean confidence scores did not represent the test performances                      et al., 2019; Boudiaf et al., 2020). Nevertheless, advanced pseudo-
+well in these two cases. In other words, for most 𝛾 and 𝛽 pairs, the                       labeling techniques can be leveraged to help the model to generate
+
+                                                                                      16
+S. Mohammadi et al.                                                                                                             Remote Sensing of Environment 314 (2024) 114385
+
+
+
+
+Fig. 13. Illustration of the effect of our adaptation method with the CNN backbone network on the output features by t-SNE. By employing t-SNE, a nonlinear dimensionality
+reduction technique, we reduced the original high-dimensional data to two dimensions for the purpose of visualization. The axes do not have a quantitative interpretation and do
+not correspond to any specific features or measurements from the original high-dimensional space due to the nonlinear dimensionality reduction.
+
+
+more discriminative features. For example, after achieving domain                          6. Conclusion
+alignment, Liang et al. (2020) used a pseudo-labeling strategy based
+on class centroids to augment the target representation learning and                           In this study, we developed an SFUDA method for cross-regional
+further improve the performance. Based on this, we encourage future                        and cross-time crop mapping. The proposed method is more practical
+work to add a subsequent pseudo-labeling step to our framework after                       for crop mapping compared to the conventional UDA methods, which
+achieving domain alignment to further improve the performance.                             require high computational resources and data storage, leading to
+    Fourth, the presence of clouds in optical satellite images makes crop                  increased financial and environmental costs. The method is based on
+                                                                                           mutual information loss, in which diversity and discriminability terms
+mapping more challenging as it affects the integrity of the phenological
+                                                                                           are balanced using a novel unsupervised weighting strategy based on
+information contained in image time series (Wang et al., 2022). To deal
+                                                                                           the mean confidence scores of the predicted categories. In the U.S. end-
+with this challenge, we followed the procedure introduced in Xu et al.
+                                                                                           of-season experiments, where we focused on mapping corn, soybean,
+(2020, 2021) to deal with the missing data. Future work can investigate
+                                                                                           and the class Other, the adapted models with CNN, Transformer, and
+other methods, such as fusing Landsat time series with MODIS or
+                                                                                           LSTM backbone networks performed better than their non-adapted
+Sentinel-2 (Gao et al., 2017; Schreier et al., 2021) or reconstructing                     counterparts. They improved macro F1 scores by 12.9%, 7.1%, and
+the images contaminated by clouds by employing image reconstruction                        5.8% on average in cross-time tests and by 20.1%, 12.5%, and 8.8%
+methods such as generative adversarial network (GAN) (Zhou et al.,                         on average in cross-regional tests, respectively. Moreover, the adapted
+2022).                                                                                     model with the CNN backbone network obtained a macro F1 score of
+    Fifth, the average cross-regional macro F1 scores are lower com-                       92.6% in a large study area covering 450 km × 300 km, surpassing
+pared to the average cross-time macro F1 scores (Table 2) due to                           its non-adapted counterpart with a macro F1 score of 89.2%. Our
+larger domain shifts in cross-regional transfer experiments, making crop                   experiments, focused on mapping the same classes from Sentinel-2
+mapping more challenging. Despite the effectiveness of our method                          image time series in France, demonstrated the efficiency of our method
+for both cross-regional and cross-time crop mapping, more accurate                         across different countries and sensors. We also tested our method
+methods are still required for practical applications. Therefore, our                      in more diverse agricultural areas in France and Denmark with six
+research can serve as a basis for future work dedicated to exploring                       classes. The results showed that the adapted models outperformed the
+and advancing domain adaptation methods to further alleviate the                           non-adapted ones. Furthermore, in the within-season experiments, the
+challenges in cross-regional experiments.                                                  adapted models achieved higher performance compared to the non-
+    Finally, Landsat 7 ETM+ and Landsat 8 OLI instruments measure                          adapted models in the vast majority of weeks. The obtained results,
+slightly different wavelengths, especially in NIR and SWIR 1, which can                    along with their comparison to other UDA methods, showed the effec-
+                                                                                           tiveness of our method in both end-of-season and within-season crop
+cause slight differences in the reflectance measurements (Roy et al.,
+                                                                                           mapping scenarios in the presence of domain shift between the source
+2016; Flood, 2014). In our study, the experiments were conducted
+                                                                                           and target data. Moreover, the results demonstrated the modularity and
+following the procedure in previous studies that combined Landsat 7
+                                                                                           adaptability of the method to different backbone networks.
+ETM+ and Landsat 8 OLI images without a wavelength-related prepro-
+cessing step (Wang et al., 2020). Future work could assess the impact of                   CRediT authorship contribution statement
+these differences on the classification results and accordingly mitigate
+the wavelength differences by employing an additional preprocessing                           Sina Mohammadi: Writing – original draft, Visualization, Vali-
+step. For example, linear regression can be adopted to estimate Land-                      dation, Software, Methodology, Conceptualization. Mariana Belgiu:
+sat 7 ETM+ reflectance from Landsat 8 OLI reflectance before being                         Writing – review & editing, Writing – original draft, Visualization,
+combined as employed in Flood (2014).                                                      Supervision. Alfred Stein: Writing – review & editing, Supervision.
+
+                                                                                      17
+S. Mohammadi et al.                                                                                                                         Remote Sensing of Environment 314 (2024) 114385
+
+
+Declaration of competing interest                                                                  Ganin, Y., Lempitsky, V., 2015. Unsupervised domain adaptation by backpropagation.
+                                                                                                       In: International Conference on Machine Learning. PMLR, pp. 1180–1189.
+                                                                                                   Gao, F., Anderson, M.C., Zhang, X., Yang, Z., Alfieri, J.G., Kustas, W.P., Mueller, R.,
+    The authors declare that they have no known competing finan-
+                                                                                                       Johnson, D.M., Prueger, J.H., 2017. Toward mapping crop progress at field scales
+cial interests or personal relationships that could have appeared to                                   through fusion of landsat and MODIS imagery. Remote Sens. Environ. 188, 9–25.
+influence the work reported in this paper.                                                         Garnot, V.S.F., Landrieu, L., 2021. Panoptic segmentation of satellite image time series
+                                                                                                       with convolutional temporal attention networks. In: Proceedings of the IEEE/CVF
+Code and data availability                                                                             International Conference on Computer Vision. pp. 4872–4881.
+                                                                                                   Garnot, V.S.F., Landrieu, L., Chehata, N., 2022. Multi-modal temporal attention models
+                                                                                                       for crop mapping from satellite time series. ISPRS J. Photogramm. Remote Sens.
+  The code and data are available at https://github.com/Sina-Moha                                      187, 294–305.
+mmadi/SFUDA-CropMapping.                                                                           Hamidi, M., Safari, A., Homayouni, S., 2021. An auto-encoder based classifier for crop
+                                                                                                       mapping from multitemporal multispectral imagery. Int. J. Remote Sens. 42 (3),
+Acknowledgment                                                                                         986–1016.
+                                                                                                   Hendrycks, D., Gimpel, K., 2016. A baseline for detecting misclassified and out-of-
+                                                                                                       distribution examples in neural networks. In: International Conference on Learning
+   We would like to thank the Center of Expertise on Big Geodata                                       Representations.
+Science (CRIB) for providing the GPU resources used in this work.                                  Hoffman, J., Tzeng, E., Park, T., Zhu, J.-Y., Isola, P., Saenko, K., Efros, A., Darrell, T.,
+                                                                                                       2018. Cycada: Cycle-consistent adversarial domain adaptation. In: International
+Appendix A. Supplementary data                                                                         Conference on Machine Learning. Pmlr, pp. 1989–1998.
+                                                                                                   Huete, A., Didan, K., Miura, T., Rodriguez, E.P., Gao, X., Ferreira, L.G., 2002. Overview
+                                                                                                       of the radiometric and biophysical performance of the modis vegetation indices.
+    Supplementary material related to this article can be found online                                 Remote Sens. Environ. 83 (1–2), 195–213.
+at https://doi.org/10.1016/j.rse.2024.114385.                                                      Inglada, J., Arias, M., Tardy, B., Hagolle, O., Valero, S., Morin, D., Dedieu, G.,
+                                                                                                       Sepulcre, G., Bontemps, S., Defourny, P., et al., 2015. Assessment of an operational
+References                                                                                             system for crop type map production using high temporal and spatial resolution
+                                                                                                       satellite optical imagery. Remote Sens. 7 (9), 12356–12379.
+                                                                                                   Khan, H.R., Gillani, Z., Jamal, M.H., Athar, A., Chaudhry, M.T., Chao, H., He, Y.,
+ARD, USGS, 2018. US geological survey, landsat analysis ready data (ARD).
+                                                                                                       Chen, M., 2023. Early identification of crop type for smallholder farming systems
+Beck, H.E., Zimmermann, N.E., McVicar, T.R., Vergopolan, N., Berg, A., Wood, E.F.,
+                                                                                                       using deep learning on time-series sentinel-2 imagery. Sensors 23 (4), 1779.
+     2018. Present and future köppen-geiger climate classification maps at 1-km
+                                                                                                   Kim, Y., Cho, D., Han, K., Panda, P., Hong, S., 2021. Domain adaptation without source
+     resolution. Sci. Data 5 (1), 1–12.
+                                                                                                       data. IEEE Trans. Artif. Intell. 2 (6), 508–518.
+Belgiu, M., Bijker, W., Csillik, O., Stein, A., 2021. Phenology-based sample generation
+                                                                                                   Kingma, D.P., Ba, J., 2014. Adam: A method for stochastic optimization. In:
+     for supervised crop type classification. Int. J. Appl. Earth Obs. Geoinf. 95, 102264.
+Belgiu, M., Marshall, M., Boschetti, M., Pepe, M., Stein, A., Nelson, A., 2023. PRISMA                 International Conference on Learning Representations. ICLR.
+     and sentinel-2 spectral response to the nutrient composition of grains. Remote Sens.          Konduri, V.S., Kumar, J., Hargrove, W.W., Hoffman, F.M., Ganguly, A.R., 2020.
+     Environ. 292, 113567.                                                                             Mapping crops within the growing season across the United States. Remote Sens.
+Berthelot, D., Carlini, N., Goodfellow, I., Papernot, N., Oliver, A., Raffel, C.A., 2019.              Environ. 251, 112048.
+     Mixmatch: A holistic approach to semi-supervised learning. In: Advances in Neural             Kundu, J.N., Venkat, N., Babu, R.V., et al., 2020. Universal source-free domain
+     Information Processing Systems. pp. 5049–5059.                                                    adaptation. In: Proceedings of the IEEE/CVF Conference on Computer Vision and
+Bilski, J.M., Jastrzębska, A., 2023. CALIMERA: A new early time series classification                  Pattern Recognition. pp. 4544–4553.
+     method. Inf. Process. Manage. 60 (5), 103465.                                                 Liang, J., Hu, D., Feng, J., 2020. Do we really need to access the source data?
+Boogaard, H., Pratihast, A.K., Laso Bayas, J.C., Karanam, S., Fritz, S., Van Tricht, K.,               source hypothesis transfer for unsupervised domain adaptation. In: International
+     Degerickx, J., Gilliams, S., 2023. Building a community-based open harmonised                     Conference on Machine Learning. PMLR, pp. 6028–6039.
+     reference data repository for global crop mapping. Plos one 18 (7), e0287731.                 Lin, C., Zhong, L., Song, X.-P., Dong, J., Lobell, D.B., Jin, Z., 2022. Early-and in-
+Boudiaf, M., Mueller, R., Ben Ayed, I., Bertinetto, L., 2022. Parameter-free online test-              season crop type mapping without current-year ground truth: Generating labels
+     time adaptation. In: Proceedings of the IEEE/CVF Conference on Computer Vision                    from historical information via a topology-based approach. Remote Sens. Environ.
+     and Pattern Recognition. pp. 8344–8353.                                                           274, 112994.
+Boudiaf, M., Ziko, I., Rony, J., Dolz, J., Piantanida, P., Ben Ayed, I., 2020. Information         Long, M., Cao, Z., Wang, J., Jordan, M.I., 2018. Conditional adversarial domain
+     maximization for few-shot learning. Adv. Neural Inf. Process. Syst. 33, 2445–2457.                adaptation. Adv. Neural Inf. Process. Syst. 31.
+Brown, T., Mann, B., Ryder, N., Subbiah, M., Kaplan, J.D., Dhariwal, P., Neelakan-                 Lucas, B., Pelletier, C., Schmidt, D., Webb, G.I., Petitjean, F., 2021. A bayesian-inspired,
+     tan, A., Shyam, P., Sastry, G., Askell, A., et al., 2020. Language models are few-shot            deep learning-based, semi-supervised domain adaptation technique for land cover
+     learners. Adv. Neural Inf. Process. Syst. 33, 1877–1901.                                          mapping. Mach. Learn. 1–33.
+Cai, Y., Guan, K., Peng, J., Wang, S., Seifert, C., Wardlow, B., Li, Z., 2018. A high-             M Rustowicz, R., Cheong, R., Wang, L., Ermon, S., Burke, M., Lobell, D., 2019. Semantic
+     performance and in-season classification system of field-level crop types using                   segmentation of crop type in Africa: A novel dataset and analysis of deep learning
+     time-series landsat data and a machine learning approach. Remote Sens. Environ.                   methods. In: Proceedings of the IEEE/CVF Conference on Computer Vision and
+     210, 35–47.                                                                                       Pattern Recognition Workshops. pp. 75–82.
+Capliez, E., Ienco, D., Gaetano, R., Baghdadi, N., Salah, A.H., 2023. Temporal-domain              Ma, C., Liu, M., Ding, F., Li, C., Cui, Y., Chen, W., Wang, Y., 2022. Wheat growth
+     adaptation for satellite image time-series land-cover mapping with adversarial                    monitoring and yield estimation based on remote sensing data assimilation into
+     learning and spatially aware self-training. IEEE J. Sel. Top. Appl. Earth Obs. Remote             the SAFY crop growth model. Sci. Rep. 12 (1), 5473.
+     Sens. 16, 3645–3675.                                                                          Mayes, S., Massawe, F., Alderson, P., Roberts, J., Azam-Ali, S., Hermann, M., 2012. The
+Caruana, R., Lawrence, S., Giles, C., 2000. Overfitting in neural nets: Backpropagation,               potential for underutilized crops to improve security of food production. J. Exper.
+     conjugate gradient, and early stopping. Adv. Neural Inf. Process. Syst. 13.                       Botany 63 (3), 1075–1079.
+Duro, D.C., Franklin, S.E., Dubé, M.G., 2012. A comparison of pixel-based and                      Mohammadi, S., Belgiu, M., Stein, A., 2021. 3D fully convolutional neural networks
+     object-based image analysis with selected machine learning algorithms for the                     with intersection over union loss for crop mapping from multi-temporal satellite
+     classification of agricultural landscapes using SPOT-5 HRG imagery. Remote Sens.                  images. In: 2021 IEEE International Geoscience and Remote Sensing Symposium
+     Environ. 118, 259–272.                                                                            IGARSS. IEEE, pp. 5834–5837.
+Fang, Y., Yap, P.-T., Lin, W., Zhu, H., Liu, M., 2022. Source-free unsupervised domain             Mohammadi, S., Belgiu, M., Stein, A., 2023. Improvement in crop mapping from
+     adaptation: A survey. arXiv preprint arXiv:2301.00265.                                            satellite image time series by effectively supervising deep neural networks. ISPRS
+Fatras, K., Séjourné, T., Flamary, R., Courty, N., 2021. Unbalanced minibatch optimal                  J. Photogramm. Remote Sens. 198, 272–283.
+     transport; applications to domain adaptation. In: International Conference on                 Nass, U., et al., 2010. Field crops: Usual planting and harvesting dates. In: USDA
+     Machine Learning. PMLR, pp. 3186–3197.                                                            National Agricultural Statistics Service, Agriculural Handbook, vol. 628.
+Flood, N., 2014. Continuity of reflectance data between landsat-7 ETM+ and landsat-8               Nowakowski, A., Mrziglod, J., Spiller, D., Bonifacio, R., Ferrari, I., Mathieu, P.P., Garcia-
+     OLI, for both top-of-atmosphere and surface reflectance: a study in the Australian                Herranz, M., Kim, D.-H., 2021. Crop type mapping by using transfer learning. Int.
+     landscape. Remote Sens. 6 (9), 7952–7970.                                                         J. Appl. Earth Obs. Geoinf. 98, 102313.
+Gadiraju, K.K., Vatsavai, R.R., 2023. Remote sensing based crop type classification                Nyborg, J., Pelletier, C., Lefèvre, S., Assent, I., 2022. TimeMatch: Unsupervised cross-
+     via deep transfer learning. IEEE J. Sel. Top. Appl. Earth Obs. Remote Sens. 16,                   region adaptation by temporal shift estimation. ISPRS J. Photogramm. Remote Sens.
+     4699–4712. http://dx.doi.org/10.1109/JSTARS.2023.3270141.                                         188, 301–313.
+Gallo, I., Ranghetti, L., Landro, N., La Grassa, R., Boschetti, M., 2023. In-season and            Patterson, D., Gonzalez, J., Le, Q., Liang, C., Munguia, L.-M., Rothchild, D., So, D.,
+     dynamic crop mapping using 3D convolution neural networks and sentinel-2 time                     Texier, M., Dean, J., 2021. Carbon emissions and large neural network training.
+     series. ISPRS J. Photogramm. Remote Sens. 195, 335–352.                                           arXiv preprint arXiv:2104.10350.
+
+
+                                                                                              18
+S. Mohammadi et al.                                                                                                                      Remote Sensing of Environment 314 (2024) 114385
+
+
+Pelletier, C., Webb, G.I., Petitjean, F., 2019. Temporal convolutional neural network            Wang, Y., Feng, L., Zhang, Z., Tian, F., 2023. An unsupervised domain adaptation deep
+    for the classification of satellite image time series. Remote Sens. 11 (5), 523.                 learning method for spatial and temporal transferable crop type mapping using
+Purushotham, S., Carvalho, W., Nilanon, T., Liu, Y., 2016. Variational recurrent                     sentinel-2 imagery. ISPRS J. Photogramm. Remote Sens. 199, 102–117.
+    adversarial deep domain adaptation. In: International Conference on Learning                 Wang, Z., Zhang, H., He, W., Zhang, L., 2022. Cross-phenological-region crop mapping
+    Representations.                                                                                 framework using sentinel-2 time series imagery: A new perspective for winter crops
+Rousseeuw, P.J., 1987. Silhouettes: a graphical aid to the interpretation and validation             in China. ISPRS J. Photogramm. Remote Sens. 193, 200–215.
+    of cluster analysis. J. Comput. Appl. Math. 20, 53–65.                                       Weikmann, G., Paris, C., Bruzzone, L., 2021. Timesen2crop: A million labeled samples
+Roy, D.P., Kovalskyy, V., Zhang, H., Vermote, E.F., Yan, L., Kumar, S., Egorov, A., 2016.            dataset of sentinel 2 image time series for crop-type classification. IEEE J. Sel. Top.
+    Characterization of landsat-7 to landsat-8 reflective wavelength and normalized                  Appl. Earth Obs. Remote Sens. 14, 4699–4708.
+    difference vegetation index continuity. Remote Sens. Environ. 185, 57–70.                    Wilson, G., Doppa, J.R., Cook, D.J., 2020. Multi-source deep domain adaptation with
+Rußwurm, M., Courty, N., Emonet, R., Lefèvre, S., Tuia, D., Tavenard, R., 2023. End-                 weak supervision for time-series sensor data. In: Proceedings of the 26th ACM
+    to-end learned early classification of time series for in-season crop type mapping.              SIGKDD International Conference on Knowledge Discovery & Data Mining. pp.
+    ISPRS J. Photogramm. Remote Sens. 196, 445–456.                                                  1768–1778.
+Rußwurm, M., Körner, M., 2020. Self-attention for raw optical satellite time series              Xu, Q., Shi, Y., Zhu, X., 2022a. Universal domain adaptation without source data for
+    classification. ISPRS J. Photogram. Remote Sens. 169, 421–435.                                   remote sensing image scene classification. In: IGARSS 2022-2022 IEEE International
+Rußwurm, M., Pelletier, C., Zollner, M., Lefèvre, S., Körner, M., 2020. Breizhcrops:                 Geoscience and Remote Sensing Symposium. IEEE, pp. 5341–5344.
+    a time series dataset for crop type mapping. Int. Arch. Photogram. Remote Sens.              Xu, Z., Wei, W., Zhang, L., Nie, J., 2022b. Source-free domain adaptation for cross-
+    Spatial Inf. Sci. 43, 1545–1551.                                                                 scene hyperspectral image classification. In: IGARSS 2022-2022 IEEE International
+Sagan, V., Maimaitijiang, M., Bhadra, S., Maimaitiyiming, M., Brown, D.R., Sidike, P.,               Geoscience and Remote Sensing Symposium. IEEE, pp. 3576–3579.
+    Fritschi, F.B., 2021. Field-scale crop yield prediction using multi-temporal                 Xu, J., Yang, J., Xiong, X., Li, H., Huang, J., Ting, K., Ying, Y., Lin, T., 2021. Towards
+    WorldView-3 and PlanetScope satellite data and deep learning. ISPRS J. Photogram.                interpreting multi-temporal deep learning models in crop mapping. Remote Sens.
+    Remote Sens. 174, 265–281.                                                                       Environ. 264, 112599.
+Schreier, J., Ghazaryan, G., Dubovyk, O., 2021. Crop-specific phenomapping by fusing             Xu, J., Zhu, Y., Zhong, R., Lin, Z., Xu, J., Jiang, H., Huang, J., Li, H., Lin, T., 2020.
+    landsat and sentinel data with MODIS time series. Eur. J. Remote Sens. 54 (sup1),                DeepCropMapping: A multi-temporal deep learning approach with improved spatial
+    47–58.                                                                                           generalizability for dynamic corn and soybean mapping. Remote Sens. Environ.
+Sibhatu, K.T., Krishna, V.V., Qaim, M., 2015. Production diversity and dietary diversity             247, 111946.
+    in smallholder farm households. Proc. Natl. Acad. Sci. 112 (34), 10657–10662.                Yan, S., Yao, X., Zhu, D., Liu, D., Zhang, L., Yu, G., Gao, B., Yang, J., Yun, W.,
+Tuia, D., Kellenberger, B., Beery, S., Costelloe, B.R., Zuffi, S., Risse, B., Mathis, A.,            2021. Large-scale crop mapping from multi-source optical satellite imageries using
+    Mathis, M.W., van Langevelde, F., Burghardt, T., et al., 2022. Perspectives in                   machine learning with discrete grids. Int. J. Appl. Earth Obs. Geoinf. 103, 102485.
+    machine learning for wildlife conservation. Nat. Commun. 13 (1), 792.                        Yang, S., Jui, S., van de Weijer, J., et al., 2022. Attracting and dispersing: A simple
+Turkoglu, M.O., D’Aronco, S., Perich, G., Liebisch, F., Streit, C., Schindler, K.,                   approach for source-free domain adaptation. Adv. Neural Inf. Process. Syst. 35,
+    Wegner, J.D., 2021. Crop mapping from image time series: Deep learning with                      5802–5815.
+    multi-scale label hierarchies. Remote Sens. Environ. 264, 112603.                            You, K., Wang, X., Long, M., Jordan, M., 2019. Towards accurate model selection in
+Tzeng, E., Hoffman, J., Zhang, N., Saenko, K., Darrell, T., 2014. Deep domain confusion:             deep unsupervised domain adaptation. In: International Conference on Machine
+    Maximizing for domain invariance. arXiv preprint arXiv:1412.3474.                                Learning. PMLR, pp. 7124–7133.
+Veilleux, O., Boudiaf, M., Piantanida, P., Ben Ayed, I., 2021. Realistic evaluation of           Yu, Z., Li, J., Du, Z., Zhu, L., Shen, H.T., 2023. A comprehensive survey on source-free
+    transductive few-shot learning. Adv. Neural Inf. Process. Syst. 34, 9290–9302.                   domain adaptation. arXiv preprint arXiv:2302.11803.
+Waldner, F., Chen, Y., Lawes, R., Hochman, Z., 2019. Needle in a haystack: Mapping               Zhao, J., Zhong, Y., Hu, X., Wei, L., Zhang, L., 2020. A robust spectral-spatial approach
+    rare and infrequent crops using satellite imagery and data balancing methods.                    to identifying heterogeneous crops using remote sensing imagery with high spectral
+    Remote Sens. Environ. 233, 111375.                                                               and spatial resolutions. Remote Sens. Environ. 239, 111605.
+Waldner, F., Jacques, D.C., Löw, F., 2017. The impact of training class proportions on           Zhong, L., Gong, P., Biging, G.S., 2014. Efficient corn and soybean mapping with
+    binary cropland classification. Remote Sens. Lett. 8 (12), 1122–1131.                            temporal extendability: A multi-year experiment using landsat imagery. Remote
+Wang, S., Azzari, G., Lobell, D.B., 2019. Crop type mapping without field-level labels:              Sens. Environ. 140, 1–13.
+    Random forest transfer and unsupervised clustering techniques. Remote Sens.                  Zhong, L., Hu, L., Zhou, H., 2019. Deep learning based multi-temporal crop
+    Environ. 222, 303–317.                                                                           classification. Remote Sens. Environ. 221, 430–443.
+Wang, S., Di Tommaso, S., Deines, J.M., Lobell, D.B., 2020. Mapping twenty years of              Zhou, J., Luo, X., Rong, W., Xu, H., 2022. Cloud removal for optical remote sensing
+    corn and soybean across the US midwest using the landsat archive. Sci. Data 7 (1),               imagery using distortion coding network combined with compound loss functions.
+    307.                                                                                             Remote Sens. 14 (14), 3452.
+
+
+
+
+                                                                                            19
+

@@ -388,6 +388,8 @@ if __name__ == '__main__':
     parser.add_argument('--with_extra', default=False, type=bool_flag, help='whether to input extra geometric features to the PSE')
     parser.add_argument('--tensorboard_log_dir', default='runs')
     parser.add_argument('--train_on_target', default=False, action='store_true', help='supervised training on target for upper bound comparison')
+    parser.add_argument('--source_checkpoint_epochs', default='', type=str, help='comma-separated source-only epochs to save extra checkpoints for later adaptation sweeps')
+    parser.add_argument('--source_checkpoint_dirname', default='checkpoints', type=str, help='subdirectory name under each fold for extra source-only checkpoints')
 
     parser.add_argument('--with_shift_aug', default=False, type=bool_flag, help='whether to apply random temporal shift augmentation')
     parser.add_argument('--shift_aug_p', default=1.0, type=float, help='probability to apply temporal shift augmentation')
@@ -663,6 +665,7 @@ if __name__ == '__main__':
     # TimeMatch
     timematch = subparsers.add_parser('timematch')
     timematch.add_argument('--weights', type=str, help='path to source trained model weights')
+    timematch.add_argument('--weights_checkpoint', type=str, default='model.pt', help='checkpoint filename under weights/fold_k or absolute checkpoint path')
     timematch.add_argument('--lr', default=0.0001, type=float, help='Learning rate')
     timematch.add_argument("--pseudo_threshold", default=0.9, type=float, help='confidence threshold for assigning pseudo labels')
     timematch.add_argument("--ema_decay", default=0.9999, type=float, help='decay rate for mean teacher')

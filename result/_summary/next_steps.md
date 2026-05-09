@@ -1,6 +1,6 @@
 # Project Next Steps
 
-## Status Note (2026-05-07)
+## Status Note (2026-05-09)
 
 This file is now aligned with the current source-structure mainline.
 
@@ -32,22 +32,29 @@ That is:
 
 ## 1. Current Best Mainline
 
-### Official best-performing mainline
+### Current effective mainline
 
-Current best full 12-task result remains:
+The current effective source-structure mainline is now:
 
+- **`v2.4.3b = 0.6776`**
+
+This is the first `v2.4` line that:
+
+- clearly improves over `v2.4.1`
+- slightly exceeds `v2.2.3`
+- confirms that boundary-centered local window information is useful
+- but only when the window is used as a **weighting / saliency signal**, not as a direct penalty
+
+Important references now are:
+
+- **`baseline = 0.6553`**
 - **`v2.2.3 = 0.6761`**
+- **`v2.4.1 = 0.6671`**
+- **`v2.4.3b = 0.6776`**
 
-using the `v222` hyperparameter set:
+So from this point onward:
 
-- `source_feature_reshaper = residual_temporal_conv`
-- `source_feature_reshaper_strength = 0.10`
-- `source_feature_dual_relation_trade_off = 0.03`
-- `source_feature_dual_cls_trade_off = 1.00`
-- `source_feature_reshaper_reg_trade_off = 0.05`
-- `kernel_size = 3`
-
-This is still the official performance reference line.
+> **`v2.4.3b` should be treated as the current valid mainline structure version.**
 
 ---
 
@@ -154,6 +161,63 @@ Status:
 - full 12-task verification completed
 - result shows this line is informative, but not the next mainline
 
+### 2.7 Segment-aware refactor and weak inter-segment regularization
+These ideas have now also been fully tested.
+
+This includes:
+
+- **`v2.4.0`**
+- **`v2.4.1`**
+
+What has been established:
+
+- lifting `phase` into a more general `segment` abstraction is feasible
+- weak `inter-segment` regularization is useful
+- `v2.4.1` reached:
+  - **`0.6671`**
+
+Conclusion:
+
+- the `segment-aware intra/inter split` is a valid direction
+- but the next bottleneck was no longer just "add inter-segment loss"
+- it became:
+  - whether segment units are appropriate
+  - and how to model boundary-local transition structure
+
+### 2.8 Semantic segment refinement
+This line has also already been explored through:
+
+- **`v2.4.2a`**
+- **`v2.4.2b`**
+- **`v2.4.2c`**
+
+What was tested:
+
+- cut-based semantic refinement
+- more conservative cut-budget control
+- contiguity-constrained semantic agglomerative segmentation
+
+Current conclusion:
+
+- semantic segment design is indeed important
+- but continuing to optimize segment partition itself did **not** stably beat `v2.4.1`
+- this line is useful diagnostically, but is **not** the current best budget direction
+
+### 2.9 Boundary-centered local window
+This has now been tested in three steps:
+
+- **`v2.4.3a`**: window direct penalty
+- **`v2.4.3b`**: window weighting / saliency signal
+- **`v2.4.3c`**: keypoint-aware boundary weighting
+
+Current conclusion:
+
+- `v2.4.3a` showed that direct boundary-window penalty is harmful
+- `v2.4.3b` succeeded and is currently the best line
+- `v2.4.3c` showed that more complex keypoint-aware weighting is not automatically better
+
+So the boundary-window line has now been validated in a concrete and useful form.
+
 ---
 
 ## 3. What We Have Learned So Far
@@ -224,6 +288,37 @@ the rule remains:
 
 This boundary should remain explicit.
 
+### 3.5 Boundary windows are useful only when their role is correct
+This has now become another core design rule.
+
+Bad direction:
+
+- boundary window directly becomes an extra structure penalty
+- local window is forced to align too strongly with coarse segment transition
+
+Better direction:
+
+- boundary window provides **where-to-focus** information
+- it modulates the importance of existing inter-segment regularization
+- it behaves as a saliency / weighting signal
+
+In short:
+
+> **boundary-local information is useful as a weighting signal before it is useful as a new penalty**
+
+### 3.6 Source pretraining depth is now a real bottleneck
+Recent `v2.4.3b` runs indicate that:
+
+- some tasks perform better with `source-only 50 epoch`
+- others perform better with `source-only 100 epoch`
+- the best source checkpoint is no longer globally shared across all source-target pairs
+
+This means:
+
+> **the source-side structure shaping strength / duration is target-dependent**
+
+This is now a more immediate bottleneck than further tweaking segment partition.
+
 ---
 
 ## 4. Current Version Line
@@ -266,59 +361,230 @@ This boundary should remain explicit.
 - improved over `v2.4.0`
 - confirmed that segment-aware intra/inter split is a valid mainline direction
 
+### `v2.4.2a`
+- first semantic cut-based segment refinement
+- confirmed that semantic boundary signals do change temporal units
+- did not stably beat `v2.4.1`
+
+### `v2.4.2b`
+- more conservative semantic cut refinement
+- added richer boundary score and cut-budget control
+- still did not beat `v2.4.1`
+
+### `v2.4.2c`
+- semantic agglomerative segmentation
+- improved engineering stability of segment construction
+- still did not convert into better final transfer performance
+
+### `v2.4.3a`
+- first boundary-centered sliding-window minimal version
+- direct penalty form
+- failed
+
+### `v2.4.3b`
+- boundary window used only as weighting / saliency signal
+- current best full 12-task result:
+  - **`0.6776`**
+- current effective mainline
+
+### `v2.4.3c`
+- keypoint-aware boundary weighting
+- did not improve over `v2.4.3b`
+- useful as a negative-but-informative attempt
+
 ---
 
 ## 5. What Still Needs To Be Solved
 
 Although many earlier reasonable ideas have already been tested, several issues remain unresolved.
 
-### 5.1 Phase is improved, but may still not be the final temporal unit
-`DOY-gap-aware` phase partition is already much better than uniform split, but it is still a hard segmentation.
+### 5.1 Source structure is now effective, but its optimal depth is unstable across targets
+This is now the most immediate issue.
 
-Open question:
+Observed phenomenon:
 
-- should the final temporal unit remain `phase`
-- or should it move toward a more general local temporal unit
+- some source-target pairs prefer `50 epoch`
+- others prefer `100 epoch`
+- the same source can have different best checkpoints for different targets
 
-Possible direction:
+This suggests:
 
-- **coherent temporal segment**
+- fixed source-only training depth is no longer ideal
+- source structure shaping is becoming too source-specific if pushed too far
+- we need a more target-aware source checkpoint decision mechanism
 
-This would be more general than a remote-sensing-specific phase notion.
+### 5.2 Target information still should not directly become a strong structure loss
+Earlier experiments already showed:
 
-### 5.2 Sliding-window local structure is still worth exploring
-The current phase design is still segment-based.
+- direct target pseudo-label compactness / clustering constraints are risky
+- target-side structure loss can easily degrade performance
 
-A likely next structural improvement is:
+So the open problem is not:
 
-- local sliding-window structure analysis
+- "how to add target structure penalty back"
 
-Why it still matters:
+but rather:
 
-- it captures local continuity better
-- it is less dependent on hard phase boundaries
-- it is more general across domains such as:
-  - remote sensing
-  - medicine
-  - weather
-  - traffic
+> **how to use target-side signals only as calibration / diagnosis / selection signals**
 
-This has not yet been fully implemented as a mainline structure unit.
+### 5.3 Checkpoint selection is now more urgent than further segment redesign
+At this stage:
 
-### 5.3 Intra-segment and inter-segment losses should likely be different
-This is now an important design insight.
+- `v2.4.2` already showed diminishing returns on segment refinement
+- `v2.4.3b` already showed that boundary-local weighting works
 
-Inside one coherent temporal segment, it is reasonable to constrain:
+So the next priority is no longer:
 
-- compactness
-- local smoothness
-- residual suppression
+- further redesigning temporal units themselves
 
-Across two different segments, it is **not** reasonable to use the same contraction logic.
+It is now:
 
-Instead, inter-segment losses should focus on:
+- deciding **which source checkpoint is best for which target**
 
-- transition regularity
+### 5.4 Unsupervised target metrics are useful, but not reliable in cold-start form
+This is another key constraint.
+
+For hard tasks, before TimeMatch warmup, initial target performance may be very low.
+In that regime:
+
+- raw confidence can be misleading
+- pseudo-label coverage can be unstable
+- consistency can be "consistently wrong"
+
+Therefore:
+
+> **target-side unsupervised metrics should be used after a short warmup adaptation, not as raw cold-start selectors**
+
+---
+
+## 6. Current Next Route
+
+### Completed clarification: `v2.4.3b` at `50 epoch` vs `100 epoch`
+The full `12-task` rerun for:
+
+- **`v2.4.3b + source-only 50 epoch`**
+
+has now completed.
+
+Its average result is:
+
+- **`v2.4.3b (50 epoch) = 0.6651`**
+
+compared with:
+
+- **`v2.4.3b (100 epoch) = 0.6776`**
+
+So the global conclusion is:
+
+- `50 epoch` is **not** the new universal best training depth
+- `100 epoch` remains better in overall average
+
+However, the more important result is:
+
+> **the best source checkpoint is clearly source-target dependent**
+
+Because the completed comparison already shows:
+
+- some tasks improve at `50 epoch`
+- some tasks improve at `100 epoch`
+- the differences are large enough that they cannot be dismissed as pure noise
+
+So the next route is no longer about finding one fixed better epoch for all tasks.
+It is about:
+
+> **how to choose the right source checkpoint for the current target**
+
+### `v2.5`
+The next mainline should therefore be:
+
+> **target-aware source structure calibration**
+
+This is now the correct place for the checkpoint-depth problem.
+
+More concretely:
+
+- keep `v2.4.3b` as the current structure backbone
+- do not go back to target structure penalties
+- do not prioritize MOE yet
+- solve:
+  - how far source structure shaping should go for a given source-target pair
+  - which source checkpoint is most appropriate for a given target
+
+This should be decomposed into:
+
+### `v2.5a`
+- finish the bookkeeping and comparison table for:
+  - `v2.4.3b (50 epoch)`
+  - `v2.4.3b (100 epoch)`
+- establish which tasks favor shorter or longer source-only training
+
+### `v2.5b`
+- run representative checkpoint sweeps on fast tasks
+- suggested source checkpoints:
+  - `30`
+  - `50`
+  - `70`
+  - `100`
+- cover multiple sources, e.g.:
+  - `FR1 -> AT1`
+  - `FR2 -> DK1`
+  - `DK1 -> FR2`
+  - `AT1 -> DK1`
+
+Goal:
+
+> verify and characterize how checkpoint preference depends on the source-target pair
+
+### `v2.5c`
+- implement:
+  - **source checkpoint bank**
+  - **short TimeMatch warmup**
+  - **target-aware unsupervised selection**
+
+Suggested selection signals:
+
+- high-confidence pseudo-label coverage
+- prediction-distribution health / entropy
+- teacher-student agreement
+- shift / temporal consistency
+
+Important rule:
+
+> these target signals are for calibration and selection, not for constructing a new strong target structure penalty
+
+### `v2.6`
+Only after `v2.5` becomes stable should we move to:
+
+- source-sensitive weighting / gating
+- `moe`
+- more adaptive per-source or per-pair weighting
+
+Because before checkpoint calibration is solved, MOE would still be allocating weights on top of an unstable source-structure depth problem.
+
+---
+
+## 7. Current Summary
+
+The project has now reached the following state:
+
+1. `source-only temporal structure shaping` is validated.
+2. `segment-aware intra/inter split` is validated.
+3. `boundary-centered local window` is validated, but only as a weighting signal.
+4. `v2.4.3b` is the current best source-structure mainline.
+5. `v2.4.2` showed that more segment refinement is not the current best budget direction.
+6. `v2.4.3b (50 epoch)` vs `v2.4.3b (100 epoch)` showed that:
+
+> **the next bottleneck is checkpoint calibration, not temporal-unit redesign**
+
+So the next route should no longer prioritize:
+
+- more segment refinement
+- stronger target structure penalty
+- or immediate MOE
+
+It should prioritize:
+
+- **target-aware source checkpoint calibration**
 - structural organization
 - boundary consistency
 
