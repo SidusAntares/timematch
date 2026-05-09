@@ -559,8 +559,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual'],
-        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, v2.4.1 segment-transition-residual, v2.4.2 semantic-segment transition residual, or v2.4.3 boundary-window segment transition residual',
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'segment_boundary_keypoint_residual'],
+        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, v2.4.1 segment-transition-residual, v2.4.2 semantic-segment transition residual, v2.4.3b boundary-window weighting, or v2.4.3c keypoint-aware boundary-window weighting',
     )
     parser.add_argument(
         '--source_structure_intra_trade_off',
@@ -615,6 +615,18 @@ if __name__ == '__main__':
         default=2,
         type=int,
         help='half-window size per side used for v2.4.3 boundary-centered local segment transition windows',
+    )
+    parser.add_argument(
+        '--source_structure_boundary_keypoint_turn_trade_off',
+        default=0.50,
+        type=float,
+        help='turning-pattern emphasis used by keypoint-aware boundary weighting in v2.4.3c',
+    )
+    parser.add_argument(
+        '--source_structure_boundary_keypoint_curvature_trade_off',
+        default=0.25,
+        type=float,
+        help='curvature emphasis used by keypoint-aware boundary weighting in v2.4.3c',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')
