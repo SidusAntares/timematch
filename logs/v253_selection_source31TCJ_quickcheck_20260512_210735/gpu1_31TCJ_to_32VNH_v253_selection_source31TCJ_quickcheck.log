@@ -1,0 +1,817 @@
+Namespace(data_root='/data/user/DBL/timematch_data', num_blocks=100, source='france/31TCJ/2017', target='denmark/32VNH/2017', num_folds=1, val_ratio=0.1, test_ratio=0.2, sample_pixels_val=True, output_dir='outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_warmup_epoch_30', experiment_name='timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_warmup_epoch_30', num_workers=8, seed=1, device='cuda', log_step=10, eval=False, overall=False, skip_final_test=True, combine_spring_and_winter=False, closed_set=True, epochs=5, batch_size=128, lr=0.0001, weight_decay=0.0001, focal_loss_gamma=1.0, num_pixels=64, seq_length=30, model='pseltae', input_dim=10, with_extra=False, tensorboard_log_dir='runs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_warmup_epoch_30', train_on_target=False, source_checkpoint_epochs='', source_checkpoint_dirname='checkpoints', with_shift_aug=False, shift_aug_p=1.0, max_shift_aug=60, source_feature_reshaper='residual_temporal_conv', source_feature_reshaper_strength=0.1, source_feature_reshaper_kernel_size=3, source_feature_reshaper_reg_trade_off=0.05, source_feature_dual_path=True, source_feature_dual_cls_trade_off=1.0, source_feature_dual_relation_trade_off=0.03, source_phase_partition_mode='doy_gap', source_segment_partition_mode='doy_gap', source_phase_count=5, source_segment_count=5, source_phase_gap_threshold=45, source_phase_min_points=3, source_phase_max_points=8, source_phase_max_span=120, source_phase_min_sample_points=2, source_segment_semantic_quantile=0.75, source_segment_semantic_max_samples_per_class=128, source_segment_semantic_curvature_trade_off=0.5, source_segment_semantic_energy_trade_off=0.25, source_segment_semantic_similarity_trade_off=0.25, source_segment_semantic_max_extra_cuts_per_base=2, source_segment_semantic_merge_boundary_trade_off=0.5, source_segment_semantic_aggl_min_points=3, source_segment_semantic_aggl_target_slack=1, source_segment_semantic_aggl_merge_cost_tolerance=1.15, source_segment_semantic_aggl_dynamics_trade_off=0.35, source_structure_loss_version='segment_boundary_window_residual', source_structure_intra_trade_off=1.0, source_structure_amplitude_trade_off=0.0, source_structure_interphase_trade_off=0.0, source_structure_shape_trade_off=0.0, source_structure_trend_trade_off=0.05, source_structure_season_trade_off=0.0, source_structure_segment_inter_trade_off=0.02, source_structure_boundary_window_trade_off=0.2, source_structure_boundary_window_size=2, method='timematch', weights='outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v250_boundarywindow_s010_rel003_ckptbank', weights_checkpoint='checkpoints/epoch_30.pt', pseudo_threshold=0.9, ema_decay=0.9999, trade_off=2.0, estimate_shift=True, steps_per_epoch=500, balance_source=True, use_focal_loss=True, shift_source=True, sample_size=100, max_temporal_shift=60, domain_specific_bn=True, shift_estimator='AM', run_validation=True, disable_validation_in_timematch=True, output_student=True, selection_metrics_out='outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selection/epoch_30_metrics.json', selection_score_coverage_weight=0.25, selection_score_confidence_weight=0.15, selection_score_agreement_weight=0.15, selection_score_entropy_weight=0.1, selection_score_class_balance_weight=0.45, selection_score_source_prior_weight=0.25, selection_score_shift_stability_weight=0.2, selection_metric_batches=200)
+Excluded 15690 parcels from closed-set loading because class 'unknown' is not kept.
+Using classes: ['corn', 'horsebeans', 'meadow', 'spring_barley', 'spring_peas', 'sunflowers', 'winter_barley', 'winter_oat', 'winter_peas', 'winter_rapeseed', 'winter_triticale', 'winter_wheat']
+Excluded 1534 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 14 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 45 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 36 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 311 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 6413 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 3856 parcels from closed-set loading because class 'winter_rye' is not kept.
+Starting fold 0...
+Excluded 118 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 4 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 18 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 467 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 330 parcels from closed-set loading because class 'winter_rye' is not kept.
+Excluded 249 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 4 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 8 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 8 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 49 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 903 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 612 parcels from closed-set loading because class 'winter_rye' is not kept.
+evaluation dataset: denmark/32VNH/2017
+val target data: 3874 (31 batches)
+test taget data: 7791 (1513 batches)
+PseLTae(
+  (spatial_encoder): PixelSetEncoder(
+    (mlp1): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=10, out_features=32, bias=False)
+        (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+      (1): LinearLayer(
+        (linear): Linear(in_features=32, out_features=64, bias=False)
+        (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (mlp2): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=128, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+  )
+  (temporal_encoder): LTAE(
+    (inconv): LinearLayer(
+      (linear): Linear(in_features=128, out_features=256, bias=False)
+      (norm): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (positional_enc): Embedding(565, 256)
+    (attention_heads): MultiHeadAttention(
+      (key): Linear(in_features=256, out_features=128, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+      (softmax): Softmax(dim=-1)
+    )
+    (mlp): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=256, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (dropout): Dropout(p=0.2, inplace=False)
+  )
+  (decoder): Sequential(
+    (0): LinearLayer(
+      (linear): Linear(in_features=128, out_features=64, bias=False)
+      (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (1): LinearLayer(
+      (linear): Linear(in_features=64, out_features=32, bias=False)
+      (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (2): Linear(in_features=32, out_features=12, bias=True)
+  )
+)
+Number of trainable parameters: 129356
+Excluded 21 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 5 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 27 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 8582 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 19 parcels from closed-set loading because class 'winter_rye' is not kept.
+using balanced loader for source
+Excluded 893 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 6 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 34 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 20 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 182 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 3162 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 2178 parcels from closed-set loading because class 'winter_rye' is not kept.
+size of source dataset: 43352 (338 batches)
+size of target dataset: 27212 (212 batches)
+Loading source weights from outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v250_boundarywindow_s010_rel003_ckptbank/fold_0/checkpoints/epoch_30.pt
+source segment partition: mode=doy_gap, segment_count=8, gap_threshold=45, min_points=3, max_points=8, max_span=120, intervals=[25,85], [95,155], [165,215], [225,250], [255,280], [285,310], [315,335], [340,360]
+Most accurate shift -47 with 0.701
+Best Inception Score shift -48 with accuracy 0.695
+Most accurate shift -47 with 0.696
+Best AM Score shift -47 with accuracy 0.696
+Teacher pseudo label F1 0.693 (n=13058)
+Most accurate shift -47 with 0.716
+Best AM Score shift -47 with accuracy 0.716
+Teacher pseudo label F1 0.687 (n=13841)
+Most accurate shift -47 with 0.731
+Best AM Score shift -47 with accuracy 0.731
+Teacher pseudo label F1 0.689 (n=14572)
+Most accurate shift -47 with 0.744
+Best AM Score shift -47 with accuracy 0.744
+Teacher pseudo label F1 0.686 (n=15362)
+Most accurate shift -47 with 0.760
+Best AM Score shift -47 with accuracy 0.760
+Teacher pseudo label F1 0.686 (n=15886)
+Target selection metrics: selection_score=0.6098503938143153, selection_coverage=0.2532421946525574, selection_mean_confidence=0.7069867849349976, selection_teacher_student_agreement=0.834179699420929, selection_prediction_entropy=0.3716305715384984, selection_class_entropy=0.7167852284195128, selection_high_conf_class_entropy=0.5493295585162274, selection_effective_class_fraction=0.4947204887866974, selection_high_conf_effective_class_fraction=0.32632091641426086, selection_max_class_fraction=0.3498828113079071, selection_high_conf_max_class_fraction=0.39148542284965515, selection_source_prior_js=0.2027022753900028, selection_shift_stability=1.0, selection_shift_std_norm=0.0, selection_shift_last_delta_norm=0.0, target_to_source_shift=-47, epochs_ran=5
+Skipping final labeled test/eval because --skip_final_test=True
+Skipping overall_performance aggregation because --skip_final_test=True
+Namespace(data_root='/data/user/DBL/timematch_data', num_blocks=100, source='france/31TCJ/2017', target='denmark/32VNH/2017', num_folds=1, val_ratio=0.1, test_ratio=0.2, sample_pixels_val=True, output_dir='outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_warmup_epoch_50', experiment_name='timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_warmup_epoch_50', num_workers=8, seed=1, device='cuda', log_step=10, eval=False, overall=False, skip_final_test=True, combine_spring_and_winter=False, closed_set=True, epochs=5, batch_size=128, lr=0.0001, weight_decay=0.0001, focal_loss_gamma=1.0, num_pixels=64, seq_length=30, model='pseltae', input_dim=10, with_extra=False, tensorboard_log_dir='runs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_warmup_epoch_50', train_on_target=False, source_checkpoint_epochs='', source_checkpoint_dirname='checkpoints', with_shift_aug=False, shift_aug_p=1.0, max_shift_aug=60, source_feature_reshaper='residual_temporal_conv', source_feature_reshaper_strength=0.1, source_feature_reshaper_kernel_size=3, source_feature_reshaper_reg_trade_off=0.05, source_feature_dual_path=True, source_feature_dual_cls_trade_off=1.0, source_feature_dual_relation_trade_off=0.03, source_phase_partition_mode='doy_gap', source_segment_partition_mode='doy_gap', source_phase_count=5, source_segment_count=5, source_phase_gap_threshold=45, source_phase_min_points=3, source_phase_max_points=8, source_phase_max_span=120, source_phase_min_sample_points=2, source_segment_semantic_quantile=0.75, source_segment_semantic_max_samples_per_class=128, source_segment_semantic_curvature_trade_off=0.5, source_segment_semantic_energy_trade_off=0.25, source_segment_semantic_similarity_trade_off=0.25, source_segment_semantic_max_extra_cuts_per_base=2, source_segment_semantic_merge_boundary_trade_off=0.5, source_segment_semantic_aggl_min_points=3, source_segment_semantic_aggl_target_slack=1, source_segment_semantic_aggl_merge_cost_tolerance=1.15, source_segment_semantic_aggl_dynamics_trade_off=0.35, source_structure_loss_version='segment_boundary_window_residual', source_structure_intra_trade_off=1.0, source_structure_amplitude_trade_off=0.0, source_structure_interphase_trade_off=0.0, source_structure_shape_trade_off=0.0, source_structure_trend_trade_off=0.05, source_structure_season_trade_off=0.0, source_structure_segment_inter_trade_off=0.02, source_structure_boundary_window_trade_off=0.2, source_structure_boundary_window_size=2, method='timematch', weights='outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v250_boundarywindow_s010_rel003_ckptbank', weights_checkpoint='checkpoints/epoch_50.pt', pseudo_threshold=0.9, ema_decay=0.9999, trade_off=2.0, estimate_shift=True, steps_per_epoch=500, balance_source=True, use_focal_loss=True, shift_source=True, sample_size=100, max_temporal_shift=60, domain_specific_bn=True, shift_estimator='AM', run_validation=True, disable_validation_in_timematch=True, output_student=True, selection_metrics_out='outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selection/epoch_50_metrics.json', selection_score_coverage_weight=0.25, selection_score_confidence_weight=0.15, selection_score_agreement_weight=0.15, selection_score_entropy_weight=0.1, selection_score_class_balance_weight=0.45, selection_score_source_prior_weight=0.25, selection_score_shift_stability_weight=0.2, selection_metric_batches=200)
+Excluded 15690 parcels from closed-set loading because class 'unknown' is not kept.
+Using classes: ['corn', 'horsebeans', 'meadow', 'spring_barley', 'spring_peas', 'sunflowers', 'winter_barley', 'winter_oat', 'winter_peas', 'winter_rapeseed', 'winter_triticale', 'winter_wheat']
+Excluded 1534 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 14 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 45 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 36 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 311 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 6413 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 3856 parcels from closed-set loading because class 'winter_rye' is not kept.
+Starting fold 0...
+Excluded 118 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 4 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 18 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 467 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 330 parcels from closed-set loading because class 'winter_rye' is not kept.
+Excluded 249 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 4 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 8 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 8 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 49 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 903 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 612 parcels from closed-set loading because class 'winter_rye' is not kept.
+evaluation dataset: denmark/32VNH/2017
+val target data: 3874 (31 batches)
+test taget data: 7791 (1513 batches)
+PseLTae(
+  (spatial_encoder): PixelSetEncoder(
+    (mlp1): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=10, out_features=32, bias=False)
+        (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+      (1): LinearLayer(
+        (linear): Linear(in_features=32, out_features=64, bias=False)
+        (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (mlp2): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=128, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+  )
+  (temporal_encoder): LTAE(
+    (inconv): LinearLayer(
+      (linear): Linear(in_features=128, out_features=256, bias=False)
+      (norm): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (positional_enc): Embedding(565, 256)
+    (attention_heads): MultiHeadAttention(
+      (key): Linear(in_features=256, out_features=128, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+      (softmax): Softmax(dim=-1)
+    )
+    (mlp): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=256, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (dropout): Dropout(p=0.2, inplace=False)
+  )
+  (decoder): Sequential(
+    (0): LinearLayer(
+      (linear): Linear(in_features=128, out_features=64, bias=False)
+      (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (1): LinearLayer(
+      (linear): Linear(in_features=64, out_features=32, bias=False)
+      (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (2): Linear(in_features=32, out_features=12, bias=True)
+  )
+)
+Number of trainable parameters: 129356
+Excluded 21 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 5 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 27 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 8582 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 19 parcels from closed-set loading because class 'winter_rye' is not kept.
+using balanced loader for source
+Excluded 893 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 6 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 34 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 20 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 182 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 3162 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 2178 parcels from closed-set loading because class 'winter_rye' is not kept.
+size of source dataset: 43352 (338 batches)
+size of target dataset: 27212 (212 batches)
+Loading source weights from outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v250_boundarywindow_s010_rel003_ckptbank/fold_0/checkpoints/epoch_50.pt
+source segment partition: mode=doy_gap, segment_count=8, gap_threshold=45, min_points=3, max_points=8, max_span=120, intervals=[25,85], [95,155], [165,215], [225,250], [255,280], [285,310], [315,335], [340,360]
+Most accurate shift -39 with 0.743
+Best Inception Score shift -47 with accuracy 0.738
+Most accurate shift -48 with 0.736
+Best AM Score shift -46 with accuracy 0.725
+Teacher pseudo label F1 0.470 (n=22334)
+Most accurate shift -39 with 0.749
+Best AM Score shift -46 with accuracy 0.740
+Teacher pseudo label F1 0.492 (n=22938)
+Most accurate shift -39 with 0.766
+Best AM Score shift -46 with accuracy 0.756
+Teacher pseudo label F1 0.537 (n=23331)
+Most accurate shift -39 with 0.780
+Best AM Score shift -46 with accuracy 0.769
+Teacher pseudo label F1 0.500 (n=23921)
+Most accurate shift -39 with 0.795
+Best AM Score shift -46 with accuracy 0.784
+Teacher pseudo label F1 0.590 (n=24163)
+Target selection metrics: selection_score=0.6709642354771262, selection_coverage=0.3822656273841858, selection_mean_confidence=0.7707712054252625, selection_teacher_student_agreement=0.8427734375, selection_prediction_entropy=0.28891569381367127, selection_class_entropy=0.7170456277482911, selection_high_conf_class_entropy=0.5836334761350375, selection_effective_class_fraction=0.49504074454307556, selection_high_conf_effective_class_fraction=0.35535717010498047, selection_max_class_fraction=0.29542967677116394, selection_high_conf_max_class_fraction=0.40741875767707825, selection_source_prior_js=0.21642682613068281, selection_shift_stability=1.0, selection_shift_std_norm=0.0, selection_shift_last_delta_norm=0.0, target_to_source_shift=-46, epochs_ran=5
+Skipping final labeled test/eval because --skip_final_test=True
+Skipping overall_performance aggregation because --skip_final_test=True
+Namespace(data_root='/data/user/DBL/timematch_data', num_blocks=100, source='france/31TCJ/2017', target='denmark/32VNH/2017', num_folds=1, val_ratio=0.1, test_ratio=0.2, sample_pixels_val=True, output_dir='outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_warmup_epoch_70', experiment_name='timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_warmup_epoch_70', num_workers=8, seed=1, device='cuda', log_step=10, eval=False, overall=False, skip_final_test=True, combine_spring_and_winter=False, closed_set=True, epochs=5, batch_size=128, lr=0.0001, weight_decay=0.0001, focal_loss_gamma=1.0, num_pixels=64, seq_length=30, model='pseltae', input_dim=10, with_extra=False, tensorboard_log_dir='runs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_warmup_epoch_70', train_on_target=False, source_checkpoint_epochs='', source_checkpoint_dirname='checkpoints', with_shift_aug=False, shift_aug_p=1.0, max_shift_aug=60, source_feature_reshaper='residual_temporal_conv', source_feature_reshaper_strength=0.1, source_feature_reshaper_kernel_size=3, source_feature_reshaper_reg_trade_off=0.05, source_feature_dual_path=True, source_feature_dual_cls_trade_off=1.0, source_feature_dual_relation_trade_off=0.03, source_phase_partition_mode='doy_gap', source_segment_partition_mode='doy_gap', source_phase_count=5, source_segment_count=5, source_phase_gap_threshold=45, source_phase_min_points=3, source_phase_max_points=8, source_phase_max_span=120, source_phase_min_sample_points=2, source_segment_semantic_quantile=0.75, source_segment_semantic_max_samples_per_class=128, source_segment_semantic_curvature_trade_off=0.5, source_segment_semantic_energy_trade_off=0.25, source_segment_semantic_similarity_trade_off=0.25, source_segment_semantic_max_extra_cuts_per_base=2, source_segment_semantic_merge_boundary_trade_off=0.5, source_segment_semantic_aggl_min_points=3, source_segment_semantic_aggl_target_slack=1, source_segment_semantic_aggl_merge_cost_tolerance=1.15, source_segment_semantic_aggl_dynamics_trade_off=0.35, source_structure_loss_version='segment_boundary_window_residual', source_structure_intra_trade_off=1.0, source_structure_amplitude_trade_off=0.0, source_structure_interphase_trade_off=0.0, source_structure_shape_trade_off=0.0, source_structure_trend_trade_off=0.05, source_structure_season_trade_off=0.0, source_structure_segment_inter_trade_off=0.02, source_structure_boundary_window_trade_off=0.2, source_structure_boundary_window_size=2, method='timematch', weights='outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v250_boundarywindow_s010_rel003_ckptbank', weights_checkpoint='checkpoints/epoch_70.pt', pseudo_threshold=0.9, ema_decay=0.9999, trade_off=2.0, estimate_shift=True, steps_per_epoch=500, balance_source=True, use_focal_loss=True, shift_source=True, sample_size=100, max_temporal_shift=60, domain_specific_bn=True, shift_estimator='AM', run_validation=True, disable_validation_in_timematch=True, output_student=True, selection_metrics_out='outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selection/epoch_70_metrics.json', selection_score_coverage_weight=0.25, selection_score_confidence_weight=0.15, selection_score_agreement_weight=0.15, selection_score_entropy_weight=0.1, selection_score_class_balance_weight=0.45, selection_score_source_prior_weight=0.25, selection_score_shift_stability_weight=0.2, selection_metric_batches=200)
+Excluded 15690 parcels from closed-set loading because class 'unknown' is not kept.
+Using classes: ['corn', 'horsebeans', 'meadow', 'spring_barley', 'spring_peas', 'sunflowers', 'winter_barley', 'winter_oat', 'winter_peas', 'winter_rapeseed', 'winter_triticale', 'winter_wheat']
+Excluded 1534 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 14 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 45 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 36 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 311 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 6413 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 3856 parcels from closed-set loading because class 'winter_rye' is not kept.
+Starting fold 0...
+Excluded 118 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 4 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 18 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 467 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 330 parcels from closed-set loading because class 'winter_rye' is not kept.
+Excluded 249 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 4 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 8 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 8 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 49 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 903 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 612 parcels from closed-set loading because class 'winter_rye' is not kept.
+evaluation dataset: denmark/32VNH/2017
+val target data: 3874 (31 batches)
+test taget data: 7791 (1513 batches)
+PseLTae(
+  (spatial_encoder): PixelSetEncoder(
+    (mlp1): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=10, out_features=32, bias=False)
+        (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+      (1): LinearLayer(
+        (linear): Linear(in_features=32, out_features=64, bias=False)
+        (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (mlp2): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=128, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+  )
+  (temporal_encoder): LTAE(
+    (inconv): LinearLayer(
+      (linear): Linear(in_features=128, out_features=256, bias=False)
+      (norm): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (positional_enc): Embedding(565, 256)
+    (attention_heads): MultiHeadAttention(
+      (key): Linear(in_features=256, out_features=128, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+      (softmax): Softmax(dim=-1)
+    )
+    (mlp): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=256, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (dropout): Dropout(p=0.2, inplace=False)
+  )
+  (decoder): Sequential(
+    (0): LinearLayer(
+      (linear): Linear(in_features=128, out_features=64, bias=False)
+      (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (1): LinearLayer(
+      (linear): Linear(in_features=64, out_features=32, bias=False)
+      (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (2): Linear(in_features=32, out_features=12, bias=True)
+  )
+)
+Number of trainable parameters: 129356
+Excluded 21 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 5 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 27 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 8582 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 19 parcels from closed-set loading because class 'winter_rye' is not kept.
+using balanced loader for source
+Excluded 893 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 6 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 34 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 20 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 182 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 3162 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 2178 parcels from closed-set loading because class 'winter_rye' is not kept.
+size of source dataset: 43352 (338 batches)
+size of target dataset: 27212 (212 batches)
+Loading source weights from outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v250_boundarywindow_s010_rel003_ckptbank/fold_0/checkpoints/epoch_70.pt
+source segment partition: mode=doy_gap, segment_count=8, gap_threshold=45, min_points=3, max_points=8, max_span=120, intervals=[25,85], [95,155], [165,215], [225,250], [255,280], [285,310], [315,335], [340,360]
+Most accurate shift -47 with 0.697
+Best Inception Score shift -47 with accuracy 0.697
+Most accurate shift -48 with 0.692
+Best AM Score shift -45 with accuracy 0.679
+Teacher pseudo label F1 0.491 (n=31557)
+Most accurate shift -45 with 0.692
+Best AM Score shift -44 with accuracy 0.681
+Teacher pseudo label F1 0.480 (n=32103)
+Most accurate shift -45 with 0.706
+Best AM Score shift -44 with accuracy 0.697
+Teacher pseudo label F1 0.529 (n=32303)
+Most accurate shift -45 with 0.705
+Best AM Score shift -44 with accuracy 0.695
+Teacher pseudo label F1 0.480 (n=32665)
+Most accurate shift -45 with 0.721
+Best AM Score shift -44 with accuracy 0.712
+Teacher pseudo label F1 0.603 (n=32612)
+Target selection metrics: selection_score=0.6794106166631129, selection_coverage=0.5110937356948853, selection_mean_confidence=0.8156171441078186, selection_teacher_student_agreement=0.8308984637260437, selection_prediction_entropy=0.23231460393474315, selection_class_entropy=0.6377870857715283, selection_high_conf_class_entropy=0.5316486935535835, selection_effective_class_fraction=0.40654313564300537, selection_high_conf_effective_class_fraction=0.31229427456855774, selection_max_class_fraction=0.4094531238079071, selection_high_conf_max_class_fraction=0.4409966468811035, selection_source_prior_js=0.17897550801995357, selection_shift_stability=0.9966666666666667, selection_shift_std_norm=0.006666666666666667, selection_shift_last_delta_norm=0.0, target_to_source_shift=-44, epochs_ran=5
+Skipping final labeled test/eval because --skip_final_test=True
+Skipping overall_performance aggregation because --skip_final_test=True
+Namespace(data_root='/data/user/DBL/timematch_data', num_blocks=100, source='france/31TCJ/2017', target='denmark/32VNH/2017', num_folds=1, val_ratio=0.1, test_ratio=0.2, sample_pixels_val=True, output_dir='outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_warmup_epoch_100', experiment_name='timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_warmup_epoch_100', num_workers=8, seed=1, device='cuda', log_step=10, eval=False, overall=False, skip_final_test=True, combine_spring_and_winter=False, closed_set=True, epochs=5, batch_size=128, lr=0.0001, weight_decay=0.0001, focal_loss_gamma=1.0, num_pixels=64, seq_length=30, model='pseltae', input_dim=10, with_extra=False, tensorboard_log_dir='runs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_warmup_epoch_100', train_on_target=False, source_checkpoint_epochs='', source_checkpoint_dirname='checkpoints', with_shift_aug=False, shift_aug_p=1.0, max_shift_aug=60, source_feature_reshaper='residual_temporal_conv', source_feature_reshaper_strength=0.1, source_feature_reshaper_kernel_size=3, source_feature_reshaper_reg_trade_off=0.05, source_feature_dual_path=True, source_feature_dual_cls_trade_off=1.0, source_feature_dual_relation_trade_off=0.03, source_phase_partition_mode='doy_gap', source_segment_partition_mode='doy_gap', source_phase_count=5, source_segment_count=5, source_phase_gap_threshold=45, source_phase_min_points=3, source_phase_max_points=8, source_phase_max_span=120, source_phase_min_sample_points=2, source_segment_semantic_quantile=0.75, source_segment_semantic_max_samples_per_class=128, source_segment_semantic_curvature_trade_off=0.5, source_segment_semantic_energy_trade_off=0.25, source_segment_semantic_similarity_trade_off=0.25, source_segment_semantic_max_extra_cuts_per_base=2, source_segment_semantic_merge_boundary_trade_off=0.5, source_segment_semantic_aggl_min_points=3, source_segment_semantic_aggl_target_slack=1, source_segment_semantic_aggl_merge_cost_tolerance=1.15, source_segment_semantic_aggl_dynamics_trade_off=0.35, source_structure_loss_version='segment_boundary_window_residual', source_structure_intra_trade_off=1.0, source_structure_amplitude_trade_off=0.0, source_structure_interphase_trade_off=0.0, source_structure_shape_trade_off=0.0, source_structure_trend_trade_off=0.05, source_structure_season_trade_off=0.0, source_structure_segment_inter_trade_off=0.02, source_structure_boundary_window_trade_off=0.2, source_structure_boundary_window_size=2, method='timematch', weights='outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v250_boundarywindow_s010_rel003_ckptbank', weights_checkpoint='checkpoints/epoch_100.pt', pseudo_threshold=0.9, ema_decay=0.9999, trade_off=2.0, estimate_shift=True, steps_per_epoch=500, balance_source=True, use_focal_loss=True, shift_source=True, sample_size=100, max_temporal_shift=60, domain_specific_bn=True, shift_estimator='AM', run_validation=True, disable_validation_in_timematch=True, output_student=True, selection_metrics_out='outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selection/epoch_100_metrics.json', selection_score_coverage_weight=0.25, selection_score_confidence_weight=0.15, selection_score_agreement_weight=0.15, selection_score_entropy_weight=0.1, selection_score_class_balance_weight=0.45, selection_score_source_prior_weight=0.25, selection_score_shift_stability_weight=0.2, selection_metric_batches=200)
+Excluded 15690 parcels from closed-set loading because class 'unknown' is not kept.
+Using classes: ['corn', 'horsebeans', 'meadow', 'spring_barley', 'spring_peas', 'sunflowers', 'winter_barley', 'winter_oat', 'winter_peas', 'winter_rapeseed', 'winter_triticale', 'winter_wheat']
+Excluded 1534 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 14 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 45 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 36 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 311 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 6413 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 3856 parcels from closed-set loading because class 'winter_rye' is not kept.
+Starting fold 0...
+Excluded 118 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 4 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 18 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 467 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 330 parcels from closed-set loading because class 'winter_rye' is not kept.
+Excluded 249 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 4 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 8 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 8 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 49 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 903 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 612 parcels from closed-set loading because class 'winter_rye' is not kept.
+evaluation dataset: denmark/32VNH/2017
+val target data: 3874 (31 batches)
+test taget data: 7791 (1513 batches)
+PseLTae(
+  (spatial_encoder): PixelSetEncoder(
+    (mlp1): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=10, out_features=32, bias=False)
+        (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+      (1): LinearLayer(
+        (linear): Linear(in_features=32, out_features=64, bias=False)
+        (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (mlp2): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=128, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+  )
+  (temporal_encoder): LTAE(
+    (inconv): LinearLayer(
+      (linear): Linear(in_features=128, out_features=256, bias=False)
+      (norm): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (positional_enc): Embedding(565, 256)
+    (attention_heads): MultiHeadAttention(
+      (key): Linear(in_features=256, out_features=128, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+      (softmax): Softmax(dim=-1)
+    )
+    (mlp): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=256, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (dropout): Dropout(p=0.2, inplace=False)
+  )
+  (decoder): Sequential(
+    (0): LinearLayer(
+      (linear): Linear(in_features=128, out_features=64, bias=False)
+      (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (1): LinearLayer(
+      (linear): Linear(in_features=64, out_features=32, bias=False)
+      (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (2): Linear(in_features=32, out_features=12, bias=True)
+  )
+)
+Number of trainable parameters: 129356
+Excluded 21 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 5 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 27 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 8582 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 19 parcels from closed-set loading because class 'winter_rye' is not kept.
+using balanced loader for source
+Excluded 893 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 6 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 34 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 20 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 182 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 3162 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 2178 parcels from closed-set loading because class 'winter_rye' is not kept.
+size of source dataset: 43352 (338 batches)
+size of target dataset: 27212 (212 batches)
+Loading source weights from outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v250_boundarywindow_s010_rel003_ckptbank/fold_0/checkpoints/epoch_100.pt
+source segment partition: mode=doy_gap, segment_count=8, gap_threshold=45, min_points=3, max_points=8, max_span=120, intervals=[25,85], [95,155], [165,215], [225,250], [255,280], [285,310], [315,335], [340,360]
+Most accurate shift -47 with 0.720
+Best Inception Score shift -47 with accuracy 0.720
+Most accurate shift -47 with 0.714
+Best AM Score shift -46 with accuracy 0.711
+Teacher pseudo label F1 0.512 (n=30230)
+Most accurate shift -46 with 0.731
+Best AM Score shift -46 with accuracy 0.731
+Teacher pseudo label F1 0.510 (n=31477)
+Most accurate shift -46 with 0.747
+Best AM Score shift -46 with accuracy 0.747
+Teacher pseudo label F1 0.508 (n=32372)
+Most accurate shift -46 with 0.757
+Best AM Score shift -46 with accuracy 0.757
+Teacher pseudo label F1 0.514 (n=33461)
+Most accurate shift -46 with 0.773
+Best AM Score shift -46 with accuracy 0.773
+Teacher pseudo label F1 0.566 (n=34141)
+Target selection metrics: selection_score=0.7363758373354488, selection_coverage=0.5385156273841858, selection_mean_confidence=0.8229966163635254, selection_teacher_student_agreement=0.8401952981948853, selection_prediction_entropy=0.22427443884528114, selection_class_entropy=0.7105117538019107, selection_high_conf_class_entropy=0.6096029361657873, selection_effective_class_fraction=0.4870680868625641, selection_high_conf_effective_class_fraction=0.3790450096130371, selection_max_class_fraction=0.333984375, selection_high_conf_max_class_fraction=0.3802408277988434, selection_source_prior_js=0.18546720391621335, selection_shift_stability=1.0, selection_shift_std_norm=0.0, selection_shift_last_delta_norm=0.0, target_to_source_shift=-46, epochs_ran=5
+Skipping final labeled test/eval because --skip_final_test=True
+Skipping overall_performance aggregation because --skip_final_test=True
+{
+  "best_weights_checkpoint": "checkpoints/epoch_100.pt",
+  "best_selection_score": 0.7363758373354488,
+  "best_metrics_path": "outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selection/epoch_100_metrics.json",
+  "all_candidates": [
+    {
+      "weights_checkpoint": "checkpoints/epoch_100.pt",
+      "selection_score": 0.7363758373354488,
+      "selection_coverage": 0.5385156273841858,
+      "selection_mean_confidence": 0.8229966163635254,
+      "selection_teacher_student_agreement": 0.8401952981948853,
+      "selection_prediction_entropy": 0.22427443884528114,
+      "selection_class_entropy": 0.7105117538019107,
+      "selection_high_conf_class_entropy": 0.6096029361657873,
+      "selection_source_prior_js": 0.18546720391621335,
+      "selection_shift_stability": 1.0,
+      "selection_max_class_fraction": 0.333984375,
+      "metrics_path": "outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selection/epoch_100_metrics.json"
+    },
+    {
+      "weights_checkpoint": "checkpoints/epoch_30.pt",
+      "selection_score": 0.6098503938143153,
+      "selection_coverage": 0.2532421946525574,
+      "selection_mean_confidence": 0.7069867849349976,
+      "selection_teacher_student_agreement": 0.834179699420929,
+      "selection_prediction_entropy": 0.3716305715384984,
+      "selection_class_entropy": 0.7167852284195128,
+      "selection_high_conf_class_entropy": 0.5493295585162274,
+      "selection_source_prior_js": 0.2027022753900028,
+      "selection_shift_stability": 1.0,
+      "selection_max_class_fraction": 0.3498828113079071,
+      "metrics_path": "outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selection/epoch_30_metrics.json"
+    },
+    {
+      "weights_checkpoint": "checkpoints/epoch_50.pt",
+      "selection_score": 0.6709642354771262,
+      "selection_coverage": 0.3822656273841858,
+      "selection_mean_confidence": 0.7707712054252625,
+      "selection_teacher_student_agreement": 0.8427734375,
+      "selection_prediction_entropy": 0.28891569381367127,
+      "selection_class_entropy": 0.7170456277482911,
+      "selection_high_conf_class_entropy": 0.5836334761350375,
+      "selection_source_prior_js": 0.21642682613068281,
+      "selection_shift_stability": 1.0,
+      "selection_max_class_fraction": 0.29542967677116394,
+      "metrics_path": "outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selection/epoch_50_metrics.json"
+    },
+    {
+      "weights_checkpoint": "checkpoints/epoch_70.pt",
+      "selection_score": 0.6794106166631129,
+      "selection_coverage": 0.5110937356948853,
+      "selection_mean_confidence": 0.8156171441078186,
+      "selection_teacher_student_agreement": 0.8308984637260437,
+      "selection_prediction_entropy": 0.23231460393474315,
+      "selection_class_entropy": 0.6377870857715283,
+      "selection_high_conf_class_entropy": 0.5316486935535835,
+      "selection_source_prior_js": 0.17897550801995357,
+      "selection_shift_stability": 0.9966666666666667,
+      "selection_max_class_fraction": 0.4094531238079071,
+      "metrics_path": "outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selection/epoch_70_metrics.json"
+    }
+  ]
+}
+Selected checkpoint for 31TCJ -> 32VNH: checkpoints/epoch_100.pt
+Namespace(data_root='/data/user/DBL/timematch_data', num_blocks=100, source='france/31TCJ/2017', target='denmark/32VNH/2017', num_folds=1, val_ratio=0.1, test_ratio=0.2, sample_pixels_val=True, output_dir='outputs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selected', experiment_name='timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selected', num_workers=8, seed=1, device='cuda', log_step=10, eval=False, overall=False, skip_final_test=False, combine_spring_and_winter=False, closed_set=True, epochs=20, batch_size=128, lr=0.0001, weight_decay=0.0001, focal_loss_gamma=1.0, num_pixels=64, seq_length=30, model='pseltae', input_dim=10, with_extra=False, tensorboard_log_dir='runs/timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selected', train_on_target=False, source_checkpoint_epochs='', source_checkpoint_dirname='checkpoints', with_shift_aug=False, shift_aug_p=1.0, max_shift_aug=60, source_feature_reshaper='residual_temporal_conv', source_feature_reshaper_strength=0.1, source_feature_reshaper_kernel_size=3, source_feature_reshaper_reg_trade_off=0.05, source_feature_dual_path=True, source_feature_dual_cls_trade_off=1.0, source_feature_dual_relation_trade_off=0.03, source_phase_partition_mode='doy_gap', source_segment_partition_mode='doy_gap', source_phase_count=5, source_segment_count=5, source_phase_gap_threshold=45, source_phase_min_points=3, source_phase_max_points=8, source_phase_max_span=120, source_phase_min_sample_points=2, source_segment_semantic_quantile=0.75, source_segment_semantic_max_samples_per_class=128, source_segment_semantic_curvature_trade_off=0.5, source_segment_semantic_energy_trade_off=0.25, source_segment_semantic_similarity_trade_off=0.25, source_segment_semantic_max_extra_cuts_per_base=2, source_segment_semantic_merge_boundary_trade_off=0.5, source_segment_semantic_aggl_min_points=3, source_segment_semantic_aggl_target_slack=1, source_segment_semantic_aggl_merge_cost_tolerance=1.15, source_segment_semantic_aggl_dynamics_trade_off=0.35, source_structure_loss_version='segment_boundary_window_residual', source_structure_intra_trade_off=1.0, source_structure_amplitude_trade_off=0.0, source_structure_interphase_trade_off=0.0, source_structure_shape_trade_off=0.0, source_structure_trend_trade_off=0.05, source_structure_season_trade_off=0.0, source_structure_segment_inter_trade_off=0.02, source_structure_boundary_window_trade_off=0.2, source_structure_boundary_window_size=2, method='timematch', weights='outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v250_boundarywindow_s010_rel003_ckptbank', weights_checkpoint='checkpoints/epoch_100.pt', pseudo_threshold=0.9, ema_decay=0.9999, trade_off=2.0, estimate_shift=True, steps_per_epoch=500, balance_source=True, use_focal_loss=True, shift_source=True, sample_size=100, max_temporal_shift=60, domain_specific_bn=True, shift_estimator='AM', run_validation=True, disable_validation_in_timematch=False, output_student=True, selection_metrics_out=None, selection_score_coverage_weight=0.25, selection_score_confidence_weight=0.15, selection_score_agreement_weight=0.15, selection_score_entropy_weight=0.1, selection_score_class_balance_weight=0.45, selection_score_source_prior_weight=0.25, selection_score_shift_stability_weight=0.2, selection_metric_batches=200)
+Excluded 15690 parcels from closed-set loading because class 'unknown' is not kept.
+Using classes: ['corn', 'horsebeans', 'meadow', 'spring_barley', 'spring_peas', 'sunflowers', 'winter_barley', 'winter_oat', 'winter_peas', 'winter_rapeseed', 'winter_triticale', 'winter_wheat']
+Excluded 1534 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 14 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 45 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 36 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 311 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 6413 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 3856 parcels from closed-set loading because class 'winter_rye' is not kept.
+Starting fold 0...
+Excluded 118 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 4 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 18 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 467 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 330 parcels from closed-set loading because class 'winter_rye' is not kept.
+Excluded 249 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 4 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 8 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 8 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 49 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 903 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 612 parcels from closed-set loading because class 'winter_rye' is not kept.
+evaluation dataset: denmark/32VNH/2017
+val target data: 3874 (31 batches)
+test taget data: 7791 (1513 batches)
+PseLTae(
+  (spatial_encoder): PixelSetEncoder(
+    (mlp1): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=10, out_features=32, bias=False)
+        (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+      (1): LinearLayer(
+        (linear): Linear(in_features=32, out_features=64, bias=False)
+        (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (mlp2): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=128, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+  )
+  (temporal_encoder): LTAE(
+    (inconv): LinearLayer(
+      (linear): Linear(in_features=128, out_features=256, bias=False)
+      (norm): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (positional_enc): Embedding(565, 256)
+    (attention_heads): MultiHeadAttention(
+      (key): Linear(in_features=256, out_features=128, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+      (softmax): Softmax(dim=-1)
+    )
+    (mlp): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=256, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (dropout): Dropout(p=0.2, inplace=False)
+  )
+  (decoder): Sequential(
+    (0): LinearLayer(
+      (linear): Linear(in_features=128, out_features=64, bias=False)
+      (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (1): LinearLayer(
+      (linear): Linear(in_features=64, out_features=32, bias=False)
+      (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (2): Linear(in_features=32, out_features=12, bias=True)
+  )
+)
+Number of trainable parameters: 129356
+Excluded 21 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 5 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 27 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 8582 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 19 parcels from closed-set loading because class 'winter_rye' is not kept.
+using balanced loader for source
+Excluded 893 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 6 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 34 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 20 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 182 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 3162 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 2178 parcels from closed-set loading because class 'winter_rye' is not kept.
+size of source dataset: 43352 (338 batches)
+size of target dataset: 27212 (212 batches)
+Loading source weights from outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v250_boundarywindow_s010_rel003_ckptbank/fold_0/checkpoints/epoch_100.pt
+source segment partition: mode=doy_gap, segment_count=8, gap_threshold=45, min_points=3, max_points=8, max_span=120, intervals=[25,85], [95,155], [165,215], [225,250], [255,280], [285,310], [315,335], [340,360]
+Most accurate shift -47 with 0.720
+Best Inception Score shift -47 with accuracy 0.720
+Most accurate shift -47 with 0.714
+Best AM Score shift -46 with accuracy 0.711
+Teacher pseudo label F1 0.512 (n=30230)
+Validation result: loss=0.3522, acc=0.90, f1=0.5024
+Validation F1 improved from 0.0000 to 0.5024!
+Most accurate shift -46 with 0.729
+Best AM Score shift -45 with accuracy 0.721
+Teacher pseudo label F1 0.520 (n=31594)
+Validation result: loss=0.3426, acc=0.89, f1=0.5060
+Validation F1 improved from 0.5024 to 0.5060!
+Most accurate shift -46 with 0.741
+Best AM Score shift -45 with accuracy 0.730
+Teacher pseudo label F1 0.508 (n=32587)
+Validation result: loss=0.3299, acc=0.90, f1=0.5110
+Validation F1 improved from 0.5060 to 0.5110!
+Most accurate shift -46 with 0.761
+Best AM Score shift -45 with accuracy 0.750
+Teacher pseudo label F1 0.562 (n=33583)
+Validation result: loss=0.3089, acc=0.91, f1=0.5202
+Validation F1 improved from 0.5110 to 0.5202!
+Most accurate shift -46 with 0.772
+Best AM Score shift -45 with accuracy 0.763
+Teacher pseudo label F1 0.568 (n=34348)
+Validation result: loss=0.3096, acc=0.91, f1=0.5137
+Validation F1 did not improve from 0.5202.
+Most accurate shift -46 with 0.781
+Best AM Score shift -45 with accuracy 0.773
+Teacher pseudo label F1 0.550 (n=35153)
+Validation result: loss=0.3392, acc=0.90, f1=0.5213
+Validation F1 improved from 0.5202 to 0.5213!
+Most accurate shift -46 with 0.787
+Best AM Score shift -45 with accuracy 0.775
+Teacher pseudo label F1 0.553 (n=35575)
+Validation result: loss=0.3498, acc=0.90, f1=0.5120
+Validation F1 did not improve from 0.5213.
+Most accurate shift -46 with 0.786
+Best AM Score shift -45 with accuracy 0.776
+Teacher pseudo label F1 0.602 (n=36212)
+Validation result: loss=0.3720, acc=0.89, f1=0.5124
+Validation F1 did not improve from 0.5213.
+Most accurate shift -46 with 0.797
+Best AM Score shift -45 with accuracy 0.788
+Teacher pseudo label F1 0.551 (n=36422)
+Validation result: loss=0.3793, acc=0.89, f1=0.5085
+Validation F1 did not improve from 0.5213.
+Most accurate shift -46 with 0.794
+Best AM Score shift -45 with accuracy 0.785
+Teacher pseudo label F1 0.592 (n=36816)
+Validation result: loss=0.3504, acc=0.90, f1=0.5641
+Validation F1 improved from 0.5213 to 0.5641!
+Most accurate shift -46 with 0.799
+Best AM Score shift -45 with accuracy 0.791
+Teacher pseudo label F1 0.609 (n=36918)
+Validation result: loss=0.3651, acc=0.90, f1=0.5700
+Validation F1 improved from 0.5641 to 0.5700!
+Most accurate shift -46 with 0.806
+Best AM Score shift -45 with accuracy 0.796
+Teacher pseudo label F1 0.599 (n=37058)
+Validation result: loss=0.3549, acc=0.90, f1=0.5689
+Validation F1 did not improve from 0.5700.
+Most accurate shift -46 with 0.804
+Best AM Score shift -31 with accuracy 0.781
+Teacher pseudo label F1 0.584 (n=38149)
+Validation result: loss=0.3687, acc=0.90, f1=0.5592
+Validation F1 did not improve from 0.5700.
+Most accurate shift -39 with 0.809
+Best AM Score shift -31 with accuracy 0.789
+Teacher pseudo label F1 0.588 (n=38385)
+Validation result: loss=0.3884, acc=0.89, f1=0.5597
+Validation F1 did not improve from 0.5700.
+Most accurate shift -39 with 0.810
+Best AM Score shift -31 with accuracy 0.794
+Teacher pseudo label F1 0.593 (n=38600)
+Validation result: loss=0.4040, acc=0.89, f1=0.5582
+Validation F1 did not improve from 0.5700.
+Most accurate shift -39 with 0.812
+Best AM Score shift -31 with accuracy 0.796
+Teacher pseudo label F1 0.583 (n=38706)
+Validation result: loss=0.3752, acc=0.90, f1=0.5635
+Validation F1 did not improve from 0.5700.
+Most accurate shift -39 with 0.820
+Best AM Score shift -31 with accuracy 0.808
+Teacher pseudo label F1 0.592 (n=38918)
+Validation result: loss=0.4119, acc=0.89, f1=0.5590
+Validation F1 did not improve from 0.5700.
+Most accurate shift -39 with 0.818
+Best AM Score shift -31 with accuracy 0.808
+Teacher pseudo label F1 0.589 (n=38919)
+Validation result: loss=0.3961, acc=0.89, f1=0.5611
+Validation F1 did not improve from 0.5700.
+Most accurate shift -39 with 0.827
+Best AM Score shift -31 with accuracy 0.813
+Teacher pseudo label F1 0.590 (n=38997)
+Validation result: loss=0.3913, acc=0.89, f1=0.5633
+Validation F1 did not improve from 0.5700.
+Most accurate shift -39 with 0.826
+Best AM Score shift -31 with accuracy 0.817
+Teacher pseudo label F1 0.596 (n=38885)
+Validation result: loss=0.4042, acc=0.89, f1=0.5574
+Validation F1 did not improve from 0.5700.
+Restoring best model weights for testing...
+Test result for timematch_31TCJ_to_32VNH_closedset_noshift_sourcephasecompact_p5_v253_selection_s010_rel003_selected: accuracy=0.8776, f1=0.5100
+                  precision    recall  f1-score   support
+
+            corn       0.79      0.96      0.87       599
+      horsebeans       1.00      0.08      0.15        49
+          meadow       0.78      0.99      0.87      2101
+   spring_barley       0.98      0.71      0.83      2265
+     spring_peas       0.54      0.26      0.35        54
+      sunflowers       0.00      0.00      0.00         0
+   winter_barley       0.95      0.89      0.92       617
+      winter_oat       0.00      0.00      0.00         0
+     winter_peas       0.00      0.00      0.00         0
+ winter_rapeseed       0.99      0.98      0.99       451
+winter_triticale       0.88      0.11      0.19        64
+    winter_wheat       0.93      0.97      0.95      1591
+
+        accuracy                           0.88      7791
+       macro avg       0.65      0.50      0.51      7791
+    weighted avg       0.89      0.88      0.87      7791
+
+corn [578   0  15   5   0   1   0   0   0   0   0   0]
+horsebeans [ 4  4 37  2  2  0  0  0  0  0  0  0]
+meadow [  15    0 2076    6    0    0    0    0    1    0    0    3]
+spring_barley [ 128    0  469 1618   10    6   16    1    1    2    0   14]
+spring_peas [ 2  0 37  1 14  0  0  0  0  0  0  0]
+sunflowers [0 0 0 0 0 0 0 0 0 0 0 0]
+winter_barley [  0   0   9   7   0   0 552   0   0   1   0  48]
+winter_oat [0 0 0 0 0 0 0 0 0 0 0 0]
+winter_peas [0 0 0 0 0 0 0 0 0 0 0 0]
+winter_rapeseed [  0   0   3   1   0   0   0   0   0 444   0   3]
+winter_triticale [ 0  0  0  0  0  0  3  0  0  0  7 54]
+winter_wheat [   2    0   18   15    0    1    8    0    0    2    1 1544]
+Overall result across 1 folds:
+|                  | precision   | recall   | f1-score   | support    |
+|:-----------------|:------------|:---------|:-----------|:-----------|
+| corn             | 79.3±0.0    | 96.5±0.0 | 87.0±0.0   | 599.0±0.0  |
+| horsebeans       | 100.0±0.0   | 8.2±0.0  | 15.1±0.0   | 49.0±0.0   |
+| meadow           | 77.9±0.0    | 98.8±0.0 | 87.1±0.0   | 2101.0±0.0 |
+| spring_barley    | 97.8±0.0    | 71.4±0.0 | 82.6±0.0   | 2265.0±0.0 |
+| spring_peas      | 53.8±0.0    | 25.9±0.0 | 35.0±0.0   | 54.0±0.0   |
+| sunflowers       | 0.0±0.0     | 0.0±0.0  | 0.0±0.0    | 0.0±0.0    |
+| winter_barley    | 95.3±0.0    | 89.5±0.0 | 92.3±0.0   | 617.0±0.0  |
+| winter_oat       | 0.0±0.0     | 0.0±0.0  | 0.0±0.0    | 0.0±0.0    |
+| winter_peas      | 0.0±0.0     | 0.0±0.0  | 0.0±0.0    | 0.0±0.0    |
+| winter_rapeseed  | 98.9±0.0    | 98.4±0.0 | 98.7±0.0   | 451.0±0.0  |
+| winter_triticale | 87.5±0.0    | 10.9±0.0 | 19.4±0.0   | 64.0±0.0   |
+| winter_wheat     | 92.7±0.0    | 97.0±0.0 | 94.8±0.0   | 1591.0±0.0 |
+|                  |             |          |            |            |
+| accuracy         |             |          |            | 87.8±0.0   |
+| macro avg        | 65.3±0.0    | 49.7±0.0 | 51.0±0.0   | 7791.0±0.0 |
+accuracy: 87.8±0.0
+loss: 0.0±0.0
+macro_f1: 51.0±0.0
+weighted_f1: 87.1±0.0
+kappa: 84.4±0.0

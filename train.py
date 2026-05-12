@@ -11,8 +11,6 @@ import numpy as np
 import torch
 import torch.backends.cudnn
 from torchvision.transforms import transforms
-from tqdm import tqdm
-
 try:
     from torch.utils.tensorboard import SummaryWriter
 except ModuleNotFoundError:
@@ -231,12 +229,12 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
 
     best_f1 = 0
     for epoch in range(config.epochs):
+        print(f"====================Epoch {epoch + 1}/{config.epochs}====================")
         model.train()
         loss_meter = AverageMeter()
 
-        progress_bar = tqdm(enumerate(data_loader), total=len(data_loader), desc=f'Epoch {epoch + 1}/{config.epochs}')
         global_step = epoch * len(data_loader)
-        for step, sample in progress_bar:
+        for step, sample in enumerate(data_loader):
             targets = sample['label'].cuda(device=device, non_blocking=True)
 
             pixels, mask, positions, extra = to_cuda(sample, device)
@@ -261,11 +259,8 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
 
             if step % config.log_step == 0:
                 lr = optimizer.param_groups[0]["lr"]
-                progress_bar.set_postfix(lr=f'{lr:.1E}', loss=f"{loss_meter.avg:.3f}")
                 writer.add_scalar("train/loss", loss_meter.val, global_step + step)
                 writer.add_scalar("train/lr", lr, global_step + step)
-
-        progress_bar.close()
 
         model.eval()
         best_f1 = validation(
