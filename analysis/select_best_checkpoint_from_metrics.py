@@ -29,6 +29,12 @@ def main():
             {
                 "weights_checkpoint": item.get("selected_weights_checkpoint"),
                 "selection_score": float(item.get("selection_score", 0.0)),
+                "selection_score_mode": item.get("selection_score_mode"),
+                "selection_legacy_score": float(item.get("selection_legacy_score", 0.0)),
+                "selection_temporal_perturbation_score": float(item.get("selection_temporal_perturbation_score", 0.0)),
+                "selection_perturbation_score": float(item.get("selection_perturbation_score", 0.0)),
+                "selection_perturbation_label_agreement": float(item.get("selection_perturbation_label_agreement", 0.0)),
+                "selection_perturbation_prob_consistency": float(item.get("selection_perturbation_prob_consistency", 0.0)),
                 "selection_coverage": float(item.get("selection_coverage", 0.0)),
                 "selection_mean_confidence": float(item.get("selection_mean_confidence", 0.0)),
                 "selection_teacher_student_agreement": float(item.get("selection_teacher_student_agreement", 0.0)),
