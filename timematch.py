@@ -503,6 +503,7 @@ def compute_selection_metrics(
     teacher.eval()
     student.eval()
     teacher_probs, student_probs = [], []
+    time_mask_probs, temporal_jitter_probs, value_noise_probs = [], [], []
     indices = []
     max_batches = getattr(config, "selection_metric_batches", 200)
 
@@ -511,10 +512,33 @@ def compute_selection_metrics(
             break
         indices.extend(sample["index"].tolist())
         pixels, valid_pixels, positions, extra = to_cuda(sample, device)
-        teacher_logits = teacher.forward(pixels, valid_pixels, positions + target_to_source_shift, extra)
+        shifted_positions = _clamp_positions_for_model(teacher, positions + target_to_source_shift)
+        teacher_logits = teacher.forward(pixels, valid_pixels, shifted_positions, extra)
         student_logits = student.forward(pixels, valid_pixels, positions, extra)
         teacher_probs.append(F.softmax(teacher_logits, dim=1).cpu())
         student_probs.append(F.softmax(student_logits, dim=1).cpu())
+
+        perturbed_pixels = _apply_time_mean_mask(
+            pixels,
+            mask_p=getattr(config, "selection_time_mask_p", 0.15),
+        )
+        perturbed_logits = teacher.forward(perturbed_pixels, valid_pixels, shifted_positions, extra)
+        time_mask_probs.append(F.softmax(perturbed_logits, dim=1).cpu())
+
+        jittered_positions = _apply_temporal_jitter(
+            teacher,
+            shifted_positions,
+            max_jitter=getattr(config, "selection_temporal_jitter", 3),
+        )
+        perturbed_logits = teacher.forward(pixels, valid_pixels, jittered_positions, extra)
+        temporal_jitter_probs.append(F.softmax(perturbed_logits, dim=1).cpu())
+
+        noisy_pixels = _apply_value_noise(
+            pixels,
+            noise_std=getattr(config, "selection_value_noise_std", 0.03),
+        )
+        perturbed_logits = teacher.forward(noisy_pixels, valid_pixels, shifted_positions, extra)
+        value_noise_probs.append(F.softmax(perturbed_logits, dim=1).cpu())
 
     if not teacher_probs:
         raise RuntimeError("No target batches were available for selection metrics")
@@ -523,6 +547,9 @@ def compute_selection_metrics(
     order = torch.argsort(indices)
     teacher_probs = torch.cat(teacher_probs, dim=0)[order]
     student_probs = torch.cat(student_probs, dim=0)[order]
+    time_mask_probs = torch.cat(time_mask_probs, dim=0)[order]
+    temporal_jitter_probs = torch.cat(temporal_jitter_probs, dim=0)[order]
+    value_noise_probs = torch.cat(value_noise_probs, dim=0)[order]
 
     teacher_conf, pseudo_labels = teacher_probs.max(dim=1)
     student_labels = student_probs.argmax(dim=1)
@@ -577,7 +604,7 @@ def compute_selection_metrics(
     class_balance_score = 0.60 * high_conf_class_entropy + 0.40 * class_entropy
     collapse_penalty = 0.50 * max_class_fraction + 0.50 * high_conf_max_class_fraction
 
-    score = (
+    legacy_score = (
         getattr(config, "selection_score_coverage_weight", 0.25) * coverage
         + getattr(config, "selection_score_confidence_weight", 0.15) * mean_confidence
         + getattr(config, "selection_score_agreement_weight", 0.15) * agreement
@@ -587,9 +614,35 @@ def compute_selection_metrics(
         - getattr(config, "selection_score_source_prior_weight", 0.25) * js_div
         - 0.20 * collapse_penalty
     )
+    perturbation_metrics = _compute_perturbation_consistency(
+        teacher_probs,
+        {
+            "time_mask": time_mask_probs,
+            "temporal_jitter": temporal_jitter_probs,
+            "value_noise": value_noise_probs,
+        },
+        num_classes,
+    )
+    perturbation_score = (
+        0.50 * perturbation_metrics["selection_perturbation_prob_consistency"]
+        + 0.50 * perturbation_metrics["selection_perturbation_label_agreement"]
+    )
+    robust_score = (
+        getattr(config, "selection_perturbation_weight", 1.0) * perturbation_score
+        + 0.15 * class_balance_score
+        + 0.10 * shift_stability
+        - getattr(config, "selection_collapse_penalty_weight", 0.35) * collapse_penalty
+        - 0.10 * js_div
+    )
+    score_mode = getattr(config, "selection_score_mode", "temporal_perturbation")
+    score = legacy_score if score_mode == "legacy" else robust_score
 
-    return {
+    metrics = {
         "selection_score": float(score),
+        "selection_score_mode": score_mode,
+        "selection_legacy_score": float(legacy_score),
+        "selection_temporal_perturbation_score": float(robust_score),
+        "selection_perturbation_score": float(perturbation_score),
         "selection_coverage": float(coverage),
         "selection_mean_confidence": float(mean_confidence),
         "selection_teacher_student_agreement": float(agreement),
@@ -605,6 +658,70 @@ def compute_selection_metrics(
         "selection_shift_std_norm": float(shift_std_norm),
         "selection_shift_last_delta_norm": float(shift_last_delta_norm),
     }
+    metrics.update({key: float(value) for key, value in perturbation_metrics.items()})
+    return metrics
+
+
+def _clamp_positions_for_model(model, positions):
+    temporal_encoder = model.temporal_encoder
+    min_position = -temporal_encoder.max_temporal_shift
+    max_position = temporal_encoder.positional_enc.num_embeddings - temporal_encoder.max_temporal_shift - 1
+    return positions.clamp(min=min_position, max=max_position)
+
+
+def _apply_time_mean_mask(pixels, mask_p):
+    if mask_p <= 0:
+        return pixels
+    time_mean = pixels.mean(dim=1, keepdim=True)
+    mask_shape = [pixels.shape[0], pixels.shape[1]] + [1] * (pixels.dim() - 2)
+    time_mask = torch.rand(mask_shape, device=pixels.device) < mask_p
+    return torch.where(time_mask, time_mean, pixels)
+
+
+def _apply_temporal_jitter(model, positions, max_jitter):
+    if max_jitter <= 0:
+        return positions
+    jitter = torch.randint(
+        low=-int(max_jitter),
+        high=int(max_jitter) + 1,
+        size=positions.shape,
+        device=positions.device,
+        dtype=positions.dtype,
+    )
+    return _clamp_positions_for_model(model, positions + jitter)
+
+
+def _apply_value_noise(pixels, noise_std):
+    if noise_std <= 0:
+        return pixels
+    reduce_dims = tuple(range(1, pixels.dim()))
+    scale = pixels.float().std(dim=reduce_dims, keepdim=True, unbiased=False).clamp_min(1e-6)
+    return pixels + torch.randn_like(pixels) * scale * float(noise_std)
+
+
+def _normalized_js_divergence(probs_a, probs_b, num_classes):
+    mixture = 0.5 * (probs_a + probs_b)
+    kl_a = (probs_a * (torch.log(probs_a.clamp_min(1e-8)) - torch.log(mixture.clamp_min(1e-8)))).sum(dim=1)
+    kl_b = (probs_b * (torch.log(probs_b.clamp_min(1e-8)) - torch.log(mixture.clamp_min(1e-8)))).sum(dim=1)
+    return (0.5 * (kl_a + kl_b)).mean().item() / max(np.log(2.0), 1e-8)
+
+
+def _compute_perturbation_consistency(clean_probs, perturbed_probs_by_name, num_classes):
+    clean_labels = clean_probs.argmax(dim=1)
+    label_agreements = []
+    prob_consistencies = []
+    metrics = {}
+    for name, perturbed_probs in perturbed_probs_by_name.items():
+        perturbed_labels = perturbed_probs.argmax(dim=1)
+        label_agreement = (clean_labels == perturbed_labels).float().mean().item()
+        prob_consistency = 1.0 - min(1.0, _normalized_js_divergence(clean_probs, perturbed_probs, num_classes))
+        label_agreements.append(label_agreement)
+        prob_consistencies.append(prob_consistency)
+        metrics[f"selection_{name}_label_agreement"] = label_agreement
+        metrics[f"selection_{name}_prob_consistency"] = prob_consistency
+    metrics["selection_perturbation_label_agreement"] = float(np.mean(label_agreements))
+    metrics["selection_perturbation_prob_consistency"] = float(np.mean(prob_consistencies))
+    return metrics
 
 
 def estimate_class_distribution(labels, num_classes):
