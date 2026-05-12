@@ -2,6 +2,7 @@ from torch.utils.data.sampler import WeightedRandomSampler
 import sklearn.metrics
 from collections import Counter
 from copy import deepcopy
+import json
 import os
 
 import numpy as np
@@ -63,8 +64,16 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
     # Setup model
     pretrained_path = f"{config.weights}/fold_{fold_num}"
-    checkpoint_name = getattr(config, "weights_checkpoint", "model.pt")
-    checkpoint_path = checkpoint_name if os.path.isabs(checkpoint_name) else os.path.join(pretrained_path, checkpoint_name)
+    weights_checkpoint = getattr(config, "weights_checkpoint", "model.pt")
+    if not weights_checkpoint:
+        weights_checkpoint = "model.pt"
+    if not weights_checkpoint.endswith(".pt"):
+        weights_checkpoint = f"{weights_checkpoint}.pt"
+    if os.path.isabs(weights_checkpoint):
+        checkpoint_path = weights_checkpoint
+    else:
+        checkpoint_path = os.path.join(pretrained_path, weights_checkpoint)
+    print(f"Loading source weights from {checkpoint_path}")
     pretrained_checkpoint = torch.load(checkpoint_path, weights_only=False)
     pretrained_weights = pretrained_checkpoint["state_dict"]
     student.load_state_dict(pretrained_weights)
@@ -132,6 +141,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
     # To evaluate how well we estimate class distribution
     target_labels = target_loader_no_aug.dataset.get_labels()
     actual_class_distr = estimate_class_distribution(target_labels, config.num_classes)
+    source_class_distr = estimate_class_distribution(source_loader.dataset.get_labels(), config.num_classes)
 
     # estimate an initial guess for shift using Inception Score
     if config.estimate_shift:
@@ -147,6 +157,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         all_pseudo_labels = torch.max(pseudo_softmaxes, dim=1)[1]
 
     source_to_target_shift = 0
+    shift_history = []
     for epoch in range(config.epochs):
         progress_bar = tqdm(range(steps_per_epoch), desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}")
         loss_meter = AverageMeter()
@@ -165,6 +176,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     source_to_target_shift = 0
                 min_shift, max_shift = min(target_to_source_shift, 0), max(0, target_to_source_shift)
             writer.add_scalar("train/temporal_shift", target_to_source_shift, epoch)
+            shift_history.append(int(target_to_source_shift))
 
         student.train()
         teacher.eval()  # don't update BN or use dropout for teacher
@@ -400,7 +412,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
         writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
 
-        if config.run_validation:
+        if config.run_validation and not getattr(config, "disable_validation_in_timematch", False):
             if config.output_student:
                 student.eval()
                 if source_feature_reshaper is not None:
@@ -434,7 +446,34 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     apply_source_feature_reshaper=False,
                 )
 
-    # Save model final model 
+    if getattr(config, "selection_metrics_out", None):
+        metrics = compute_selection_metrics(
+            teacher=teacher,
+            student=student,
+            target_loader=target_loader_no_aug,
+            device=device,
+            target_to_source_shift=target_to_source_shift,
+            num_classes=config.num_classes,
+            pseudo_threshold=config.pseudo_threshold,
+            source_class_distr=source_class_distr,
+            shift_history=shift_history,
+            max_temporal_shift=config.max_temporal_shift,
+            config=config,
+        )
+        metrics["selected_weights_checkpoint"] = getattr(config, "weights_checkpoint", "model.pt")
+        metrics["target_to_source_shift"] = int(target_to_source_shift)
+        metrics["epochs_ran"] = int(config.epochs)
+        out_dir = os.path.dirname(config.selection_metrics_out)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        with open(config.selection_metrics_out, "w", encoding="utf-8") as f:
+            json.dump(metrics, f, indent=2)
+        print(
+            "Target selection metrics:",
+            ", ".join(f"{key}={value}" for key, value in metrics.items() if key != "selected_weights_checkpoint"),
+        )
+
+    # Save model final model
     if config.output_student:
         checkpoint = {'state_dict': student.state_dict()}
         if source_feature_reshaper is not None:
@@ -445,6 +484,128 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         if source_feature_reshaper is not None:
             checkpoint['source_feature_reshaper_state_dict'] = source_feature_reshaper.state_dict()
         torch.save(checkpoint, best_model_path)
+
+
+@torch.no_grad()
+def compute_selection_metrics(
+    teacher,
+    student,
+    target_loader,
+    device,
+    target_to_source_shift,
+    num_classes,
+    pseudo_threshold,
+    source_class_distr,
+    shift_history,
+    max_temporal_shift,
+    config,
+):
+    teacher.eval()
+    student.eval()
+    teacher_probs, student_probs = [], []
+    indices = []
+    max_batches = getattr(config, "selection_metric_batches", 200)
+
+    for batch_idx, sample in enumerate(tqdm(target_loader, desc="computing selection metrics")):
+        if max_batches is not None and batch_idx >= max_batches:
+            break
+        indices.extend(sample["index"].tolist())
+        pixels, valid_pixels, positions, extra = to_cuda(sample, device)
+        teacher_logits = teacher.forward(pixels, valid_pixels, positions + target_to_source_shift, extra)
+        student_logits = student.forward(pixels, valid_pixels, positions, extra)
+        teacher_probs.append(F.softmax(teacher_logits, dim=1).cpu())
+        student_probs.append(F.softmax(student_logits, dim=1).cpu())
+
+    if not teacher_probs:
+        raise RuntimeError("No target batches were available for selection metrics")
+
+    indices = torch.as_tensor(indices)
+    order = torch.argsort(indices)
+    teacher_probs = torch.cat(teacher_probs, dim=0)[order]
+    student_probs = torch.cat(student_probs, dim=0)[order]
+
+    teacher_conf, pseudo_labels = teacher_probs.max(dim=1)
+    student_labels = student_probs.argmax(dim=1)
+    high_conf_mask = teacher_conf >= pseudo_threshold
+
+    pred_entropy = -(teacher_probs * torch.log(teacher_probs.clamp_min(1e-8))).sum(dim=1)
+    normalized_entropy = pred_entropy.mean().item() / max(np.log(num_classes), 1e-8)
+    coverage = high_conf_mask.float().mean().item()
+    mean_confidence = teacher_conf.mean().item()
+    agreement = (pseudo_labels == student_labels).float().mean().item()
+
+    pseudo_counts = torch.bincount(pseudo_labels, minlength=num_classes).float()
+    pseudo_dist = (pseudo_counts / pseudo_counts.sum().clamp_min(1.0)).numpy()
+    class_entropy = float(-(pseudo_dist * np.log(pseudo_dist + 1e-8)).sum() / max(np.log(num_classes), 1e-8))
+    max_class_fraction = float(pseudo_dist.max()) if len(pseudo_dist) else 1.0
+    effective_class_fraction = float(np.exp(-(pseudo_dist * np.log(pseudo_dist + 1e-8)).sum()) / max(num_classes, 1))
+
+    if high_conf_mask.any():
+        high_conf_counts = torch.bincount(pseudo_labels[high_conf_mask], minlength=num_classes).float()
+        high_conf_dist = (high_conf_counts / high_conf_counts.sum().clamp_min(1.0)).numpy()
+        high_conf_class_entropy = float(
+            -(high_conf_dist * np.log(high_conf_dist + 1e-8)).sum() / max(np.log(num_classes), 1e-8)
+        )
+        high_conf_max_class_fraction = float(high_conf_dist.max())
+        high_conf_effective_class_fraction = float(
+            np.exp(-(high_conf_dist * np.log(high_conf_dist + 1e-8)).sum()) / max(num_classes, 1)
+        )
+    else:
+        high_conf_class_entropy = 0.0
+        high_conf_max_class_fraction = 1.0
+        high_conf_effective_class_fraction = 0.0
+
+    source_dist = np.asarray(source_class_distr, dtype=np.float64)
+    source_dist = source_dist / max(source_dist.sum(), 1e-8)
+    pseudo_dist = np.asarray(pseudo_dist, dtype=np.float64)
+    mixture = 0.5 * (source_dist + pseudo_dist)
+    js_div = 0.5 * np.sum(source_dist * (np.log(source_dist + 1e-8) - np.log(mixture + 1e-8)))
+    js_div += 0.5 * np.sum(pseudo_dist * (np.log(pseudo_dist + 1e-8) - np.log(mixture + 1e-8)))
+    js_div = float(js_div / max(np.log(2.0), 1e-8))
+
+    if shift_history:
+        shifts = np.asarray(shift_history, dtype=np.float64)
+        denom = max(float(max_temporal_shift), 1.0)
+        shift_std_norm = float(np.std(shifts) / denom)
+        shift_last_delta_norm = float(abs(shifts[-1] - shifts[-2]) / denom) if len(shifts) >= 2 else 0.0
+        shift_stability = float(max(0.0, 1.0 - min(1.0, 0.5 * shift_std_norm + 0.5 * shift_last_delta_norm)))
+    else:
+        shift_std_norm = 0.0
+        shift_last_delta_norm = 0.0
+        shift_stability = 0.5
+
+    class_balance_score = 0.60 * high_conf_class_entropy + 0.40 * class_entropy
+    collapse_penalty = 0.50 * max_class_fraction + 0.50 * high_conf_max_class_fraction
+
+    score = (
+        getattr(config, "selection_score_coverage_weight", 0.25) * coverage
+        + getattr(config, "selection_score_confidence_weight", 0.15) * mean_confidence
+        + getattr(config, "selection_score_agreement_weight", 0.15) * agreement
+        + getattr(config, "selection_score_class_balance_weight", 0.45) * class_balance_score
+        + getattr(config, "selection_score_shift_stability_weight", 0.20) * shift_stability
+        - getattr(config, "selection_score_entropy_weight", 0.10) * normalized_entropy
+        - getattr(config, "selection_score_source_prior_weight", 0.25) * js_div
+        - 0.20 * collapse_penalty
+    )
+
+    return {
+        "selection_score": float(score),
+        "selection_coverage": float(coverage),
+        "selection_mean_confidence": float(mean_confidence),
+        "selection_teacher_student_agreement": float(agreement),
+        "selection_prediction_entropy": float(normalized_entropy),
+        "selection_class_entropy": float(class_entropy),
+        "selection_high_conf_class_entropy": float(high_conf_class_entropy),
+        "selection_effective_class_fraction": float(effective_class_fraction),
+        "selection_high_conf_effective_class_fraction": float(high_conf_effective_class_fraction),
+        "selection_max_class_fraction": float(max_class_fraction),
+        "selection_high_conf_max_class_fraction": float(high_conf_max_class_fraction),
+        "selection_source_prior_js": float(js_div),
+        "selection_shift_stability": float(shift_stability),
+        "selection_shift_std_norm": float(shift_std_norm),
+        "selection_shift_last_delta_norm": float(shift_last_delta_norm),
+    }
+
 
 def estimate_class_distribution(labels, num_classes):
     return np.bincount(labels, minlength=num_classes) / len(labels)
