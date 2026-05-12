@@ -1,0 +1,8 @@
+nohup: 忽略输入
+[v2.5.1] Reusing existing source checkpoints for full 12-task run...
+Logs saved to: /data/user/timematch/logs/v251_selection_12tasks_rerun_and_structure_20260510_095119
+Training logs:
+  /data/user/timematch/logs/v251_selection_12tasks_rerun_and_structure_20260510_095119/gpu0_30TXT_v251_selection_12tasks_tasks.log
+  /data/user/timematch/logs/v251_selection_12tasks_rerun_and_structure_20260510_095119/gpu1_31TCJ_v251_selection_12tasks_tasks.log
+  /data/user/timematch/logs/v251_selection_12tasks_rerun_and_structure_20260510_095119/gpu2_32VNH_v251_selection_12tasks_tasks.log
+  /data/user/timematch/logs/v251_selection_12tasks_rerun_and_structure_20260510_095119/gpu3_33UVP_v251_selection_12tasks_tasks.log

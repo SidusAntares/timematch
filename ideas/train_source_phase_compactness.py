@@ -1,7 +1,8 @@
+import os
+
 import torch
 from torchvision import transforms
 from tqdm import tqdm
-import os
 
 from dataset import PixelSetData, create_train_loader
 from evaluation import validation

@@ -138,6 +138,10 @@ def main(config):
             else:
                 train_supervised(model, config, writer, splits, val_loader, device, best_model_path)
 
+        if config.skip_final_test:
+            print('Skipping final labeled test/eval because --skip_final_test=True')
+            continue
+
         print('Restoring best model weights for testing...')
 
         checkpoint = torch.load(best_model_path, weights_only=False)
@@ -163,6 +167,10 @@ def main(config):
         print(test_metrics['classification_report'])
 
         save_results(test_metrics, config)
+
+    if config.skip_final_test:
+        print('Skipping overall_performance aggregation because --skip_final_test=True')
+        return
 
     overall_performance(config)
 
@@ -372,6 +380,7 @@ if __name__ == '__main__':
     parser.add_argument('--log_step', default=10, type=int, help='Interval in batches between display of training metrics')
     parser.add_argument('--eval', action='store_true', help='run only evaluation')
     parser.add_argument('--overall', action='store_true', help='print overall results, if exists')
+    parser.add_argument('--skip_final_test', default=False, type=bool_flag, help='skip final labeled test/eval stage after training; useful for warmup-only checkpoint-selection runs')
     parser.add_argument('--combine_spring_and_winter', default=False, type=bool_flag)
     parser.add_argument('--closed_set', default=False, type=bool_flag, help='exclude unknown / out-of-class parcels')
 
@@ -681,7 +690,17 @@ if __name__ == '__main__':
     timematch.add_argument("--domain_specific_bn", type=bool_flag, default=True, help='whether to use domain specific batch normalization')
     timematch.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT'])
     timematch.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
+    timematch.add_argument('--disable_validation_in_timematch', default=False, type=bool_flag, help='disable labeled validation during TimeMatch; useful for warmup-only checkpoint-selection runs')
     timematch.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
+    timematch.add_argument('--selection_metrics_out', type=str, default=None, help='optional JSON path for saving target-side unsupervised checkpoint-selection metrics after training')
+    timematch.add_argument('--selection_score_coverage_weight', type=float, default=0.25, help='weight for high-confidence pseudo-label coverage in target-aware checkpoint selection score')
+    timematch.add_argument('--selection_score_confidence_weight', type=float, default=0.15, help='weight for mean teacher confidence in target-aware checkpoint selection score')
+    timematch.add_argument('--selection_score_agreement_weight', type=float, default=0.15, help='weight for teacher-student agreement in target-aware checkpoint selection score')
+    timematch.add_argument('--selection_score_entropy_weight', type=float, default=0.10, help='penalty weight for normalized target prediction entropy in target-aware checkpoint selection score')
+    timematch.add_argument('--selection_score_class_balance_weight', type=float, default=0.45, help='weight for pseudo-label class-distribution health in v2.5.3 checkpoint selection')
+    timematch.add_argument('--selection_score_source_prior_weight', type=float, default=0.25, help='penalty weight for pseudo-label/source-prior JS divergence in v2.5.3 checkpoint selection')
+    timematch.add_argument('--selection_score_shift_stability_weight', type=float, default=0.20, help='weight for shift trajectory stability in v2.5.3 checkpoint selection')
+    timematch.add_argument('--selection_metric_batches', type=int, default=200, help='number of target batches used to compute final unsupervised selection metrics')
 
     # Source-only + source phase compactness regularization
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')

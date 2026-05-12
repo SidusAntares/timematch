@@ -1,0 +1,15 @@
+nohup: 忽略输入
+[v2.5.0] Running checkpoint-bank quickcheck, then full 12-task sweep...
+Logs saved to: /data/user/timematch/logs/v250_checkpointbank_v243b_quickcheck_20260509_124241
+Quick-check training logs:
+  /data/user/timematch/logs/v250_checkpointbank_v243b_quickcheck_20260509_124241/gpu0_30TXT_v250_checkpointbank_v243b_quickcheck.log
+  /data/user/timematch/logs/v250_checkpointbank_v243b_quickcheck_20260509_124241/gpu1_31TCJ_v250_checkpointbank_v243b_quickcheck.log
+  /data/user/timematch/logs/v250_checkpointbank_v243b_quickcheck_20260509_124241/gpu2_32VNH_v250_checkpointbank_v243b_quickcheck.log
+  /data/user/timematch/logs/v250_checkpointbank_v243b_quickcheck_20260509_124241/gpu3_33UVP_v250_checkpointbank_v243b_quickcheck.log
+Logs saved to: /data/user/timematch/logs/v250_checkpointbank_v243b_12tasks_rerun_and_structure_20260509_160016
+Training logs:
+  /data/user/timematch/logs/v250_checkpointbank_v243b_12tasks_rerun_and_structure_20260509_160016/gpu0_30TXT_v250_checkpointbank_v243b_12tasks_tasks.log
+  /data/user/timematch/logs/v250_checkpointbank_v243b_12tasks_rerun_and_structure_20260509_160016/gpu1_31TCJ_v250_checkpointbank_v243b_12tasks_tasks.log
+  /data/user/timematch/logs/v250_checkpointbank_v243b_12tasks_rerun_and_structure_20260509_160016/gpu2_32VNH_v250_checkpointbank_v243b_12tasks_tasks.log
+  /data/user/timematch/logs/v250_checkpointbank_v243b_12tasks_rerun_and_structure_20260509_160016/gpu3_33UVP_v250_checkpointbank_v243b_12tasks_tasks.log
+Structure analysis skipped for RUN_TAG=v250_checkpointbank_v243b_12tasks

@@ -1,0 +1,7 @@
+nohup: 忽略输入
+Logs saved to: /data/user/timematch/logs/v252a_sourceema_variance_pairs_20260510_143500
+Variance-pair logs:
+  /data/user/timematch/logs/v252a_sourceema_variance_pairs_20260510_143500/gpu0_31TCJ_to_32VNH_runA.log
+  /data/user/timematch/logs/v252a_sourceema_variance_pairs_20260510_143500/gpu1_31TCJ_to_32VNH_runB.log
+  /data/user/timematch/logs/v252a_sourceema_variance_pairs_20260510_143500/gpu2_32VNH_to_31TCJ_runA.log
+  /data/user/timematch/logs/v252a_sourceema_variance_pairs_20260510_143500/gpu3_32VNH_to_31TCJ_runB.log

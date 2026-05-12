@@ -1,0 +1,8 @@
+nohup: 忽略输入
+Started factor-split experiment
+  MODE=50ep_bs200
+  SOURCE_PRETRAIN_EPOCHS=50
+  BATCH_SIZE=200
+  NUM_WORKERS=8
+  Logs: /data/user/timematch/logs/v251b_factor_split_50ep_bs200_20260510_214458
+Logs saved to: /data/user/timematch/logs/v251b_factor_split_50ep_bs200_20260510_214458
