@@ -71,6 +71,8 @@ SELECTION_LATE_GAIN_THRESHOLD="${SELECTION_LATE_GAIN_THRESHOLD:-0.20}"
 SELECTION_LATE_REJECT_THRESHOLD="${SELECTION_LATE_REJECT_THRESHOLD:-0.80}"
 SELECTION_MARGIN_TIEBREAK="${SELECTION_MARGIN_TIEBREAK:-0.01}"
 SELECTION_BLEND_ROBUST_WEIGHT="${SELECTION_BLEND_ROBUST_WEIGHT:-0.70}"
+SELECTION_STRATEGY="${SELECTION_STRATEGY:-max_selection_score}"
+SELECTION_ROBUST_TIEBREAK_MARGIN="${SELECTION_ROBUST_TIEBREAK_MARGIN:-0.01}"
 
 SOURCE_MODEL="${SOURCE_MODEL:-pseltae_${SOURCE_TILE}_closedset_noshift_sourcephasecompact_p5_${SOURCE_MODEL_TAG}}"
 
@@ -205,7 +207,9 @@ while IFS= read -r TARGET; do
   SELECTION_SUMMARY_JSON="$SELECTION_DIR/selection_summary.json"
   python analysis/select_best_checkpoint_from_metrics.py \
     --metrics_glob "$SELECTION_DIR/*_metrics.json" \
-    --output_json "$SELECTION_SUMMARY_JSON"
+    --output_json "$SELECTION_SUMMARY_JSON" \
+    --strategy "$SELECTION_STRATEGY" \
+    --robust_tiebreak_margin "$SELECTION_ROBUST_TIEBREAK_MARGIN"
 
   BEST_WEIGHTS_CHECKPOINT="$(python -c "import json; print(json.load(open(r'$SELECTION_SUMMARY_JSON', 'r', encoding='utf-8'))['best_weights_checkpoint'])")"
   echo "Selected checkpoint for ${SOURCE_TILE} -> ${TARGET_TILE}: ${BEST_WEIGHTS_CHECKPOINT}"
