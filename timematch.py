@@ -158,6 +158,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
     source_to_target_shift = 0
     shift_history = []
+    selection_metric_history = []
     for epoch in range(config.epochs):
         progress_bar = tqdm(range(steps_per_epoch), desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}")
         loss_meter = AverageMeter()
@@ -446,20 +447,50 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     apply_source_feature_reshaper=False,
                 )
 
+        if (
+            getattr(config, "selection_metrics_out", None)
+            and getattr(config, "selection_score_mode", "temporal_perturbation") == "temporal_perturbation_trajectory"
+        ):
+            epoch_metrics = compute_selection_metrics(
+                teacher=teacher,
+                student=student,
+                target_loader=target_loader_no_aug,
+                device=device,
+                target_to_source_shift=target_to_source_shift,
+                num_classes=config.num_classes,
+                pseudo_threshold=config.pseudo_threshold,
+                source_class_distr=source_class_distr,
+                shift_history=shift_history,
+                max_temporal_shift=config.max_temporal_shift,
+                config=config,
+            )
+            epoch_metrics["selection_epoch"] = int(epoch + 1)
+            selection_metric_history.append(epoch_metrics)
+            writer.add_scalar("selection/temporal_perturbation_score", epoch_metrics["selection_temporal_perturbation_score"], epoch)
+            writer.add_scalar("selection/perturbation_score", epoch_metrics["selection_perturbation_score"], epoch)
+
     if getattr(config, "selection_metrics_out", None):
-        metrics = compute_selection_metrics(
-            teacher=teacher,
-            student=student,
-            target_loader=target_loader_no_aug,
-            device=device,
-            target_to_source_shift=target_to_source_shift,
-            num_classes=config.num_classes,
-            pseudo_threshold=config.pseudo_threshold,
-            source_class_distr=source_class_distr,
-            shift_history=shift_history,
-            max_temporal_shift=config.max_temporal_shift,
-            config=config,
-        )
+        if (
+            getattr(config, "selection_score_mode", "temporal_perturbation") == "temporal_perturbation_trajectory"
+            and selection_metric_history
+        ):
+            metrics = dict(selection_metric_history[-1])
+            metrics["selection_score_history"] = selection_metric_history
+            _apply_trajectory_selection_score(metrics, selection_metric_history, config)
+        else:
+            metrics = compute_selection_metrics(
+                teacher=teacher,
+                student=student,
+                target_loader=target_loader_no_aug,
+                device=device,
+                target_to_source_shift=target_to_source_shift,
+                num_classes=config.num_classes,
+                pseudo_threshold=config.pseudo_threshold,
+                source_class_distr=source_class_distr,
+                shift_history=shift_history,
+                max_temporal_shift=config.max_temporal_shift,
+                config=config,
+            )
         metrics["selected_weights_checkpoint"] = getattr(config, "weights_checkpoint", "model.pt")
         metrics["target_to_source_shift"] = int(target_to_source_shift)
         metrics["epochs_ran"] = int(config.epochs)
@@ -722,6 +753,32 @@ def _compute_perturbation_consistency(clean_probs, perturbed_probs_by_name, num_
     metrics["selection_perturbation_label_agreement"] = float(np.mean(label_agreements))
     metrics["selection_perturbation_prob_consistency"] = float(np.mean(prob_consistencies))
     return metrics
+
+
+def _apply_trajectory_selection_score(metrics, history, config):
+    base_key = "selection_temporal_perturbation_score"
+    first_score = float(history[0].get(base_key, metrics.get(base_key, 0.0)))
+    final_score = float(metrics.get(base_key, 0.0))
+    penultimate_score = float(history[-2].get(base_key, final_score)) if len(history) >= 2 else first_score
+    total_gain = max(final_score - first_score, 0.0)
+    late_gain = max(final_score - penultimate_score, 0.0)
+    if total_gain <= 1e-8:
+        late_gain_ratio = 0.0
+    else:
+        late_gain_ratio = min(1.0, late_gain / (total_gain + 1e-8))
+    alpha = float(getattr(config, "selection_trajectory_alpha", 0.30))
+    trajectory_multiplier = max(0.0, 1.0 - alpha * late_gain_ratio)
+    trajectory_score = final_score * trajectory_multiplier
+    metrics["selection_score_mode"] = "temporal_perturbation_trajectory"
+    metrics["selection_score"] = float(trajectory_score)
+    metrics["selection_trajectory_base_score"] = float(final_score)
+    metrics["selection_trajectory_first_score"] = float(first_score)
+    metrics["selection_trajectory_penultimate_score"] = float(penultimate_score)
+    metrics["selection_trajectory_total_gain"] = float(total_gain)
+    metrics["selection_trajectory_late_gain"] = float(late_gain)
+    metrics["selection_trajectory_late_gain_ratio"] = float(late_gain_ratio)
+    metrics["selection_trajectory_multiplier"] = float(trajectory_multiplier)
+    metrics["selection_trajectory_alpha"] = float(alpha)
 
 
 def estimate_class_distribution(labels, num_classes):

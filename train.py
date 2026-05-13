@@ -696,12 +696,13 @@ if __name__ == '__main__':
     timematch.add_argument('--selection_score_source_prior_weight', type=float, default=0.25, help='penalty weight for pseudo-label/source-prior JS divergence in v2.5.3 checkpoint selection')
     timematch.add_argument('--selection_score_shift_stability_weight', type=float, default=0.20, help='weight for shift trajectory stability in v2.5.3 checkpoint selection')
     timematch.add_argument('--selection_metric_batches', type=int, default=200, help='number of target batches used to compute final unsupervised selection metrics')
-    timematch.add_argument('--selection_score_mode', type=str, default='temporal_perturbation', choices=['legacy', 'temporal_perturbation'], help='checkpoint selection score mode')
+    timematch.add_argument('--selection_score_mode', type=str, default='temporal_perturbation', choices=['legacy', 'temporal_perturbation', 'temporal_perturbation_trajectory'], help='checkpoint selection score mode')
     timematch.add_argument('--selection_time_mask_p', type=float, default=0.15, help='probability of replacing a time step by the sequence mean when computing perturbation consistency')
     timematch.add_argument('--selection_temporal_jitter', type=int, default=3, help='maximum absolute temporal position jitter for perturbation consistency')
     timematch.add_argument('--selection_value_noise_std', type=float, default=0.03, help='relative Gaussian value noise level for perturbation consistency')
     timematch.add_argument('--selection_perturbation_weight', type=float, default=1.0, help='weight for perturbation consistency in temporal_perturbation selection score')
     timematch.add_argument('--selection_collapse_penalty_weight', type=float, default=0.35, help='penalty weight for pseudo-label class collapse in temporal_perturbation selection score')
+    timematch.add_argument('--selection_trajectory_alpha', type=float, default=0.30, help='penalty strength for late warmup perturbation-consistency gains in temporal_perturbation_trajectory mode')
 
     # Source-only + source phase compactness regularization
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')
