@@ -8,6 +8,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--metrics_glob", required=True, help="glob pattern for candidate selection metric JSON files")
     parser.add_argument("--output_json", required=True, help="path to write the winning selection summary")
+    parser.add_argument(
+        "--strategy",
+        default="max_selection_score",
+        choices=["max_selection_score", "robust_perturb_tiebreak"],
+        help="checkpoint selection strategy",
+    )
+    parser.add_argument(
+        "--robust_tiebreak_margin",
+        type=float,
+        default=0.01,
+        help="if robust top-1/top-2 gap is no larger than this, use pure perturbation score as tie-break",
+    )
     args = parser.parse_args()
 
     candidates = []
@@ -20,11 +32,40 @@ def main():
     if not candidates:
         raise FileNotFoundError(f"No selection metric JSON files matched: {args.metrics_glob}")
 
-    best = max(candidates, key=lambda x: float(x.get("selection_score", float("-inf"))))
+    if args.strategy == "robust_perturb_tiebreak":
+        for item in candidates:
+            if "selection_temporal_perturbation_score" not in item:
+                raise KeyError(f"Missing selection_temporal_perturbation_score in {item.get('_metrics_path')}")
+            if "selection_perturbation_score" not in item:
+                raise KeyError(f"Missing selection_perturbation_score in {item.get('_metrics_path')}")
+        robust_ranked = sorted(
+            candidates,
+            key=lambda x: float(x["selection_temporal_perturbation_score"]),
+            reverse=True,
+        )
+        robust_top = robust_ranked[0]
+        robust_second = robust_ranked[1] if len(robust_ranked) > 1 else robust_top
+        robust_gap = float(robust_top["selection_temporal_perturbation_score"]) - float(
+            robust_second["selection_temporal_perturbation_score"]
+        )
+        if robust_gap <= args.robust_tiebreak_margin:
+            best = max(candidates, key=lambda x: float(x["selection_perturbation_score"]))
+            selection_reason = "perturb_tiebreak"
+        else:
+            best = robust_top
+            selection_reason = "robust_primary"
+    else:
+        robust_gap = None
+        selection_reason = "max_selection_score"
+        best = max(candidates, key=lambda x: float(x.get("selection_score", float("-inf"))))
     summary = {
         "best_weights_checkpoint": best.get("selected_weights_checkpoint"),
         "best_selection_score": float(best.get("selection_score", 0.0)),
         "best_metrics_path": best.get("_metrics_path"),
+        "selection_strategy": args.strategy,
+        "selection_reason": selection_reason,
+        "selection_robust_tiebreak_margin": float(args.robust_tiebreak_margin),
+        "selection_robust_top2_gap": None if robust_gap is None else float(robust_gap),
         "all_candidates": [
             {
                 "weights_checkpoint": item.get("selected_weights_checkpoint"),
