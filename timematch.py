@@ -773,7 +773,11 @@ def _compute_perturbation_consistency(clean_probs, perturbed_probs_by_name, num_
 
 
 def _apply_trajectory_selection_score(metrics, history, config):
-    base_key = "selection_temporal_perturbation_score"
+    score_mode = getattr(config, "selection_score_mode", "temporal_perturbation_trajectory")
+    if score_mode.startswith("pure_perturbation"):
+        base_key = "selection_perturbation_score"
+    else:
+        base_key = "selection_temporal_perturbation_score"
     first_score = float(history[0].get(base_key, metrics.get(base_key, 0.0)))
     final_score = float(metrics.get(base_key, 0.0))
     penultimate_score = float(history[-2].get(base_key, final_score)) if len(history) >= 2 else first_score
@@ -784,7 +788,6 @@ def _apply_trajectory_selection_score(metrics, history, config):
     else:
         late_gain_ratio = min(1.0, late_gain / (total_gain + 1e-8))
     alpha = float(getattr(config, "selection_trajectory_alpha", 0.30))
-    score_mode = getattr(config, "selection_score_mode", "temporal_perturbation_trajectory")
     late_gain_threshold = float(getattr(config, "selection_late_gain_threshold", 0.20))
     if score_mode == "pure_perturbation_late_reject":
         late_reject_threshold = float(getattr(config, "selection_late_reject_threshold", 0.80))
