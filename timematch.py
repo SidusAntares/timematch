@@ -450,7 +450,12 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         if (
             getattr(config, "selection_metrics_out", None)
             and getattr(config, "selection_score_mode", "temporal_perturbation")
-            in ("temporal_perturbation_trajectory", "temporal_perturbation_late_filter")
+            in (
+                "temporal_perturbation_trajectory",
+                "temporal_perturbation_late_filter",
+                "pure_perturbation_late_reject",
+                "pure_perturbation_margin_tiebreak",
+            )
         ):
             epoch_metrics = compute_selection_metrics(
                 teacher=teacher,
@@ -473,7 +478,12 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
     if getattr(config, "selection_metrics_out", None):
         if (
             getattr(config, "selection_score_mode", "temporal_perturbation")
-            in ("temporal_perturbation_trajectory", "temporal_perturbation_late_filter")
+            in (
+                "temporal_perturbation_trajectory",
+                "temporal_perturbation_late_filter",
+                "pure_perturbation_late_reject",
+                "pure_perturbation_margin_tiebreak",
+            )
             and selection_metric_history
         ):
             metrics = dict(selection_metric_history[-1])
@@ -668,7 +678,12 @@ def compute_selection_metrics(
         - 0.10 * js_div
     )
     score_mode = getattr(config, "selection_score_mode", "temporal_perturbation")
-    score = legacy_score if score_mode == "legacy" else robust_score
+    if score_mode.startswith("pure_perturbation"):
+        score = perturbation_score
+    elif score_mode == "legacy":
+        score = legacy_score
+    else:
+        score = robust_score
 
     metrics = {
         "selection_score": float(score),
@@ -771,13 +786,28 @@ def _apply_trajectory_selection_score(metrics, history, config):
     alpha = float(getattr(config, "selection_trajectory_alpha", 0.30))
     score_mode = getattr(config, "selection_score_mode", "temporal_perturbation_trajectory")
     late_gain_threshold = float(getattr(config, "selection_late_gain_threshold", 0.20))
-    if score_mode == "temporal_perturbation_late_filter":
+    if score_mode == "pure_perturbation_late_reject":
+        late_reject_threshold = float(getattr(config, "selection_late_reject_threshold", 0.80))
+        is_rejected = late_gain_ratio > late_reject_threshold
+        trajectory_score = final_score - (1.0 if is_rejected else 0.0)
+        trajectory_multiplier = 1.0
+        excess_late_gain = max(0.0, late_gain_ratio - late_reject_threshold)
+        metrics["selection_late_reject_threshold"] = float(late_reject_threshold)
+        metrics["selection_late_reject_applied"] = bool(is_rejected)
+    elif score_mode == "pure_perturbation_margin_tiebreak":
+        margin = float(getattr(config, "selection_margin_tiebreak", 0.01))
+        trajectory_score = final_score + margin * float(metrics.get("selection_legacy_score", 0.0))
+        trajectory_multiplier = 1.0
+        excess_late_gain = 0.0
+        metrics["selection_margin_tiebreak"] = float(margin)
+    elif score_mode == "temporal_perturbation_late_filter":
         excess_late_gain = max(0.0, late_gain_ratio - late_gain_threshold)
         trajectory_multiplier = max(0.0, 1.0 - alpha * excess_late_gain)
+        trajectory_score = final_score * trajectory_multiplier
     else:
         excess_late_gain = late_gain_ratio
         trajectory_multiplier = max(0.0, 1.0 - alpha * late_gain_ratio)
-    trajectory_score = final_score * trajectory_multiplier
+        trajectory_score = final_score * trajectory_multiplier
     metrics["selection_score_mode"] = score_mode
     metrics["selection_score"] = float(trajectory_score)
     metrics["selection_trajectory_base_score"] = float(final_score)
