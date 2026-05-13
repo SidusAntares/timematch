@@ -680,6 +680,10 @@ def compute_selection_metrics(
     score_mode = getattr(config, "selection_score_mode", "temporal_perturbation")
     if score_mode.startswith("pure_perturbation"):
         score = perturbation_score
+    elif score_mode == "robust_perturbation_blend":
+        robust_weight = float(getattr(config, "selection_blend_robust_weight", 0.70))
+        robust_weight = min(1.0, max(0.0, robust_weight))
+        score = robust_weight * robust_score + (1.0 - robust_weight) * perturbation_score
     elif score_mode == "legacy":
         score = legacy_score
     else:
@@ -691,6 +695,7 @@ def compute_selection_metrics(
         "selection_legacy_score": float(legacy_score),
         "selection_temporal_perturbation_score": float(robust_score),
         "selection_perturbation_score": float(perturbation_score),
+        "selection_blend_robust_weight": float(getattr(config, "selection_blend_robust_weight", 0.70)),
         "selection_coverage": float(coverage),
         "selection_mean_confidence": float(mean_confidence),
         "selection_teacher_student_agreement": float(agreement),
