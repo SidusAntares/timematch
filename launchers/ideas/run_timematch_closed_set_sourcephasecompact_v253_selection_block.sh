@@ -49,6 +49,7 @@ SOURCE_CHECKPOINT_EPOCHS="${SOURCE_CHECKPOINT_EPOCHS:-30,50,70,100}"
 SOURCE_CHECKPOINT_DIRNAME="${SOURCE_CHECKPOINT_DIRNAME:-checkpoints}"
 SOURCE_WEIGHTS_CHECKPOINTS="${SOURCE_WEIGHTS_CHECKPOINTS:-checkpoints/epoch_30.pt,checkpoints/epoch_50.pt,checkpoints/epoch_70.pt,checkpoints/epoch_100.pt}"
 SOURCE_SKIP_TRAIN="${SOURCE_SKIP_TRAIN:-1}"
+SELECTION_ONLY="${SELECTION_ONLY:-0}"
 
 SELECTION_WARMUP_EPOCHS="${SELECTION_WARMUP_EPOCHS:-5}"
 SELECTION_METRIC_BATCHES="${SELECTION_METRIC_BATCHES:-200}"
@@ -66,6 +67,7 @@ SELECTION_VALUE_NOISE_STD="${SELECTION_VALUE_NOISE_STD:-0.03}"
 SELECTION_PERTURBATION_WEIGHT="${SELECTION_PERTURBATION_WEIGHT:-1.0}"
 SELECTION_COLLAPSE_PENALTY_WEIGHT="${SELECTION_COLLAPSE_PENALTY_WEIGHT:-0.35}"
 SELECTION_TRAJECTORY_ALPHA="${SELECTION_TRAJECTORY_ALPHA:-0.30}"
+SELECTION_LATE_GAIN_THRESHOLD="${SELECTION_LATE_GAIN_THRESHOLD:-0.20}"
 
 SOURCE_MODEL="${SOURCE_MODEL:-pseltae_${SOURCE_TILE}_closedset_noshift_sourcephasecompact_p5_${SOURCE_MODEL_TAG}}"
 
@@ -190,7 +192,8 @@ while IFS= read -r TARGET; do
       --selection_value_noise_std "$SELECTION_VALUE_NOISE_STD" \
       --selection_perturbation_weight "$SELECTION_PERTURBATION_WEIGHT" \
       --selection_collapse_penalty_weight "$SELECTION_COLLAPSE_PENALTY_WEIGHT" \
-      --selection_trajectory_alpha "$SELECTION_TRAJECTORY_ALPHA"
+      --selection_trajectory_alpha "$SELECTION_TRAJECTORY_ALPHA" \
+      --selection_late_gain_threshold "$SELECTION_LATE_GAIN_THRESHOLD"
   done
 
   SELECTION_SUMMARY_JSON="$SELECTION_DIR/selection_summary.json"
@@ -200,6 +203,12 @@ while IFS= read -r TARGET; do
 
   BEST_WEIGHTS_CHECKPOINT="$(python -c "import json; print(json.load(open(r'$SELECTION_SUMMARY_JSON', 'r', encoding='utf-8'))['best_weights_checkpoint'])")"
   echo "Selected checkpoint for ${SOURCE_TILE} -> ${TARGET_TILE}: ${BEST_WEIGHTS_CHECKPOINT}"
+  echo "SELECTION_RESULT|${SOURCE_TILE}|${TARGET_TILE}|${BEST_WEIGHTS_CHECKPOINT}|${SELECTION_SUMMARY_JSON}"
+
+  if [ "$SELECTION_ONLY" = "1" ]; then
+    echo "[SELECTION-ONLY MODE] Selected ${BEST_WEIGHTS_CHECKPOINT} for ${SOURCE_TILE} -> ${TARGET_TILE}; skipping final TimeMatch."
+    continue
+  fi
 
   FINAL_MODEL="${BASE_TIMEMATCH_MODEL}_selected"
   python train.py \

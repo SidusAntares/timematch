@@ -449,7 +449,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
         if (
             getattr(config, "selection_metrics_out", None)
-            and getattr(config, "selection_score_mode", "temporal_perturbation") == "temporal_perturbation_trajectory"
+            and getattr(config, "selection_score_mode", "temporal_perturbation")
+            in ("temporal_perturbation_trajectory", "temporal_perturbation_late_filter")
         ):
             epoch_metrics = compute_selection_metrics(
                 teacher=teacher,
@@ -471,7 +472,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
     if getattr(config, "selection_metrics_out", None):
         if (
-            getattr(config, "selection_score_mode", "temporal_perturbation") == "temporal_perturbation_trajectory"
+            getattr(config, "selection_score_mode", "temporal_perturbation")
+            in ("temporal_perturbation_trajectory", "temporal_perturbation_late_filter")
             and selection_metric_history
         ):
             metrics = dict(selection_metric_history[-1])
@@ -767,9 +769,16 @@ def _apply_trajectory_selection_score(metrics, history, config):
     else:
         late_gain_ratio = min(1.0, late_gain / (total_gain + 1e-8))
     alpha = float(getattr(config, "selection_trajectory_alpha", 0.30))
-    trajectory_multiplier = max(0.0, 1.0 - alpha * late_gain_ratio)
+    score_mode = getattr(config, "selection_score_mode", "temporal_perturbation_trajectory")
+    late_gain_threshold = float(getattr(config, "selection_late_gain_threshold", 0.20))
+    if score_mode == "temporal_perturbation_late_filter":
+        excess_late_gain = max(0.0, late_gain_ratio - late_gain_threshold)
+        trajectory_multiplier = max(0.0, 1.0 - alpha * excess_late_gain)
+    else:
+        excess_late_gain = late_gain_ratio
+        trajectory_multiplier = max(0.0, 1.0 - alpha * late_gain_ratio)
     trajectory_score = final_score * trajectory_multiplier
-    metrics["selection_score_mode"] = "temporal_perturbation_trajectory"
+    metrics["selection_score_mode"] = score_mode
     metrics["selection_score"] = float(trajectory_score)
     metrics["selection_trajectory_base_score"] = float(final_score)
     metrics["selection_trajectory_first_score"] = float(first_score)
@@ -777,6 +786,8 @@ def _apply_trajectory_selection_score(metrics, history, config):
     metrics["selection_trajectory_total_gain"] = float(total_gain)
     metrics["selection_trajectory_late_gain"] = float(late_gain)
     metrics["selection_trajectory_late_gain_ratio"] = float(late_gain_ratio)
+    metrics["selection_trajectory_late_gain_threshold"] = float(late_gain_threshold)
+    metrics["selection_trajectory_excess_late_gain"] = float(excess_late_gain)
     metrics["selection_trajectory_multiplier"] = float(trajectory_multiplier)
     metrics["selection_trajectory_alpha"] = float(alpha)
 

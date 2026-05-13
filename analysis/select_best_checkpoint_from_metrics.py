@@ -37,6 +37,8 @@ def main():
                 "selection_perturbation_prob_consistency": float(item.get("selection_perturbation_prob_consistency", 0.0)),
                 "selection_trajectory_base_score": float(item.get("selection_trajectory_base_score", 0.0)),
                 "selection_trajectory_late_gain_ratio": float(item.get("selection_trajectory_late_gain_ratio", 0.0)),
+                "selection_trajectory_late_gain_threshold": float(item.get("selection_trajectory_late_gain_threshold", 0.0)),
+                "selection_trajectory_excess_late_gain": float(item.get("selection_trajectory_excess_late_gain", 0.0)),
                 "selection_trajectory_multiplier": float(item.get("selection_trajectory_multiplier", 1.0)),
                 "selection_coverage": float(item.get("selection_coverage", 0.0)),
                 "selection_mean_confidence": float(item.get("selection_mean_confidence", 0.0)),
