@@ -1,5 +1,258 @@
 # Project Next Steps
 
+## Status Note (2026-05-14): Final Closure Route
+
+The current work has moved past simply adding more structure-loss components.
+
+The remaining mainline should be understood as a **logic-closure stage**:
+
+> **structure-loss metrics change the model; structure-evaluation metrics decide how much, when, and which checkpoint should be used.**
+
+This note supersedes the older `v2.5 / v2.6` split further below. Older sections are kept as project history, but the active plan should now follow this closure route.
+
+### Core distinction: two kinds of structure indicators
+
+Earlier correlation analysis produced many high-correlation structural indicators. Later experiments showed that these indicators are not all suitable for the same role.
+
+They should now be separated into two classes:
+
+- **Structure-loss indicators**
+  - These are indicators that can be safely turned into training losses.
+  - They directly shape the source model.
+  - Current source-loss components belong here.
+  - Conceptually, they are organized around temporal decomposition:
+    - residual / noise component
+    - trend component
+    - seasonal / periodic component
+    - boundary / transition weighting
+
+- **Structure-evaluation indicators**
+  - These are indicators that correlate with transfer quality, but perform poorly when used as direct losses.
+  - They should not be forced by gradient optimization.
+  - Their proper role is evaluation, calibration, checkpoint selection, and controller feedback.
+  - They are especially important for deciding whether a source checkpoint is suitable for the current target.
+
+This distinction is important because it explains why some previously "failed" indicators are still valuable:
+
+> **they failed as losses, but may still be useful as selectors.**
+
+### Remaining closure problem
+
+`v2.4.3b` has already provided the current best source-structure backbone. The remaining gap is not another temporal-unit redesign.
+
+The unresolved issue is:
+
+> **how to make the structural constraint adaptive to source domains and source-target pairs.**
+
+This has two sides:
+
+- **Source-domain adaptivity**
+  - Different sources may require different relative strengths among trend, residual, segment-inter, boundary-window, reshaper, and relation components.
+  - Source has labels, so source-side structural evaluation is relatively reliable.
+  - This can guide initial structure-loss weights or source-side gates.
+
+- **Target / pair adaptivity**
+  - The same source can prefer different checkpoints for different targets.
+  - This cannot be solved by source-only statistics alone.
+  - Target labels are unavailable, so target-side structural evaluation must use unlabeled or pseudo-label approximations.
+  - The safest current form is checkpoint selection after a short TimeMatch warmup.
+
+Therefore the closure route should preserve three levels:
+
+- source structure decides **how to train / weight the source structure loss**
+- target warmup structure decides **which checkpoint is suitable for this target**
+- DA-stage target feedback decides **whether structure-related control should continue, weaken, or stop**
+
+### Active version plan
+
+#### `v2.5.4`: structure-evaluation metric bank for checkpoint selection
+
+Goal:
+
+> verify whether the previously discovered evaluation-type indicators can select better source checkpoints than cold-start confidence / perturbation heuristics.
+
+Design principles:
+
+- keep `v2.4.3b` as the backbone
+- reuse source checkpoint banks
+- do not add new target structure losses
+- use evaluation indicators as selector features, not losses
+- compare candidates within the same source-target task by rank, not by raw metric value
+- use a short warmup to expose pair-dependent signals
+
+Fast validation setup:
+
+- checkpoint candidates:
+  - `30`
+  - `50`
+  - `70`
+  - `100`
+- exclude `20`, because `v2.5.3i` showed that early underfit checkpoints can pollute selection
+- warmup:
+  - start with `2 epoch`
+- task set:
+  - representative hard / divergent pairs first
+  - full 12 tasks only if the selector shows clear improvement
+
+Success criterion:
+
+- not necessarily best final DA at first
+- first prove the selector can recover pair-dependent checkpoint preference better than `v2.5.3`
+
+#### `v2.5.5`: source-side structure adaptivity
+
+Goal:
+
+> use source-side structure-evaluation indicators to decide initial structure-loss component weights.
+
+This should only be attempted after `v2.5.4` clarifies which evaluation indicators are trustworthy.
+
+Why this belongs after `v2.5.4`:
+
+- source-side gating alone risks repeating the `v2.5.1` failure pattern:
+  - one source prefers one global decision
+  - but different targets actually need different checkpoints
+- therefore source adaptivity should improve checkpoint-bank quality, not replace target-aware selection
+
+Possible implementation:
+
+- compute source labeled structure descriptors before or during early source training
+- map descriptors to conservative component factors
+- factors should be bounded and interpretable
+- first version should adjust only initial weights, not introduce a high-capacity MOE
+
+What not to do yet:
+
+- do not use a complex neural gate without enough supervision
+- do not train a gate from noisy final DA labels
+- do not let source-only structure decide final source-target checkpoint selection
+
+#### `v2.5.6`: DA-stage structure controller
+
+Goal:
+
+> use target-side unlabeled / pseudo-label structure-evaluation signals during DA to decide whether structure-related mechanisms should continue, decay, or stop.
+
+This is the target-adaptivity part of the closure.
+
+Important boundary:
+
+- true target labels cannot be used
+- target pseudo-label structure can be used only as weak feedback
+- signals should control DA behavior, not become a strong new target structure penalty
+
+Candidate feedback signals:
+
+- high-confidence pseudo-label prototype stability
+- class-distribution health / collapse risk
+- perturbation consistency
+- teacher-student agreement
+- entropy and confidence trajectory
+- source-target prototype compatibility under pseudo labels
+
+Possible controls:
+
+- keep / decay / stop reshaper update in DA
+- weaken structure-related auxiliary terms when target structure becomes unstable
+- stop structural pressure if evaluation indicators suggest the current structure is already transfer-friendly
+
+### Completion criterion for the whole project
+
+If the following three pieces are completed, the project has a coherent end-to-end story:
+
+1. `v2.4.3b` provides the validated source-structure backbone.
+2. `v2.5.4` shows structure-evaluation indicators can support target-aware checkpoint selection.
+3. `v2.5.5` and/or `v2.5.6` show that evaluation indicators can provide adaptivity rather than becoming direct losses.
+
+At that point the work can be framed as:
+
+> **A source-side temporal-structure shaping method with evaluation-metric-driven adaptation for source-domain weighting and source-target checkpoint selection.**
+
+This would close the main logical loop:
+
+- correlated structural indicators are first discovered
+- loss-suitable indicators become source structure losses
+- evaluation-suitable indicators become selectors / controllers
+- source structure is shaped without target labels
+- target adaptivity is achieved through checkpoint choice and weak DA-stage feedback, not direct target structural supervision
+
+### Current immediate action
+
+`v2.5.4` and `v2.5.4b` have now been evaluated.
+
+Current result:
+
+- `v2.5.4` metric-bank quickcheck selected only `2/4` representative tasks correctly.
+- `v2.5.4b` offline audit showed that existing short-warmup metrics do not generalize well under leave-one-task-out validation.
+- Best same-task metrics can look acceptable, but held-out selection remains weak:
+  - `v253h` LOTO hit: `3/12`
+  - `v253i` LOTO hit: `4/12`
+  - `v254` LOTO hit: `0/4`
+
+Therefore:
+
+> **Do not continue tuning static / short-warmup checkpoint selector heuristics as the main route.**
+
+The next active route should be:
+
+> **`v2.5.5`: source-side structure adaptivity.**
+
+Checkpoint selection should remain as:
+
+- an analysis tool
+- an oracle upper-bound reference
+- a possible later auxiliary module
+
+but not the immediate mainline.
+
+#### `v2.5.5a` result and `v2.5.5b` next experiment
+
+`v2.5.5a` source descriptor audit has now been run.
+
+Key observation:
+
+- source-level tendency exists:
+  - `31TCJ` prefers earlier checkpoints
+  - `30TXT` prefers later checkpoints
+  - `32VNH` and `33UVP` remain mixed
+- however, source-only descriptors do **not** determine the final source-target checkpoint:
+  - the same source can still prefer different epochs for different targets
+  - therefore source-side adaptivity can improve the checkpoint bank, but cannot replace pair-aware checkpoint choice
+
+Current implication:
+
+> do not jump directly to a neural gate or descriptor-to-weight formula.
+
+The next experiment should be a conservative source-weight ablation:
+
+- keep the `v2.4.3b` backbone
+- compare source checkpoint banks under a small number of interpretable weight variants
+- evaluate all candidate checkpoints on a few representative pairs, so the unreliable selector does not contaminate the source-weight conclusion
+
+`v2.5.5b` should therefore start with:
+
+- `baseline`
+  - original `v2.4.3b` weights
+- `transition_light`
+  - weaker boundary / inter-segment transition pressure
+
+Optional follow-up if the first two differ clearly:
+
+- `structure_light`
+  - weaker overall auxiliary structure pressure
+
+Primary question:
+
+> does weakening transition pressure help early-preference sources such as `31TCJ` without destroying later-preference sources such as `30TXT`?
+
+Success criterion:
+
+- not a new selector yet
+- first show that the oracle checkpoint curve changes in a consistent and explainable way under source-side weight changes
+- only then convert the result into a bounded source-side gate
+
+---
+
 ## Status Note (2026-05-09)
 
 This file is now aligned with the current source-structure mainline.
