@@ -1,0 +1,12 @@
+{
+  "_cache_key": "8006ffd7ab8d2b85bee7947bcbd719e391e82756d3aa8b3b040784392bd7d457",
+  "data": {
+    "log_dir": "C:\\Code\\dev\\PythonProject\\timematch\\logs\\v255b_source_weight_ablation_20260514_134715",
+    "parse_time": "2026-05-14T21:52:03.117834",
+    "num_files": 0,
+    "files": [],
+    "best_by_task": {},
+    "errors_summary": [],
+    "delta_vs_baseline": {}
+  }
+}

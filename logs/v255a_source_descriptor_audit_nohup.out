@@ -1,0 +1,538 @@
+nohup: 忽略输入
+Excluded 9510 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 41 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 10 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 3 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 32 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 9510 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 79 parcels from closed-set loading because class 'winter_peas' is not kept.
+Excluded 51 parcels from closed-set loading because class 'winter_rye' is not kept.
+Excluded 15690 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 43 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 11 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 50 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 15690 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 33 parcels from closed-set loading because class 'winter_rye' is not kept.
+Excluded 6413 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 14 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 45 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 36 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 6413 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 1 parcels from closed-set loading because class 'winter_oat' is not kept.
+Excluded 5150 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 65 parcels from closed-set loading because class 'spring_peas' is not kept.
+Excluded 5 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 3 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 20 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 85 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 31 parcels from closed-set loading because class 'sunflowers' is not kept.
+Excluded 5150 parcels from closed-set loading because class 'unknown' is not kept.
+{
+  "sources": [
+    {
+      "source": "france/30TXT/2017",
+      "source_tile": "30TXT",
+      "num_classes": 11,
+      "num_samples": 106028,
+      "classes": [
+        "corn",
+        "horsebeans",
+        "meadow",
+        "spring_barley",
+        "spring_peas",
+        "sunflowers",
+        "winter_barley",
+        "winter_oat",
+        "winter_rapeseed",
+        "winter_triticale",
+        "winter_wheat"
+      ],
+      "partition": {
+        "description": "mode=doy_gap, segment_count=8, gap_threshold=45, min_points=3, max_points=8, max_span=120, intervals=[18,88], [91,128], [138,178], [183,213], [216,251], [253,291], [293,326], [328,361]",
+        "mode": "doy_gap",
+        "segment_count": 8,
+        "intervals": [
+          [
+            18,
+            88
+          ],
+          [
+            91,
+            128
+          ],
+          [
+            138,
+            178
+          ],
+          [
+            183,
+            213
+          ],
+          [
+            216,
+            251
+          ],
+          [
+            253,
+            291
+          ],
+          [
+            293,
+            326
+          ],
+          [
+            328,
+            361
+          ]
+        ]
+      },
+      "descriptors": {
+        "segment_count": 8.0,
+        "segment_span_mean": 39.5,
+        "segment_point_count_mean": 7.75,
+        "segment_point_count_cv": 0.05587260669577023,
+        "temporal_roughness_mean": 3.3991655474492903,
+        "boundary_concentration": 1.0942350385380615,
+        "class_curve_separability": 0.5626998473549515,
+        "within_class_variability": 2028217.8583337537
+      },
+      "oracle_targets": [
+        {
+          "task": "30TXT->31TCJ",
+          "best_epoch": 50,
+          "best_f1": 0.802,
+          "epoch_f1": {
+            "30": 0.7904,
+            "50": 0.802,
+            "70": 0.7982,
+            "100": 0.7976
+          }
+        },
+        {
+          "task": "30TXT->32VNH",
+          "best_epoch": 70,
+          "best_f1": 0.657,
+          "epoch_f1": {
+            "30": 0.6455,
+            "50": 0.649,
+            "70": 0.657,
+            "100": 0.6444
+          }
+        },
+        {
+          "task": "30TXT->33UVP",
+          "best_epoch": 100,
+          "best_f1": 0.7637,
+          "epoch_f1": {
+            "30": 0.6986,
+            "50": 0.7605,
+            "70": 0.7388,
+            "100": 0.7637
+          }
+        }
+      ]
+    },
+    {
+      "source": "france/31TCJ/2017",
+      "source_tile": "31TCJ",
+      "num_classes": 12,
+      "num_samples": 74156,
+      "classes": [
+        "corn",
+        "horsebeans",
+        "meadow",
+        "spring_barley",
+        "spring_peas",
+        "sunflowers",
+        "winter_barley",
+        "winter_oat",
+        "winter_peas",
+        "winter_rapeseed",
+        "winter_triticale",
+        "winter_wheat"
+      ],
+      "partition": {
+        "description": "mode=doy_gap, segment_count=8, gap_threshold=45, min_points=3, max_points=8, max_span=120, intervals=[25,85], [95,155], [165,215], [225,250], [255,280], [285,310], [315,335], [340,360]",
+        "mode": "doy_gap",
+        "segment_count": 8,
+        "intervals": [
+          [
+            25,
+            85
+          ],
+          [
+            95,
+            155
+          ],
+          [
+            165,
+            215
+          ],
+          [
+            225,
+            250
+          ],
+          [
+            255,
+            280
+          ],
+          [
+            285,
+            310
+          ],
+          [
+            315,
+            335
+          ],
+          [
+            340,
+            360
+          ]
+        ]
+      },
+      "descriptors": {
+        "segment_count": 8.0,
+        "segment_span_mean": 35.625,
+        "segment_point_count_mean": 4.875,
+        "segment_point_count_cv": 0.06783977720678437,
+        "temporal_roughness_mean": 2.9327836194444896,
+        "boundary_concentration": 1.3325141545294792,
+        "class_curve_separability": 0.4851525919998541,
+        "within_class_variability": 1181962.8997891515
+      },
+      "oracle_targets": [
+        {
+          "task": "31TCJ->30TXT",
+          "best_epoch": 30,
+          "best_f1": 0.7672,
+          "epoch_f1": {
+            "30": 0.7672,
+            "50": 0.7553,
+            "70": 0.7164,
+            "100": 0.7334
+          }
+        },
+        {
+          "task": "31TCJ->32VNH",
+          "best_epoch": 50,
+          "best_f1": 0.6957,
+          "epoch_f1": {
+            "30": 0.5724,
+            "50": 0.6957,
+            "70": 0.5004,
+            "100": 0.5526
+          }
+        },
+        {
+          "task": "31TCJ->33UVP",
+          "best_epoch": 30,
+          "best_f1": 0.6676,
+          "epoch_f1": {
+            "30": 0.6676,
+            "50": 0.6027,
+            "70": 0.5888,
+            "100": 0.6509
+          }
+        }
+      ]
+    },
+    {
+      "source": "denmark/32VNH/2017",
+      "source_tile": "32VNH",
+      "num_classes": 12,
+      "num_samples": 53823,
+      "classes": [
+        "corn",
+        "horsebeans",
+        "meadow",
+        "spring_barley",
+        "spring_oat",
+        "spring_peas",
+        "spring_wheat",
+        "winter_barley",
+        "winter_rapeseed",
+        "winter_rye",
+        "winter_triticale",
+        "winter_wheat"
+      ],
+      "partition": {
+        "description": "mode=doy_gap, segment_count=8, gap_threshold=45, min_points=3, max_points=8, max_span=120, intervals=[12,92], [112,152], [169,197], [199,229], [232,262], [267,297], [299,329], [332,362]",
+        "mode": "doy_gap",
+        "segment_count": 8,
+        "intervals": [
+          [
+            12,
+            92
+          ],
+          [
+            112,
+            152
+          ],
+          [
+            169,
+            197
+          ],
+          [
+            199,
+            229
+          ],
+          [
+            232,
+            262
+          ],
+          [
+            267,
+            297
+          ],
+          [
+            299,
+            329
+          ],
+          [
+            332,
+            362
+          ]
+        ]
+      },
+      "descriptors": {
+        "segment_count": 8.0,
+        "segment_span_mean": 37.25,
+        "segment_point_count_mean": 6.5,
+        "segment_point_count_cv": 0.07692307692307693,
+        "temporal_roughness_mean": 3.674616500072885,
+        "boundary_concentration": 1.170790074007476,
+        "class_curve_separability": 0.560347279146226,
+        "within_class_variability": 3039542.5663237334
+      },
+      "oracle_targets": [
+        {
+          "task": "32VNH->30TXT",
+          "best_epoch": 70,
+          "best_f1": 0.5927,
+          "epoch_f1": {
+            "30": 0.5856,
+            "50": 0.5834,
+            "70": 0.5927,
+            "100": 0.5807
+          }
+        },
+        {
+          "task": "32VNH->31TCJ",
+          "best_epoch": 50,
+          "best_f1": 0.5474,
+          "epoch_f1": {
+            "30": 0.527,
+            "50": 0.5474,
+            "70": 0.5295,
+            "100": 0.5361
+          }
+        },
+        {
+          "task": "32VNH->33UVP",
+          "best_epoch": 30,
+          "best_f1": 0.6674,
+          "epoch_f1": {
+            "30": 0.6674,
+            "50": 0.4531,
+            "70": 0.5654,
+            "100": 0.5789
+          }
+        }
+      ]
+    },
+    {
+      "source": "austria/33UVP/2017",
+      "source_tile": "33UVP",
+      "num_classes": 10,
+      "num_samples": 43809,
+      "classes": [
+        "corn",
+        "horsebeans",
+        "meadow",
+        "spring_barley",
+        "spring_oat",
+        "winter_barley",
+        "winter_rapeseed",
+        "winter_rye",
+        "winter_triticale",
+        "winter_wheat"
+      ],
+      "partition": {
+        "description": "mode=doy_gap, segment_count=8, gap_threshold=45, min_points=3, max_points=8, max_span=120, intervals=[0,83], [90,133], [150,183], [185,208], [210,235], [238,268], [270,305], [308,358]",
+        "mode": "doy_gap",
+        "segment_count": 8,
+        "intervals": [
+          [
+            0,
+            83
+          ],
+          [
+            90,
+            133
+          ],
+          [
+            150,
+            183
+          ],
+          [
+            185,
+            208
+          ],
+          [
+            210,
+            235
+          ],
+          [
+            238,
+            268
+          ],
+          [
+            270,
+            305
+          ],
+          [
+            308,
+            358
+          ]
+        ]
+      },
+      "descriptors": {
+        "segment_count": 8.0,
+        "segment_span_mean": 40.25,
+        "segment_point_count_mean": 7.25,
+        "segment_point_count_cv": 0.05972588991616818,
+        "temporal_roughness_mean": 3.414997774519712,
+        "boundary_concentration": 1.2163375286447398,
+        "class_curve_separability": 0.5260682514730295,
+        "within_class_variability": 1398463.4575945837
+      },
+      "oracle_targets": [
+        {
+          "task": "33UVP->30TXT",
+          "best_epoch": 70,
+          "best_f1": 0.6815,
+          "epoch_f1": {
+            "30": 0.6694,
+            "50": 0.6786,
+            "70": 0.6815,
+            "100": 0.678
+          }
+        },
+        {
+          "task": "33UVP->31TCJ",
+          "best_epoch": 70,
+          "best_f1": 0.6501,
+          "epoch_f1": {
+            "30": 0.6081,
+            "50": 0.6158,
+            "70": 0.6501,
+            "100": 0.6357
+          }
+        },
+        {
+          "task": "33UVP->32VNH",
+          "best_epoch": 30,
+          "best_f1": 0.7765,
+          "epoch_f1": {
+            "30": 0.7765,
+            "50": 0.7311,
+            "70": 0.7034,
+            "100": 0.7047
+          }
+        }
+      ]
+    }
+  ],
+  "oracle_epoch_summary": {
+    "30TXT": {
+      "50": 1,
+      "70": 1,
+      "100": 1
+    },
+    "31TCJ": {
+      "30": 2,
+      "50": 1
+    },
+    "32VNH": {
+      "30": 1,
+      "50": 1,
+      "70": 1
+    },
+    "33UVP": {
+      "30": 1,
+      "70": 2
+    }
+  },
+  "descriptor_epoch_alignment": [
+    {
+      "source_tile": "30TXT",
+      "mean_best_epoch": 73.33333333333333,
+      "min_best_epoch": 50,
+      "max_best_epoch": 100,
+      "descriptors": {
+        "segment_count": 8.0,
+        "segment_span_mean": 39.5,
+        "segment_point_count_mean": 7.75,
+        "segment_point_count_cv": 0.05587260669577023,
+        "temporal_roughness_mean": 3.3991655474492903,
+        "boundary_concentration": 1.0942350385380615,
+        "class_curve_separability": 0.5626998473549515,
+        "within_class_variability": 2028217.8583337537
+      }
+    },
+    {
+      "source_tile": "31TCJ",
+      "mean_best_epoch": 36.666666666666664,
+      "min_best_epoch": 30,
+      "max_best_epoch": 50,
+      "descriptors": {
+        "segment_count": 8.0,
+        "segment_span_mean": 35.625,
+        "segment_point_count_mean": 4.875,
+        "segment_point_count_cv": 0.06783977720678437,
+        "temporal_roughness_mean": 2.9327836194444896,
+        "boundary_concentration": 1.3325141545294792,
+        "class_curve_separability": 0.4851525919998541,
+        "within_class_variability": 1181962.8997891515
+      }
+    },
+    {
+      "source_tile": "32VNH",
+      "mean_best_epoch": 50.0,
+      "min_best_epoch": 30,
+      "max_best_epoch": 70,
+      "descriptors": {
+        "segment_count": 8.0,
+        "segment_span_mean": 37.25,
+        "segment_point_count_mean": 6.5,
+        "segment_point_count_cv": 0.07692307692307693,
+        "temporal_roughness_mean": 3.674616500072885,
+        "boundary_concentration": 1.170790074007476,
+        "class_curve_separability": 0.560347279146226,
+        "within_class_variability": 3039542.5663237334
+      }
+    },
+    {
+      "source_tile": "33UVP",
+      "mean_best_epoch": 56.666666666666664,
+      "min_best_epoch": 30,
+      "max_best_epoch": 70,
+      "descriptors": {
+        "segment_count": 8.0,
+        "segment_span_mean": 40.25,
+        "segment_point_count_mean": 7.25,
+        "segment_point_count_cv": 0.05972588991616818,
+        "temporal_roughness_mean": 3.414997774519712,
+        "boundary_concentration": 1.2163375286447398,
+        "class_curve_separability": 0.5260682514730295,
+        "within_class_variability": 1398463.4575945837
+      }
+    }
+  ]
+}
+v2.5.5a source descriptor audit written to:
+  /data/user/timematch/result/_summary/v255a_source_descriptor_audit.json
+  /data/user/timematch/result/_summary/v255a_source_descriptor_audit.md
