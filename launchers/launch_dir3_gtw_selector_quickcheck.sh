@@ -1,0 +1,85 @@
+#!/bin/bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+IDEA_DIR="$SCRIPT_DIR/ideas"
+RUN_TAG="${RUN_TAG:-dir3_gtw_selector_quickcheck}"
+LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs/${RUN_TAG}_$(date +%Y%m%d_%H%M%S)}"
+
+mkdir -p "$LOG_DIR"
+
+export DATA_ROOT="${DATA_ROOT:-/data/user/DBL/timematch_data}"
+export RESHAPER_TAG="${RESHAPER_TAG:-dir3_gtw_selector_s010_rel003}"
+export SOURCE_MODEL_TAG="${SOURCE_MODEL_TAG:-v250_boundarywindow_s010_rel003_ckptbank}"
+export TARGET_MODEL_TAG="${TARGET_MODEL_TAG:-$RESHAPER_TAG}"
+export SOURCE_SKIP_TRAIN="${SOURCE_SKIP_TRAIN:-1}"
+export SELECTION_ONLY="${SELECTION_ONLY:-1}"
+
+export SOURCE_FEATURE_RESHAPER="${SOURCE_FEATURE_RESHAPER:-residual_temporal_conv}"
+export SOURCE_FEATURE_RESHAPER_STRENGTH="${SOURCE_FEATURE_RESHAPER_STRENGTH:-0.10}"
+export SOURCE_FEATURE_RESHAPER_KERNEL_SIZE="${SOURCE_FEATURE_RESHAPER_KERNEL_SIZE:-3}"
+export SOURCE_FEATURE_RESHAPER_REG_TRADE_OFF="${SOURCE_FEATURE_RESHAPER_REG_TRADE_OFF:-0.05}"
+export SOURCE_FEATURE_DUAL_CLS_TRADE_OFF="${SOURCE_FEATURE_DUAL_CLS_TRADE_OFF:-1.00}"
+export SOURCE_FEATURE_DUAL_RELATION_TRADE_OFF="${SOURCE_FEATURE_DUAL_RELATION_TRADE_OFF:-0.03}"
+
+export SOURCE_PHASE_PARTITION_MODE="${SOURCE_PHASE_PARTITION_MODE:-doy_gap}"
+export SOURCE_PHASE_COUNT="${SOURCE_PHASE_COUNT:-5}"
+export SOURCE_SEGMENT_PARTITION_MODE="${SOURCE_SEGMENT_PARTITION_MODE:-$SOURCE_PHASE_PARTITION_MODE}"
+export SOURCE_SEGMENT_COUNT="${SOURCE_SEGMENT_COUNT:-$SOURCE_PHASE_COUNT}"
+export SOURCE_PHASE_GAP_THRESHOLD="${SOURCE_PHASE_GAP_THRESHOLD:-45}"
+export SOURCE_PHASE_MIN_POINTS="${SOURCE_PHASE_MIN_POINTS:-3}"
+export SOURCE_PHASE_MAX_POINTS="${SOURCE_PHASE_MAX_POINTS:-8}"
+export SOURCE_PHASE_MAX_SPAN="${SOURCE_PHASE_MAX_SPAN:-120}"
+export SOURCE_PHASE_MIN_SAMPLE_POINTS="${SOURCE_PHASE_MIN_SAMPLE_POINTS:-2}"
+
+export SOURCE_STRUCTURE_LOSS_VERSION="${SOURCE_STRUCTURE_LOSS_VERSION:-segment_boundary_window_residual}"
+export SOURCE_STRUCTURE_INTRA_TRADE_OFF="${SOURCE_STRUCTURE_INTRA_TRADE_OFF:-1.0}"
+export SOURCE_STRUCTURE_TREND_TRADE_OFF="${SOURCE_STRUCTURE_TREND_TRADE_OFF:-0.05}"
+export SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF="${SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF:-0.02}"
+export SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF="${SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF:-0.20}"
+export SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE="${SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE:-2}"
+
+export TIMEMATCH_EPOCHS="${TIMEMATCH_EPOCHS:-20}"
+export SELECTION_WARMUP_EPOCHS="${SELECTION_WARMUP_EPOCHS:-2}"
+export SELECTION_METRIC_BATCHES="${SELECTION_METRIC_BATCHES:-150}"
+export NUM_WORKERS="${NUM_WORKERS:-8}"
+export BATCH_SIZE="${BATCH_SIZE:-128}"
+
+export SOURCE_WEIGHTS_CHECKPOINTS="${SOURCE_WEIGHTS_CHECKPOINTS:-checkpoints/epoch_30.pt,checkpoints/epoch_50.pt,checkpoints/epoch_70.pt,checkpoints/epoch_100.pt}"
+export SELECTION_SCORE_MODE="${SELECTION_SCORE_MODE:-gtw_monotonic_warp}"
+export SELECTION_STRATEGY="${SELECTION_STRATEGY:-max_selection_score}"
+export SELECTION_MONOTONIC_WARP_WEIGHT="${SELECTION_MONOTONIC_WARP_WEIGHT:-0.55}"
+
+run_pair() {
+  local gpu_id="$1"
+  local source_dataset="$2"
+  local target_dataset="$3"
+  local source_tile
+  local target_tile
+  source_tile="$(echo "$source_dataset" | cut -d'/' -f2)"
+  target_tile="$(echo "$target_dataset" | cut -d'/' -f2)"
+  local log_file="$LOG_DIR/gpu${gpu_id}_${source_tile}_to_${target_tile}_${RUN_TAG}.log"
+
+  (
+    CUDA_VISIBLE_DEVICES="$gpu_id" \
+      SOURCE="$source_dataset" \
+      TARGETS_BLOCK="$target_dataset" \
+      bash "$IDEA_DIR/run_timematch_closed_set_sourcephasecompact_v253_selection_block.sh"
+  ) > "$log_file" 2>&1 &
+}
+
+run_pair 0 "france/30TXT/2017" "austria/33UVP/2017"
+run_pair 1 "france/31TCJ/2017" "denmark/32VNH/2017"
+run_pair 2 "denmark/32VNH/2017" "austria/33UVP/2017"
+run_pair 3 "austria/33UVP/2017" "denmark/32VNH/2017"
+
+wait
+
+echo "Logs saved to: $LOG_DIR"
+echo "dir3 GTW-inspired selector quickcheck logs:"
+echo "  $LOG_DIR/gpu0_30TXT_to_33UVP_${RUN_TAG}.log"
+echo "  $LOG_DIR/gpu1_31TCJ_to_32VNH_${RUN_TAG}.log"
+echo "  $LOG_DIR/gpu2_32VNH_to_33UVP_${RUN_TAG}.log"
+echo "  $LOG_DIR/gpu3_33UVP_to_32VNH_${RUN_TAG}.log"

@@ -1128,3 +1128,12 @@ The current stage is:
 > **how to organize source-only temporal structure loss so that it is semantically correct, optimization-friendly, and eventually generalizable beyond remote sensing**
 
 That is now the real mainline.
+
+---
+
+## 10. Active Log Risk Notes
+
+- `logs/v255b_source_weight_ablation_20260514_134715/gpu1_31TCJ_to_32VNH_structure_light.log`
+  - The latest currently observed DA result may be contaminated.
+  - Do not treat this latest DA block as a clean `structure_light` conclusion until the run is checked or rerun.
+  - When summarizing `v2.5.5b`, either exclude this block or mark it as `suspect / needs verification`.

@@ -15,6 +15,7 @@ from ideas.source_feature_reshaper import (
     compute_dual_path_relation_regularization,
     compute_source_feature_reshaper_regularization,
 )
+from ideas.source_phase_grid import make_phase_grid_positions, project_to_phase_grid
 from transforms import (
     Identity,
     Normalize,
@@ -125,6 +126,27 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         phase_partition_spec=phase_partition_spec,
         min_sample_points_per_phase=getattr(config, "source_phase_min_sample_points", 2),
     )
+    phase_grid_count = int(getattr(config, "source_phase_grid_count", 5))
+    phase_grid_trade_off = float(getattr(config, "source_phase_grid_trade_off", 0.0))
+    phase_grid_weight_tracker = None
+    if phase_grid_trade_off > 0.0:
+        phase_grid_weight_tracker = SourceSegmentWeightTracker(
+            phase_count=phase_grid_count,
+            phase_partition_spec={
+                "mode": "uniform",
+                "phase_count": phase_grid_count,
+                "date_positions": list(range(phase_grid_count)),
+                "intervals": None,
+            },
+            min_sample_points_per_phase=1,
+        )
+        print(
+            "source phase-grid structure view: "
+            f"count={phase_grid_count}, "
+            f"trade_off={phase_grid_trade_off:.4f}, "
+            f"kernel={getattr(config, 'source_phase_grid_kernel', 'linear')}, "
+            f"bandwidth={getattr(config, 'source_phase_grid_bandwidth', 0.0):.4f}"
+        )
 
     best_f1 = 0
     checkpoint_epochs = _parse_checkpoint_epochs(getattr(config, "source_checkpoint_epochs", ""))
@@ -177,9 +199,65 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
                     boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
                     boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
+                    warp_invariant_trade_off=getattr(config, "source_structure_warp_invariant_trade_off", 0.35),
                     anchor_spatial_feats=spatial_feats_anchor,
                     anchor_positions=positions,
                 )
+                if phase_grid_weight_tracker is not None:
+                    phase_grid_feats, phase_grid_support = project_to_phase_grid(
+                        spatial_feats,
+                        positions,
+                        grid_count=phase_grid_count,
+                        kernel=getattr(config, "source_phase_grid_kernel", "linear"),
+                        bandwidth=(
+                            None
+                            if float(getattr(config, "source_phase_grid_bandwidth", 0.0)) <= 0.0
+                            else float(getattr(config, "source_phase_grid_bandwidth", 0.0))
+                        ),
+                        min_support=float(getattr(config, "source_phase_grid_min_support", 0.20)),
+                    )
+                    phase_grid_positions = make_phase_grid_positions(positions, phase_grid_count)
+                    phase_grid_loss, phase_grid_logs = compute_source_structure_loss(
+                        phase_grid_feats,
+                        phase_grid_positions,
+                        targets,
+                        weight_tracker=phase_grid_weight_tracker,
+                        version=getattr(config, "source_structure_loss_version", "compactness"),
+                        intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
+                        amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
+                        interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
+                        shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
+                        trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
+                        season_trade_off=getattr(config, "source_structure_season_trade_off", 0.02),
+                        segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
+                        boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
+                        boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
+                        warp_invariant_trade_off=getattr(config, "source_structure_warp_invariant_trade_off", 0.35),
+                    )
+                    compact_loss = compact_loss + phase_grid_trade_off * phase_grid_loss
+                    compact_logs["source_phase_grid_structure_loss"] = float(phase_grid_loss.detach().item())
+                    compact_logs["source_phase_grid_weighted_structure_loss"] = float(
+                        (phase_grid_trade_off * phase_grid_loss).detach().item()
+                    )
+                    compact_logs["source_phase_grid_mean_support"] = float(
+                        phase_grid_support.mean().detach().item()
+                    )
+                    compact_logs["source_phase_grid_min_support"] = float(
+                        phase_grid_support.min().detach().item()
+                    )
+                    compact_logs["source_phase_grid_low_support_fraction"] = float(
+                        (
+                            phase_grid_support
+                            < float(getattr(config, "source_phase_grid_min_support", 0.20))
+                        )
+                        .to(dtype=phase_grid_support.dtype)
+                        .mean()
+                        .detach()
+                        .item()
+                    )
+                    for key, value in phase_grid_logs.items():
+                        if key.startswith("source_structure_"):
+                            compact_logs[f"source_phase_grid_{key}"] = value
                 temporal_feats = model.temporal_encoder(spatial_feats.detach(), positions)
                 outputs = model.decoder(temporal_feats)
             else:

@@ -43,11 +43,50 @@ class ResidualTemporalConvReshaper(nn.Module):
         return spatial_feats + torch.tanh(self.gate) * delta
 
 
+class MonotonicWarpResidualTemporalConvReshaper(ResidualTemporalConvReshaper):
+    """
+    Conservative GTW-inspired reshaper.
+
+    It keeps the v2.4.3b residual temporal-conv path, then adds a small
+    monotonic-order smoothing residual. The extra path never permutes time
+    points: it sorts by timestamp, smooths neighboring features along that
+    monotonic order, and maps the residual back to the original sampled order.
+    """
+
+    def __init__(self, feature_dim, strength=0.08, kernel_size=3):
+        super().__init__(feature_dim=feature_dim, strength=strength, kernel_size=kernel_size)
+        self.warp_gate = nn.Parameter(torch.tensor(float(strength) * 0.5))
+
+    def forward(self, spatial_feats, positions=None, labels=None):
+        reshaped = super().forward(spatial_feats, positions=positions, labels=labels)
+        if positions is None or spatial_feats.shape[1] < 3:
+            return reshaped
+
+        order = torch.argsort(positions, dim=1)
+        gather_idx = order.unsqueeze(-1).expand(-1, -1, spatial_feats.shape[-1])
+        sorted_feats = torch.gather(spatial_feats, dim=1, index=gather_idx)
+
+        padded = F.pad(sorted_feats.transpose(1, 2), (1, 1), mode="replicate").transpose(1, 2)
+        smoothed = (padded[:, :-2] + 2.0 * padded[:, 1:-1] + padded[:, 2:]) / 4.0
+        sorted_delta = smoothed - sorted_feats
+
+        inverse_order = torch.argsort(order, dim=1)
+        inverse_idx = inverse_order.unsqueeze(-1).expand(-1, -1, spatial_feats.shape[-1])
+        warp_delta = torch.gather(sorted_delta, dim=1, index=inverse_idx)
+        return reshaped + torch.tanh(self.warp_gate) * warp_delta
+
+
 def build_source_feature_reshaper(kind, feature_dim, strength=0.10, kernel_size=3, phase_count=5):
     if kind in (None, "none"):
         return None
     if kind == "residual_temporal_conv":
         return ResidualTemporalConvReshaper(
+            feature_dim=feature_dim,
+            strength=strength,
+            kernel_size=kernel_size,
+        )
+    if kind == "monotonic_warp_residual_temporal_conv":
+        return MonotonicWarpResidualTemporalConvReshaper(
             feature_dim=feature_dim,
             strength=strength,
             kernel_size=kernel_size,

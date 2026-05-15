@@ -401,7 +401,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_feature_reshaper',
         default='none',
-        choices=['none', 'residual_temporal_conv'],
+        choices=['none', 'residual_temporal_conv', 'monotonic_warp_residual_temporal_conv'],
         help='source-only lightweight feature reshaper inserted between PSE and LTAE',
     )
     parser.add_argument(
@@ -497,6 +497,36 @@ if __name__ == '__main__':
         help='minimum sampled time points required for one sample to contribute to a phase loss',
     )
     parser.add_argument(
+        '--source_phase_grid_count',
+        default=5,
+        type=int,
+        help='number of fixed latent phase slots for optional source phase-grid structure view',
+    )
+    parser.add_argument(
+        '--source_phase_grid_trade_off',
+        default=0.0,
+        type=float,
+        help='auxiliary weight for source phase-grid structure loss; 0 disables the view',
+    )
+    parser.add_argument(
+        '--source_phase_grid_kernel',
+        default='linear',
+        choices=['linear', 'triangular', 'gaussian'],
+        help='kernel used to project irregular source observations to fixed phase slots',
+    )
+    parser.add_argument(
+        '--source_phase_grid_bandwidth',
+        default=0.0,
+        type=float,
+        help='normalized phase-grid projection bandwidth; <=0 uses one grid-step',
+    )
+    parser.add_argument(
+        '--source_phase_grid_min_support',
+        default=0.20,
+        type=float,
+        help='support threshold for phase-grid diagnostics and nearest-fill fallback',
+    )
+    parser.add_argument(
         '--source_segment_semantic_quantile',
         default=0.75,
         type=float,
@@ -565,7 +595,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual'],
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'segment_boundary_window_warp_residual'],
         help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, v2.4.1 segment-transition-residual, v2.4.2 semantic-segment transition residual, or v2.4.3 boundary-window segment transition residual',
     )
     parser.add_argument(
@@ -621,6 +651,12 @@ if __name__ == '__main__':
         default=2,
         type=int,
         help='half-window size per side used for v2.4.3 boundary-centered local segment transition windows',
+    )
+    parser.add_argument(
+        '--source_structure_warp_invariant_trade_off',
+        default=0.35,
+        type=float,
+        help='weak GTW-inspired relaxed transition consistency weight for segment_boundary_window_warp_residual',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')
@@ -696,7 +732,7 @@ if __name__ == '__main__':
     timematch.add_argument('--selection_score_source_prior_weight', type=float, default=0.25, help='penalty weight for pseudo-label/source-prior JS divergence in v2.5.3 checkpoint selection')
     timematch.add_argument('--selection_score_shift_stability_weight', type=float, default=0.20, help='weight for shift trajectory stability in v2.5.3 checkpoint selection')
     timematch.add_argument('--selection_metric_batches', type=int, default=200, help='number of target batches used to compute final unsupervised selection metrics')
-    timematch.add_argument('--selection_score_mode', type=str, default='temporal_perturbation', choices=['legacy', 'temporal_perturbation', 'temporal_perturbation_trajectory', 'temporal_perturbation_late_filter', 'pure_perturbation', 'pure_perturbation_late_reject', 'pure_perturbation_margin_tiebreak', 'robust_perturbation_blend'], help='checkpoint selection score mode')
+    timematch.add_argument('--selection_score_mode', type=str, default='temporal_perturbation', choices=['legacy', 'temporal_perturbation', 'temporal_perturbation_trajectory', 'temporal_perturbation_late_filter', 'pure_perturbation', 'pure_perturbation_late_reject', 'pure_perturbation_margin_tiebreak', 'robust_perturbation_blend', 'gtw_monotonic_warp'], help='checkpoint selection score mode')
     timematch.add_argument('--selection_time_mask_p', type=float, default=0.15, help='probability of replacing a time step by the sequence mean when computing perturbation consistency')
     timematch.add_argument('--selection_temporal_jitter', type=int, default=3, help='maximum absolute temporal position jitter for perturbation consistency')
     timematch.add_argument('--selection_value_noise_std', type=float, default=0.03, help='relative Gaussian value noise level for perturbation consistency')
@@ -707,6 +743,7 @@ if __name__ == '__main__':
     timematch.add_argument('--selection_late_reject_threshold', type=float, default=0.80, help='late-gain ratio threshold used by pure_perturbation_late_reject')
     timematch.add_argument('--selection_margin_tiebreak', type=float, default=0.01, help='perturbation-score margin for pure_perturbation_margin_tiebreak')
     timematch.add_argument('--selection_blend_robust_weight', type=float, default=0.70, help='robust-score weight in v2.5.3h robust_perturbation_blend mode')
+    timematch.add_argument('--selection_monotonic_warp_weight', type=float, default=0.55, help='monotonic-warp consistency weight in GTW-inspired checkpoint selection mode')
 
     # Source-only + source phase compactness regularization
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')
