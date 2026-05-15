@@ -30,6 +30,11 @@ SOURCE_PHASE_MIN_POINTS="${SOURCE_PHASE_MIN_POINTS:-3}"
 SOURCE_PHASE_MAX_POINTS="${SOURCE_PHASE_MAX_POINTS:-8}"
 SOURCE_PHASE_MAX_SPAN="${SOURCE_PHASE_MAX_SPAN:-120}"
 SOURCE_PHASE_MIN_SAMPLE_POINTS="${SOURCE_PHASE_MIN_SAMPLE_POINTS:-2}"
+SOURCE_PHASE_GRID_COUNT="${SOURCE_PHASE_GRID_COUNT:-5}"
+SOURCE_PHASE_GRID_TRADE_OFF="${SOURCE_PHASE_GRID_TRADE_OFF:-0.0}"
+SOURCE_PHASE_GRID_KERNEL="${SOURCE_PHASE_GRID_KERNEL:-linear}"
+SOURCE_PHASE_GRID_BANDWIDTH="${SOURCE_PHASE_GRID_BANDWIDTH:-0.0}"
+SOURCE_PHASE_GRID_MIN_SUPPORT="${SOURCE_PHASE_GRID_MIN_SUPPORT:-0.20}"
 SOURCE_STRUCTURE_LOSS_VERSION="${SOURCE_STRUCTURE_LOSS_VERSION:-segment_boundary_window_residual}"
 SOURCE_STRUCTURE_INTRA_TRADE_OFF="${SOURCE_STRUCTURE_INTRA_TRADE_OFF:-1.0}"
 SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF="${SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF:-0.00}"
@@ -40,6 +45,7 @@ SOURCE_STRUCTURE_SEASON_TRADE_OFF="${SOURCE_STRUCTURE_SEASON_TRADE_OFF:-0.00}"
 SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF="${SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF:-0.02}"
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF="${SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF:-0.20}"
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE="${SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE:-2}"
+SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF="${SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF:-0.35}"
 
 SOURCE_PRETRAIN_EPOCHS="${SOURCE_PRETRAIN_EPOCHS:-100}"
 TIMEMATCH_EPOCHS="${TIMEMATCH_EPOCHS:-20}"
@@ -79,6 +85,11 @@ if [ "$SOURCE_SKIP_TRAIN" != "1" ]; then
     --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
     --source_phase_max_span "$SOURCE_PHASE_MAX_SPAN" \
     --source_phase_min_sample_points "$SOURCE_PHASE_MIN_SAMPLE_POINTS" \
+    --source_phase_grid_count "$SOURCE_PHASE_GRID_COUNT" \
+    --source_phase_grid_trade_off "$SOURCE_PHASE_GRID_TRADE_OFF" \
+    --source_phase_grid_kernel "$SOURCE_PHASE_GRID_KERNEL" \
+    --source_phase_grid_bandwidth "$SOURCE_PHASE_GRID_BANDWIDTH" \
+    --source_phase_grid_min_support "$SOURCE_PHASE_GRID_MIN_SUPPORT" \
     --source_structure_loss_version "$SOURCE_STRUCTURE_LOSS_VERSION" \
     --source_structure_intra_trade_off "$SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
     --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
@@ -89,6 +100,7 @@ if [ "$SOURCE_SKIP_TRAIN" != "1" ]; then
     --source_structure_segment_inter_trade_off "$SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF" \
     --source_structure_boundary_window_trade_off "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF" \
     --source_structure_boundary_window_size "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE" \
+    --source_structure_warp_invariant_trade_off "$SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF" \
     --source_checkpoint_epochs "$SOURCE_CHECKPOINT_EPOCHS" \
     --source_checkpoint_dirname "$SOURCE_CHECKPOINT_DIRNAME" \
     --epochs "$SOURCE_PRETRAIN_EPOCHS" \
@@ -138,6 +150,11 @@ while IFS= read -r TARGET; do
       --source_phase_max_points "$SOURCE_PHASE_MAX_POINTS" \
       --source_phase_max_span "$SOURCE_PHASE_MAX_SPAN" \
       --source_phase_min_sample_points "$SOURCE_PHASE_MIN_SAMPLE_POINTS" \
+      --source_phase_grid_count "$SOURCE_PHASE_GRID_COUNT" \
+      --source_phase_grid_trade_off "$SOURCE_PHASE_GRID_TRADE_OFF" \
+      --source_phase_grid_kernel "$SOURCE_PHASE_GRID_KERNEL" \
+      --source_phase_grid_bandwidth "$SOURCE_PHASE_GRID_BANDWIDTH" \
+      --source_phase_grid_min_support "$SOURCE_PHASE_GRID_MIN_SUPPORT" \
       --source_structure_loss_version "$SOURCE_STRUCTURE_LOSS_VERSION" \
       --source_structure_intra_trade_off "$SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
       --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
@@ -148,6 +165,7 @@ while IFS= read -r TARGET; do
       --source_structure_segment_inter_trade_off "$SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF" \
       --source_structure_boundary_window_trade_off "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF" \
       --source_structure_boundary_window_size "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE" \
+      --source_structure_warp_invariant_trade_off "$SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF" \
       --num_workers "$NUM_WORKERS" \
       --batch_size "$BATCH_SIZE" \
       -e "$FINAL_MODEL" \

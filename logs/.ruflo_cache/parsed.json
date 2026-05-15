@@ -1,0 +1,939 @@
+{
+  "_cache_key": "1a3501e097fca47361457d5410c124f0e7345b1ee7826e766c46e5f2681f20c5",
+  "data": {
+    "log_dir": "logs",
+    "parse_time": "2026-05-15T22:55:03.857290",
+    "num_files": 47,
+    "files": [
+      {
+        "filename": "_tmp_v252_controller_extract.txt",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "source_phase_metrics_closed_structure.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "source_phase_metrics_closed_structure_p3.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "source_phase_metrics_closed_structure_p5.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "source_phase_metrics_closed_uniform.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "source_phase_metrics_closed_uniform_p5.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "sourcephasecompact_sourceonly_A.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_31TCJ_to_33UVP_closedset_noshift_sourcephasecompact_p5",
+            "accuracy": 0.9542,
+            "f1": 0.5914
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "sourcephasecompact_sourceonly_B.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_33UVP_to_32VNH_closedset_noshift_sourcephasecompact_p5",
+            "accuracy": 0.9077,
+            "f1": 0.8464
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "sourcephasecompact_tgtphasecompact_A.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_31TCJ_to_33UVP_closedset_noshift_sourcephasecompact_tgtphasecompact_p5",
+            "accuracy": 0.9562,
+            "f1": 0.6402
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "sourcephasecompact_tgtphasecompact_B.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_33UVP_to_32VNH_closedset_noshift_sourcephasecompact_tgtphasecompact_p5",
+            "accuracy": 0.9252,
+            "f1": 0.8682
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "srcphasecompact_closedset_A.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_31TCJ_to_33UVP_closedset_noshift_srcphasecompact_p5",
+            "accuracy": 0.9561,
+            "f1": 0.6458
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "srcphasecompact_closedset_B.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_33UVP_to_32VNH_closedset_noshift_srcphasecompact_p5",
+            "accuracy": 0.7145,
+            "f1": 0.7333
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "timematch_tgtphasecompact_A.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_31TCJ_to_33UVP_closedset_noshift_tgtphasecompact_p5",
+            "accuracy": 0.9488,
+            "f1": 0.6247
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "timematch_tgtphasecompact_B.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_33UVP_to_32VNH_closedset_noshift_tgtphasecompact_p5",
+            "accuracy": 0.7173,
+            "f1": 0.74
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "timematch_tgtphaseconsistency_A.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_31TCJ_to_33UVP_closedset_noshift_tgtphaseconsistency_p5",
+            "accuracy": 0.9508,
+            "f1": 0.625
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "timematch_tgtphaseconsistency_B.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_33UVP_to_32VNH_closedset_noshift_tgtphaseconsistency_p5",
+            "accuracy": 0.7386,
+            "f1": 0.7578
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v0_analysis.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v22_full.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v22_minival.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v22x_sweep.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v230_doygap_v222.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v231_full_launcher.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v232_plus_analysis_launcher.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v234_trend_v222.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v235_trendseason_v222.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v23_full_launcher.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v23pre_full_top2_launcher.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v23pre_sweep.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v240.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v241_segmentinter_v222.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v242_semanticsegment_v222.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v242c_semanticaggl_v222.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v243_boundarywindow_quickcheck_v222.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v243_boundarywindow_v222.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v243b_boundarywindow_v222_50.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v250_master_chain.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v250_reshaper_da_ablation.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v251_master_reuse_full12.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v251b_factor_split_30ep_bs128.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v251b_factor_split_50ep_bs200.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v251b_sourceonly_bs200_30ep.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v252a_sourceema_variance_pairs.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v252b_repro_matrix_epoch50.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v2_analysis.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": null,
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v8.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_31TCJ_to_33UVP_closedset_noshift_sourcephasecompact_tgtphaseconsistency_p5",
+            "accuracy": 0.9562,
+            "f1": 0.6282
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v8_A.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_31TCJ_to_33UVP_closedset_noshift_sourcephasecompact_tgtphaseconsistency_p5",
+            "accuracy": 0.9562,
+            "f1": 0.6282
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      },
+      {
+        "filename": "v8_B.log",
+        "variant": null,
+        "source": null,
+        "target": null,
+        "weights": {},
+        "source_phase": {
+          "epochs": [],
+          "test_result": {
+            "experiment": "timematch_33UVP_to_32VNH_closedset_noshift_sourcephasecompact_tgtphaseconsistency_p5",
+            "accuracy": 0.9178,
+            "f1": 0.8645
+          },
+          "best_val_f1": null,
+          "best_val_epoch": null
+        },
+        "da_results": [],
+        "selection": null,
+        "errors": [],
+        "warnings": [],
+        "parse_status": "empty"
+      }
+    ],
+    "best_by_task": {},
+    "errors_summary": [],
+    "delta_vs_baseline": {},
+    "_debug": {
+      "raw_input": "logs",
+      "resolved_log_dir": "C:\\Code\\dev\\PythonProject\\timematch\\logs",
+      "normalized_log_dir": "logs",
+      "cwd": "C:\\Code\\dev\\PythonProject\\timematch",
+      "os_name": "nt",
+      "python_version": "3.13.5 | packaged by Anaconda, Inc. | (main, Jun 12 2025, 16:37:03) [MSC v.1929 64 bit (AMD64)]",
+      "exists": true,
+      "is_dir": true,
+      "num_all_entries": 120,
+      "first_entries": [
+        "_tmp_v252_controller_extract.txt",
+        "closedset_and_metrics_20260430_125310",
+        "dir1_monotonic_warp_reshaper_quickcheck_20260515_084939",
+        "dir2_warp_invariant_structure_quickcheck_20260515_124357",
+        "dir3_gtw_selector_quickcheck_20260515_083509",
+        "source_phase_metrics_closed_structure.log",
+        "source_phase_metrics_closed_structure_p3.log",
+        "source_phase_metrics_closed_structure_p5.log",
+        "source_phase_metrics_closed_uniform.log",
+        "source_phase_metrics_closed_uniform_p5.log",
+        "source_reshaper_20260504_154217",
+        "source_reshaper_dualpath_20260504_231218",
+        "source_reshaper_dualpath_minival_20260504_225249",
+        "source_reshaper_dualpath_v22x_20260505_103700",
+        "source_reshaper_dualpath_v23pre_minival_20260505_161545"
+      ]
+    }
+  }
+}

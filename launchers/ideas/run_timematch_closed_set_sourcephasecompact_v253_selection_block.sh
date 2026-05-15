@@ -39,6 +39,7 @@ SOURCE_STRUCTURE_SEASON_TRADE_OFF="${SOURCE_STRUCTURE_SEASON_TRADE_OFF:-0.00}"
 SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF="${SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF:-0.02}"
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF="${SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF:-0.20}"
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE="${SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE:-2}"
+SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF="${SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF:-0.35}"
 
 SOURCE_PRETRAIN_EPOCHS="${SOURCE_PRETRAIN_EPOCHS:-100}"
 TIMEMATCH_EPOCHS="${TIMEMATCH_EPOCHS:-20}"
@@ -71,6 +72,7 @@ SELECTION_LATE_GAIN_THRESHOLD="${SELECTION_LATE_GAIN_THRESHOLD:-0.20}"
 SELECTION_LATE_REJECT_THRESHOLD="${SELECTION_LATE_REJECT_THRESHOLD:-0.80}"
 SELECTION_MARGIN_TIEBREAK="${SELECTION_MARGIN_TIEBREAK:-0.01}"
 SELECTION_BLEND_ROBUST_WEIGHT="${SELECTION_BLEND_ROBUST_WEIGHT:-0.70}"
+SELECTION_MONOTONIC_WARP_WEIGHT="${SELECTION_MONOTONIC_WARP_WEIGHT:-0.55}"
 SELECTION_STRATEGY="${SELECTION_STRATEGY:-max_selection_score}"
 SELECTION_ROBUST_TIEBREAK_MARGIN="${SELECTION_ROBUST_TIEBREAK_MARGIN:-0.01}"
 
@@ -109,6 +111,7 @@ if [ "$SOURCE_SKIP_TRAIN" != "1" ]; then
     --source_structure_segment_inter_trade_off "$SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF" \
     --source_structure_boundary_window_trade_off "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF" \
     --source_structure_boundary_window_size "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE" \
+    --source_structure_warp_invariant_trade_off "$SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF" \
     --source_checkpoint_epochs "$SOURCE_CHECKPOINT_EPOCHS" \
     --source_checkpoint_dirname "$SOURCE_CHECKPOINT_DIRNAME" \
     --epochs "$SOURCE_PRETRAIN_EPOCHS" \
@@ -172,6 +175,7 @@ while IFS= read -r TARGET; do
       --source_structure_segment_inter_trade_off "$SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF" \
       --source_structure_boundary_window_trade_off "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF" \
       --source_structure_boundary_window_size "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE" \
+      --source_structure_warp_invariant_trade_off "$SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF" \
       --num_workers "$NUM_WORKERS" \
       --batch_size "$BATCH_SIZE" \
       -e "$WARMUP_MODEL" \
@@ -201,7 +205,8 @@ while IFS= read -r TARGET; do
       --selection_late_gain_threshold "$SELECTION_LATE_GAIN_THRESHOLD" \
       --selection_late_reject_threshold "$SELECTION_LATE_REJECT_THRESHOLD" \
       --selection_margin_tiebreak "$SELECTION_MARGIN_TIEBREAK" \
-      --selection_blend_robust_weight "$SELECTION_BLEND_ROBUST_WEIGHT"
+      --selection_blend_robust_weight "$SELECTION_BLEND_ROBUST_WEIGHT" \
+      --selection_monotonic_warp_weight "$SELECTION_MONOTONIC_WARP_WEIGHT"
   done
 
   SELECTION_SUMMARY_JSON="$SELECTION_DIR/selection_summary.json"
@@ -251,6 +256,7 @@ while IFS= read -r TARGET; do
     --source_structure_segment_inter_trade_off "$SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF" \
     --source_structure_boundary_window_trade_off "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF" \
     --source_structure_boundary_window_size "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE" \
+    --source_structure_warp_invariant_trade_off "$SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF" \
     --num_workers "$NUM_WORKERS" \
     --batch_size "$BATCH_SIZE" \
     -e "$FINAL_MODEL" \

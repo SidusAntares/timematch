@@ -18,6 +18,7 @@ SOURCE_STRUCTURE_SEASON_TRADE_OFF = 0.02
 SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF = 0.02
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF = 0.20
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE = 2
+SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF = 0.35
 SHAPE_REG_DIRECTION_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_MARGIN = 0.35
@@ -1062,6 +1063,7 @@ def compute_source_structure_loss(
     segment_inter_trade_off=SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF,
     boundary_window_trade_off=SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF,
     boundary_window_size=SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE,
+    warp_invariant_trade_off=SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF,
     anchor_spatial_feats=None,
     anchor_positions=None,
 ):
@@ -1113,6 +1115,10 @@ def compute_source_structure_loss(
           * keep the v2.4.1 segment-aware residual + trend + weak inter-segment loss
           * use local boundary windows only to modulate the strength of adjacent
             inter-segment regularization
+    - segment_boundary_window_warp_residual:
+        GTW-inspired relaxed transition objective:
+          * keep v2.4.3b terms
+          * add a weak local monotonic-warp-invariant transition consistency term
     """
     version = str(version).lower()
     if version == "compactness":
@@ -1144,8 +1150,10 @@ def compute_source_structure_loss(
         "segment_transition_semantic",
         "v242",
         "segment_boundary_window_residual",
+        "segment_boundary_window_warp_residual",
         "segment_boundary_window",
         "boundary_window_segment",
+        "warp_boundary_window_segment",
         "v243",
         "trend_seasonal_residual",
         "trend_season",
@@ -1272,6 +1280,7 @@ def compute_source_structure_loss(
     season_redundancy_loss = zero
     segment_inter_loss = zero
     boundary_window_weight_signal = zero
+    warp_invariant_loss = zero
     amplitude_class_count = 0
     interphase_class_count = 0
     shape_class_count = 0
@@ -1279,6 +1288,7 @@ def compute_source_structure_loss(
     season_class_count = 0
     segment_inter_class_count = 0
     boundary_window_class_count = 0
+    warp_invariant_class_count = 0
 
     if version in {"profiled_components", "profiled", "v233"}:
         for class_id in class_ids:
@@ -1345,8 +1355,10 @@ def compute_source_structure_loss(
         "segment_transition_semantic",
         "v242",
         "segment_boundary_window_residual",
+        "segment_boundary_window_warp_residual",
         "segment_boundary_window",
         "boundary_window_segment",
+        "warp_boundary_window_segment",
         "v243",
         "trend_seasonal_residual",
         "trend_season",
@@ -1380,7 +1392,7 @@ def compute_source_structure_loss(
             trend_loss = trend_loss + class_trend
             trend_class_count += 1
 
-            if version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241", "segment_transition_semantic", "v242", "segment_boundary_window_residual", "segment_boundary_window", "boundary_window_segment", "v243"}:
+            if version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241", "segment_transition_semantic", "v242", "segment_boundary_window_residual", "segment_boundary_window_warp_residual", "segment_boundary_window", "boundary_window_segment", "warp_boundary_window_segment", "v243"}:
                 seasonal_centers = centers - trend_centers
                 if seasonal_centers.shape[0] >= 3:
                     seasonal_diffs = seasonal_centers[1:] - seasonal_centers[:-1]
@@ -1401,7 +1413,28 @@ def compute_source_structure_loss(
                         )
                         boundary_pair_modulator = None
 
-                if version in {"segment_boundary_window_residual", "segment_boundary_window", "boundary_window_segment", "v243"} and phase_partition_spec is not None:
+                        if version in {"segment_boundary_window_warp_residual", "warp_boundary_window_segment"} and seasonal_diffs.shape[0] >= 3:
+                            adjacent_mismatch = (
+                                seasonal_diffs[1:] - seasonal_diffs[:-1]
+                            ).pow(2).sum(dim=1)
+                            skip_mismatch = (
+                                seasonal_diffs[2:] - seasonal_diffs[:-2]
+                            ).pow(2).sum(dim=1)
+                            relaxed_mismatch = torch.cat(
+                                [
+                                    torch.minimum(adjacent_mismatch[:-1], skip_mismatch),
+                                    adjacent_mismatch[-1:],
+                                ],
+                                dim=0,
+                            )
+                            relaxed_weights = seasonal_transition_weights
+                            relaxed_weights = relaxed_weights / relaxed_weights.sum().clamp_min(eps)
+                            warp_invariant_loss = warp_invariant_loss + (
+                                relaxed_mismatch * relaxed_weights
+                            ).sum()
+                            warp_invariant_class_count += 1
+
+                if version in {"segment_boundary_window_residual", "segment_boundary_window_warp_residual", "segment_boundary_window", "boundary_window_segment", "warp_boundary_window_segment", "v243"} and phase_partition_spec is not None:
                     if class_mask.sum().item() >= 2:
                         class_time_curve = ordered_feats[class_mask].mean(dim=0)
                         class_time_trend = _moving_average_same(class_time_curve)
@@ -1556,6 +1589,8 @@ def compute_source_structure_loss(
         segment_inter_loss = segment_inter_loss / segment_inter_class_count
     if boundary_window_class_count > 0:
         boundary_window_weight_signal = boundary_window_weight_signal / boundary_window_class_count
+    if warp_invariant_class_count > 0:
+        warp_invariant_loss = warp_invariant_loss / warp_invariant_class_count
     if version in {"trend_seasonal_residual", "trend_season", "season_pattern", "v235"}:
         season_loss = (
             season_coherence_loss
@@ -1584,6 +1619,13 @@ def compute_source_structure_loss(
             float(intra_trade_off) * intra_loss
             + float(trend_trade_off) * trend_loss
             + float(segment_inter_trade_off) * segment_inter_loss
+        )
+    elif version in {"segment_boundary_window_warp_residual", "warp_boundary_window_segment"}:
+        total_loss = (
+            float(intra_trade_off) * intra_loss
+            + float(trend_trade_off) * trend_loss
+            + float(segment_inter_trade_off) * segment_inter_loss
+            + float(warp_invariant_trade_off) * warp_invariant_loss
         )
     elif version in {"trend_residual", "trend", "v234", "segment_trend_residual", "segment_trend", "v240"}:
         total_loss = (
@@ -1641,6 +1683,9 @@ def compute_source_structure_loss(
     phase_logs["source_structure_boundary_window_weight_signal"] = float(
         boundary_window_weight_signal.detach().item()
     )
+    phase_logs["source_structure_warp_invariant_loss"] = float(
+        (SOURCE_PHASE_COMPACTNESS_LAMBDA * warp_invariant_loss).detach().item()
+    )
     phase_logs["source_structure_amplitude_classes"] = float(amplitude_class_count)
     phase_logs["source_structure_interphase_classes"] = float(interphase_class_count)
     phase_logs["source_structure_shape_classes"] = float(shape_class_count)
@@ -1648,6 +1693,7 @@ def compute_source_structure_loss(
     phase_logs["source_structure_season_classes"] = float(season_class_count)
     phase_logs["source_structure_segment_inter_classes"] = float(segment_inter_class_count)
     phase_logs["source_structure_boundary_window_classes"] = float(boundary_window_class_count)
+    phase_logs["source_structure_warp_invariant_classes"] = float(warp_invariant_class_count)
     phase_logs["source_structure_segment_count"] = float(len(phase_structures))
     phase_logs["structure_loss"] = float(total_loss.detach().item())
     phase_logs["compactness_loss"] = phase_logs["structure_loss"]

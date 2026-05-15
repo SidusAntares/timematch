@@ -243,6 +243,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
                         boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
                         boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
+                        warp_invariant_trade_off=getattr(config, "source_structure_warp_invariant_trade_off", 0.35),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
@@ -298,6 +299,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
                         boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
                         boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
+                        warp_invariant_trade_off=getattr(config, "source_structure_warp_invariant_trade_off", 0.35),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
@@ -546,7 +548,7 @@ def compute_selection_metrics(
     teacher.eval()
     student.eval()
     teacher_probs, student_probs = [], []
-    time_mask_probs, temporal_jitter_probs, value_noise_probs = [], [], []
+    time_mask_probs, temporal_jitter_probs, value_noise_probs, monotonic_warp_probs = [], [], [], []
     indices = []
     max_batches = getattr(config, "selection_metric_batches", 200)
 
@@ -576,6 +578,14 @@ def compute_selection_metrics(
         perturbed_logits = teacher.forward(pixels, valid_pixels, jittered_positions, extra)
         temporal_jitter_probs.append(F.softmax(perturbed_logits, dim=1).cpu())
 
+        warped_positions = _apply_monotonic_warp_positions(
+            teacher,
+            shifted_positions,
+            max_warp=getattr(config, "selection_temporal_jitter", 3),
+        )
+        perturbed_logits = teacher.forward(pixels, valid_pixels, warped_positions, extra)
+        monotonic_warp_probs.append(F.softmax(perturbed_logits, dim=1).cpu())
+
         noisy_pixels = _apply_value_noise(
             pixels,
             noise_std=getattr(config, "selection_value_noise_std", 0.03),
@@ -593,6 +603,7 @@ def compute_selection_metrics(
     time_mask_probs = torch.cat(time_mask_probs, dim=0)[order]
     temporal_jitter_probs = torch.cat(temporal_jitter_probs, dim=0)[order]
     value_noise_probs = torch.cat(value_noise_probs, dim=0)[order]
+    monotonic_warp_probs = torch.cat(monotonic_warp_probs, dim=0)[order]
 
     teacher_conf, pseudo_labels = teacher_probs.max(dim=1)
     student_labels = student_probs.argmax(dim=1)
@@ -663,6 +674,7 @@ def compute_selection_metrics(
             "time_mask": time_mask_probs,
             "temporal_jitter": temporal_jitter_probs,
             "value_noise": value_noise_probs,
+            "monotonic_warp": monotonic_warp_probs,
         },
         num_classes,
     )
@@ -677,9 +689,22 @@ def compute_selection_metrics(
         - getattr(config, "selection_collapse_penalty_weight", 0.35) * collapse_penalty
         - 0.10 * js_div
     )
+    monotonic_warp_score = perturbation_metrics["selection_monotonic_warp_prob_consistency"]
+    gtw_weight = float(getattr(config, "selection_monotonic_warp_weight", 0.55))
+    gtw_weight = min(1.0, max(0.0, gtw_weight))
+    gtw_score = (
+        gtw_weight * monotonic_warp_score
+        + (1.0 - gtw_weight) * perturbation_score
+        + 0.10 * shift_stability
+        + 0.10 * class_balance_score
+        - 0.25 * collapse_penalty
+        - 0.10 * js_div
+    )
     score_mode = getattr(config, "selection_score_mode", "temporal_perturbation")
     if score_mode.startswith("pure_perturbation"):
         score = perturbation_score
+    elif score_mode == "gtw_monotonic_warp":
+        score = gtw_score
     elif score_mode == "robust_perturbation_blend":
         robust_weight = float(getattr(config, "selection_blend_robust_weight", 0.70))
         robust_weight = min(1.0, max(0.0, robust_weight))
@@ -695,6 +720,8 @@ def compute_selection_metrics(
         "selection_legacy_score": float(legacy_score),
         "selection_temporal_perturbation_score": float(robust_score),
         "selection_perturbation_score": float(perturbation_score),
+        "selection_gtw_monotonic_warp_score": float(gtw_score),
+        "selection_monotonic_warp_weight": float(gtw_weight),
         "selection_blend_robust_weight": float(getattr(config, "selection_blend_robust_weight", 0.70)),
         "selection_coverage": float(coverage),
         "selection_mean_confidence": float(mean_confidence),
@@ -742,6 +769,21 @@ def _apply_temporal_jitter(model, positions, max_jitter):
         dtype=positions.dtype,
     )
     return _clamp_positions_for_model(model, positions + jitter)
+
+
+def _apply_monotonic_warp_positions(model, positions, max_warp):
+    if max_warp <= 0 or positions.shape[1] < 3:
+        return positions
+    steps = torch.linspace(
+        -1.0,
+        1.0,
+        positions.shape[1],
+        device=positions.device,
+        dtype=torch.float32,
+    ).view(1, -1)
+    warp = torch.round(steps * float(max_warp)).to(dtype=positions.dtype)
+    warped = positions + warp
+    return _clamp_positions_for_model(model, warped)
 
 
 def _apply_value_noise(pixels, noise_std):
