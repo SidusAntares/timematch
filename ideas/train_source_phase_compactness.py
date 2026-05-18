@@ -236,6 +236,8 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
                     warp_invariant_trade_off=getattr(config, "source_structure_warp_invariant_trade_off", 0.35),
                     prototype_dynamics_trade_off=getattr(config, "source_structure_prototype_dynamics_trade_off", 0.05),
+                    trajectory_pooling=getattr(config, "source_structure_trajectory_pooling", "meanmax"),
+                    prototype_dynamics_mode=getattr(config, "source_structure_prototype_dynamics_mode", "cosine"),
                     anchor_spatial_feats=spatial_feats_anchor,
                     anchor_positions=positions,
                 )
@@ -277,6 +279,9 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                         boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
                         boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
                         warp_invariant_trade_off=getattr(config, "source_structure_warp_invariant_trade_off", 0.35),
+                        prototype_dynamics_trade_off=getattr(config, "source_structure_prototype_dynamics_trade_off", 0.05),
+                        trajectory_pooling=getattr(config, "source_structure_trajectory_pooling", "meanmax"),
+                        prototype_dynamics_mode=getattr(config, "source_structure_prototype_dynamics_mode", "cosine"),
                     )
                     compact_loss = compact_loss + phase_grid_trade_off * phase_grid_loss
                     compact_logs["source_phase_grid_structure_loss"] = float(phase_grid_loss.detach().item())

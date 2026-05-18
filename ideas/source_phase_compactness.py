@@ -20,6 +20,8 @@ SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF = 0.20
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE = 2
 SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF = 0.35
 SOURCE_STRUCTURE_PROTOTYPE_DYNAMICS_TRADE_OFF = 0.05
+SOURCE_STRUCTURE_TRAJECTORY_POOLING = "meanmax"
+SOURCE_STRUCTURE_PROTOTYPE_DYNAMICS_MODE = "cosine"
 SHAPE_REG_DIRECTION_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_MARGIN = 0.35
@@ -85,7 +87,28 @@ def _moving_average_same(sequence_tensor):
     ) / 3.0
 
 
-def _compute_trajectory_prototype_losses(ordered_feats, labels, eps=1e-6):
+def _pool_trajectory_features(curves, pooling="meanmax"):
+    pooling = str(pooling or "meanmax").lower()
+    mean_feats = curves.mean(dim=1)
+    if pooling == "mean":
+        return mean_feats
+    max_feats = curves.max(dim=1).values
+    if pooling == "max":
+        return max_feats
+    if pooling == "meanmax":
+        return torch.cat([mean_feats, max_feats], dim=1)
+    raise ValueError(f"Unsupported trajectory pooling mode: {pooling}")
+
+
+def _compute_trajectory_prototype_losses(
+    ordered_feats,
+    ordered_positions,
+    labels,
+    eps=1e-6,
+    pointwise_intra=True,
+    trajectory_pooling=SOURCE_STRUCTURE_TRAJECTORY_POOLING,
+    dynamics_mode=SOURCE_STRUCTURE_PROTOTYPE_DYNAMICS_MODE,
+):
     zero = ordered_feats.sum() * 0.0
     trajectory_intra_loss = zero
     prototype_dynamics_loss = zero
@@ -102,13 +125,46 @@ def _compute_trajectory_prototype_losses(ordered_feats, labels, eps=1e-6):
 
         class_curves = ordered_feats[class_mask]
         class_prototype = class_curves.mean(dim=0, keepdim=True)
-        class_trajectory_intra = (class_curves - class_prototype).pow(2).sum(dim=2).mean()
+        if pointwise_intra:
+            class_trajectory_intra = (class_curves - class_prototype).pow(2).sum(dim=2).mean()
+        else:
+            class_trajectory_feats = _pool_trajectory_features(class_curves, trajectory_pooling)
+            class_trajectory_center = class_trajectory_feats.mean(dim=0, keepdim=True)
+            pooling_scale = float(class_curves.shape[-1]) / float(class_trajectory_feats.shape[-1])
+            class_trajectory_intra = (
+                class_trajectory_feats - class_trajectory_center
+            ).pow(2).sum(dim=1).mean() * pooling_scale
         trajectory_intra_loss = trajectory_intra_loss + class_trajectory_intra
         trajectory_class_count += 1
 
-        class_dynamics = class_curves[:, 1:] - class_curves[:, :-1]
-        prototype_dynamics = class_prototype[:, 1:] - class_prototype[:, :-1]
-        class_dynamics_loss = (class_dynamics - prototype_dynamics).pow(2).sum(dim=2).mean()
+        class_positions = ordered_positions[class_mask].to(dtype=class_curves.dtype)
+        class_delta_t = (class_positions[:, 1:] - class_positions[:, :-1]).abs().clamp_min(1.0).unsqueeze(-1)
+        prototype_delta_t = class_delta_t.mean(dim=0, keepdim=True).clamp_min(1.0)
+        class_dynamics = (class_curves[:, 1:] - class_curves[:, :-1]) / class_delta_t
+        prototype_dynamics = (class_prototype[:, 1:] - class_prototype[:, :-1]) / prototype_delta_t
+        dynamics_mode = str(dynamics_mode or "cosine").lower()
+        if dynamics_mode == "mse":
+            class_dynamics_loss = (class_dynamics - prototype_dynamics).pow(2).sum(dim=2).mean()
+        elif dynamics_mode in {"cosine", "direction"}:
+            prototype_dynamics_expanded = prototype_dynamics.expand_as(class_dynamics)
+            sample_norm = class_dynamics.norm(dim=2)
+            prototype_norm = prototype_dynamics_expanded.norm(dim=2)
+            valid_dynamics = (sample_norm > eps) & (prototype_norm > eps)
+            cosine_loss = (
+                1.0
+                - torch.nn.functional.cosine_similarity(
+                    class_dynamics,
+                    prototype_dynamics_expanded,
+                    dim=2,
+                    eps=eps,
+                )
+            )
+            if bool(valid_dynamics.any().item()):
+                class_dynamics_loss = cosine_loss[valid_dynamics].mean()
+            else:
+                class_dynamics_loss = zero
+        else:
+            raise ValueError(f"Unsupported prototype dynamics mode: {dynamics_mode}")
         prototype_dynamics_loss = prototype_dynamics_loss + class_dynamics_loss
         dynamics_class_count += 1
 
@@ -1100,6 +1156,8 @@ def compute_source_structure_loss(
     boundary_window_size=SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE,
     warp_invariant_trade_off=SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF,
     prototype_dynamics_trade_off=SOURCE_STRUCTURE_PROTOTYPE_DYNAMICS_TRADE_OFF,
+    trajectory_pooling=SOURCE_STRUCTURE_TRAJECTORY_POOLING,
+    prototype_dynamics_mode=SOURCE_STRUCTURE_PROTOTYPE_DYNAMICS_MODE,
     anchor_spatial_feats=None,
     anchor_positions=None,
 ):
@@ -1160,6 +1218,10 @@ def compute_source_structure_loss(
           * class-wise full-trajectory compactness against source prototypes
           * class-wise first-difference consistency against prototype dynamics
           * does not require or assume meaningful segment boundaries
+    - trajectory_prototype_dynamics_v244b:
+        v2.4.4b non-segmented objective:
+          * global pooled trajectory compactness, not pointwise curve matching
+          * weak time-aware prototype dynamics direction consistency
     """
     version = str(version).lower()
     if version == "compactness":
@@ -1204,6 +1266,9 @@ def compute_source_structure_loss(
         "whole_curve_prototype_dynamics",
         "prototype_dynamics",
         "v244",
+        "trajectory_prototype_dynamics_v244b",
+        "trajectory_global_prototype_dynamics",
+        "v244b",
     }:
         raise ValueError(f"Unsupported source structure loss version: {version}")
 
@@ -1339,13 +1404,33 @@ def compute_source_structure_loss(
     boundary_window_class_count = 0
     warp_invariant_class_count = 0
 
-    if version in {"trajectory_prototype_dynamics", "whole_curve_prototype_dynamics", "prototype_dynamics", "v244"}:
+    v244_versions = {
+        "trajectory_prototype_dynamics",
+        "whole_curve_prototype_dynamics",
+        "prototype_dynamics",
+        "v244",
+    }
+    v244b_versions = {
+        "trajectory_prototype_dynamics_v244b",
+        "trajectory_global_prototype_dynamics",
+        "v244b",
+    }
+
+    if version in v244_versions | v244b_versions:
         (
             trajectory_intra_loss,
             prototype_dynamics_loss,
             trajectory_class_count,
             prototype_dynamics_class_count,
-        ) = _compute_trajectory_prototype_losses(ordered_feats, labels, eps=eps)
+        ) = _compute_trajectory_prototype_losses(
+            ordered_feats,
+            ordered_positions,
+            labels,
+            eps=eps,
+            pointwise_intra=version in v244_versions,
+            trajectory_pooling=trajectory_pooling,
+            dynamics_mode=prototype_dynamics_mode,
+        )
     elif version in {"profiled_components", "profiled", "v233"}:
         for class_id in class_ids:
             valid_phase_indices = [
@@ -1653,7 +1738,7 @@ def compute_source_structure_loss(
             + SEASON_REG_REDUNDANCY_TRADE_OFF * season_redundancy_loss
         )
 
-    if version in {"trajectory_prototype_dynamics", "whole_curve_prototype_dynamics", "prototype_dynamics", "v244"}:
+    if version in v244_versions | v244b_versions:
         total_loss = (
             float(intra_trade_off) * trajectory_intra_loss
             + float(prototype_dynamics_trade_off) * prototype_dynamics_loss
@@ -1705,7 +1790,7 @@ def compute_source_structure_loss(
 
     active_intra_loss = (
         trajectory_intra_loss
-        if version in {"trajectory_prototype_dynamics", "whole_curve_prototype_dynamics", "prototype_dynamics", "v244"}
+        if version in v244_versions | v244b_versions
         else intra_loss
     )
 
@@ -1764,6 +1849,12 @@ def compute_source_structure_loss(
     phase_logs["source_structure_shape_classes"] = float(shape_class_count)
     phase_logs["source_structure_trajectory_classes"] = float(trajectory_class_count)
     phase_logs["source_structure_prototype_dynamics_classes"] = float(prototype_dynamics_class_count)
+    phase_logs["source_structure_trajectory_pooling_meanmax"] = (
+        1.0 if str(trajectory_pooling).lower() == "meanmax" else 0.0
+    )
+    phase_logs["source_structure_prototype_dynamics_mode_cosine"] = (
+        1.0 if str(prototype_dynamics_mode).lower() in {"cosine", "direction"} else 0.0
+    )
     phase_logs["source_structure_trend_classes"] = float(trend_class_count)
     phase_logs["source_structure_season_classes"] = float(season_class_count)
     phase_logs["source_structure_segment_inter_classes"] = float(segment_inter_class_count)

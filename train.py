@@ -595,7 +595,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'segment_boundary_window_warp_residual', 'trajectory_prototype_dynamics'],
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'segment_boundary_window_warp_residual', 'trajectory_prototype_dynamics', 'trajectory_prototype_dynamics_v244b'],
         help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, v2.4.1 segment-transition-residual, v2.4.2 semantic-segment transition residual, v2.4.3 boundary-window segment transition residual, or v2.4.4 trajectory prototype dynamics',
     )
     parser.add_argument(
@@ -663,6 +663,18 @@ if __name__ == '__main__':
         default=0.05,
         type=float,
         help='weight for v2.4.4 whole-trajectory first-difference consistency against class prototypes',
+    )
+    parser.add_argument(
+        '--source_structure_trajectory_pooling',
+        default='meanmax',
+        choices=['mean', 'max', 'meanmax'],
+        help='temporal pooling used by v2.4.4b global trajectory intra compactness',
+    )
+    parser.add_argument(
+        '--source_structure_prototype_dynamics_mode',
+        default='cosine',
+        choices=['cosine', 'direction', 'mse'],
+        help='prototype dynamics consistency mode for v2.4.4/v2.4.4b',
     )
     parser.add_argument(
         '--source_structure_adaptive_weights',
