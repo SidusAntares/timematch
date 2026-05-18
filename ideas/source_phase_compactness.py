@@ -1077,11 +1077,6 @@ def compute_source_phase_compactness_loss(spatial_feats, positions, labels, weig
     if weight_tracker is not None:
         phase_logs.update(weight_tracker.get_logs())
 
-    active_intra_loss = (
-        trajectory_intra_loss
-        if version in {"trajectory_prototype_dynamics", "whole_curve_prototype_dynamics", "prototype_dynamics", "v244"}
-        else intra_loss
-    )
     total_loss = SOURCE_PHASE_COMPACTNESS_LAMBDA * total_loss
     phase_logs["compactness_loss"] = float(total_loss.detach().item())
     return total_loss, phase_logs
@@ -1707,6 +1702,12 @@ def compute_source_structure_loss(
 
     if weight_tracker is not None:
         phase_logs.update(weight_tracker.get_logs())
+
+    active_intra_loss = (
+        trajectory_intra_loss
+        if version in {"trajectory_prototype_dynamics", "whole_curve_prototype_dynamics", "prototype_dynamics", "v244"}
+        else intra_loss
+    )
 
     total_loss = SOURCE_PHASE_COMPACTNESS_LAMBDA * total_loss
     phase_logs["source_structure_loss_version"] = (
