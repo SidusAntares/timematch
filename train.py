@@ -595,8 +595,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'segment_boundary_window_warp_residual'],
-        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, v2.4.1 segment-transition-residual, v2.4.2 semantic-segment transition residual, or v2.4.3 boundary-window segment transition residual',
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'segment_boundary_window_warp_residual', 'trajectory_prototype_dynamics'],
+        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, v2.4.1 segment-transition-residual, v2.4.2 semantic-segment transition residual, v2.4.3 boundary-window segment transition residual, or v2.4.4 trajectory prototype dynamics',
     )
     parser.add_argument(
         '--source_structure_intra_trade_off',
@@ -657,6 +657,48 @@ if __name__ == '__main__':
         default=0.35,
         type=float,
         help='weak GTW-inspired relaxed transition consistency weight for segment_boundary_window_warp_residual',
+    )
+    parser.add_argument(
+        '--source_structure_prototype_dynamics_trade_off',
+        default=0.05,
+        type=float,
+        help='weight for v2.4.4 whole-trajectory first-difference consistency against class prototypes',
+    )
+    parser.add_argument(
+        '--source_structure_adaptive_weights',
+        default=False,
+        type=bool_flag,
+        help='Enable source-side adaptive structure-loss weights.',
+    )
+    parser.add_argument(
+        '--source_structure_adaptivity_mode',
+        default='none',
+        choices=['none', 'svd_reliability'],
+        help='Source-side structure weight adaptation mode.',
+    )
+    parser.add_argument(
+        '--source_structure_reliability_zeta',
+        default=0.90,
+        type=float,
+        help='SVD cumulative energy threshold for source structure reliability.',
+    )
+    parser.add_argument(
+        '--source_structure_reliability_strength',
+        default=0.35,
+        type=float,
+        help='Strength for mapping source structure reliability to conservative weight factors.',
+    )
+    parser.add_argument(
+        '--source_structure_reliability_min_factor',
+        default=0.70,
+        type=float,
+        help='Minimum multiplier for adaptive source structure weights.',
+    )
+    parser.add_argument(
+        '--source_structure_reliability_max_factor',
+        default=1.20,
+        type=float,
+        help='Maximum multiplier for adaptive source structure weights.',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')

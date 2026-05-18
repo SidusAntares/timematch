@@ -16,6 +16,7 @@ from ideas.source_feature_reshaper import (
     compute_source_feature_reshaper_regularization,
 )
 from ideas.source_phase_grid import make_phase_grid_positions, project_to_phase_grid
+from ideas.source_structure_reliability import compute_svd_structure_reliability_factors
 from transforms import (
     Identity,
     Normalize,
@@ -126,6 +127,17 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         phase_partition_spec=phase_partition_spec,
         min_sample_points_per_phase=getattr(config, "source_phase_min_sample_points", 2),
     )
+    adaptive_structure_weights = bool(getattr(config, "source_structure_adaptive_weights", False))
+    reliability_mode = str(getattr(config, "source_structure_adaptivity_mode", "none")).lower()
+    if adaptive_structure_weights:
+        print(
+            "source structure adaptive weights: "
+            f"mode={reliability_mode}, "
+            f"zeta={getattr(config, 'source_structure_reliability_zeta', 0.90):.3f}, "
+            f"strength={getattr(config, 'source_structure_reliability_strength', 0.35):.3f}, "
+            f"bounds=[{getattr(config, 'source_structure_reliability_min_factor', 0.70):.3f}, "
+            f"{getattr(config, 'source_structure_reliability_max_factor', 1.20):.3f}]"
+        )
     phase_grid_count = int(getattr(config, "source_phase_grid_count", 5))
     phase_grid_trade_off = float(getattr(config, "source_phase_grid_trade_off", 0.0))
     phase_grid_weight_tracker = None
@@ -184,24 +196,56 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     spatial_feats_anchor,
                     spatial_feats,
                 )
+                structure_weight_factors = None
+                structure_reliability_logs = {}
+                if adaptive_structure_weights and reliability_mode == "svd_reliability":
+                    structure_weight_factors, structure_reliability_logs = compute_svd_structure_reliability_factors(
+                        spatial_feats,
+                        positions,
+                        targets,
+                        phase_partition_spec=phase_partition_spec,
+                        min_sample_points=getattr(config, "source_phase_min_sample_points", 2),
+                        zeta=getattr(config, "source_structure_reliability_zeta", 0.90),
+                        strength=getattr(config, "source_structure_reliability_strength", 0.35),
+                        min_factor=getattr(config, "source_structure_reliability_min_factor", 0.70),
+                        max_factor=getattr(config, "source_structure_reliability_max_factor", 1.20),
+                    )
+                intra_trade_off = getattr(config, "source_structure_intra_trade_off", 1.0)
+                trend_trade_off = getattr(config, "source_structure_trend_trade_off", 0.05)
+                segment_inter_trade_off = getattr(config, "source_structure_segment_inter_trade_off", 0.02)
+                boundary_window_trade_off = getattr(config, "source_structure_boundary_window_trade_off", 0.02)
+                if structure_weight_factors is not None:
+                    intra_trade_off = intra_trade_off * structure_weight_factors["intra"]
+                    trend_trade_off = trend_trade_off * structure_weight_factors["trend"]
+                    segment_inter_trade_off = segment_inter_trade_off * structure_weight_factors["segment_inter"]
+                    boundary_window_trade_off = boundary_window_trade_off * structure_weight_factors["boundary_window"]
                 compact_loss, compact_logs = compute_source_structure_loss(
                     spatial_feats,
                     positions,
                     targets,
                     weight_tracker=phase_weight_tracker,
                     version=getattr(config, "source_structure_loss_version", "compactness"),
-                    intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
+                    intra_trade_off=intra_trade_off,
                     amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
                     interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
                     shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
-                    trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
+                    trend_trade_off=trend_trade_off,
                     season_trade_off=getattr(config, "source_structure_season_trade_off", 0.02),
-                    segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
-                    boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
+                    segment_inter_trade_off=segment_inter_trade_off,
+                    boundary_window_trade_off=boundary_window_trade_off,
                     boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
                     warp_invariant_trade_off=getattr(config, "source_structure_warp_invariant_trade_off", 0.35),
+                    prototype_dynamics_trade_off=getattr(config, "source_structure_prototype_dynamics_trade_off", 0.05),
                     anchor_spatial_feats=spatial_feats_anchor,
                     anchor_positions=positions,
+                )
+                compact_logs.update(structure_reliability_logs)
+                compact_logs["source_structure_effective_intra_trade_off"] = float(intra_trade_off)
+                compact_logs["source_structure_effective_trend_trade_off"] = float(trend_trade_off)
+                compact_logs["source_structure_effective_segment_inter_trade_off"] = float(segment_inter_trade_off)
+                compact_logs["source_structure_effective_boundary_window_trade_off"] = float(boundary_window_trade_off)
+                compact_logs["source_structure_effective_prototype_dynamics_trade_off"] = float(
+                    getattr(config, "source_structure_prototype_dynamics_trade_off", 0.05)
                 )
                 if phase_grid_weight_tracker is not None:
                     phase_grid_feats, phase_grid_support = project_to_phase_grid(
