@@ -19,6 +19,7 @@ SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF = 0.02
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF = 0.20
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE = 2
 SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF = 0.35
+SOURCE_STRUCTURE_PROTOTYPE_DYNAMICS_TRADE_OFF = 0.05
 SHAPE_REG_DIRECTION_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_MARGIN = 0.35
@@ -82,6 +83,40 @@ def _moving_average_same(sequence_tensor):
         + padded[1:-1]
         + padded[2:]
     ) / 3.0
+
+
+def _compute_trajectory_prototype_losses(ordered_feats, labels, eps=1e-6):
+    zero = ordered_feats.sum() * 0.0
+    trajectory_intra_loss = zero
+    prototype_dynamics_loss = zero
+    trajectory_class_count = 0
+    dynamics_class_count = 0
+
+    if ordered_feats.ndim != 3 or ordered_feats.shape[1] < 2:
+        return trajectory_intra_loss, prototype_dynamics_loss, trajectory_class_count, dynamics_class_count
+
+    for class_id in labels.unique(sorted=True):
+        class_mask = labels == class_id
+        if int(class_mask.sum().item()) < 2:
+            continue
+
+        class_curves = ordered_feats[class_mask]
+        class_prototype = class_curves.mean(dim=0, keepdim=True)
+        class_trajectory_intra = (class_curves - class_prototype).pow(2).sum(dim=2).mean()
+        trajectory_intra_loss = trajectory_intra_loss + class_trajectory_intra
+        trajectory_class_count += 1
+
+        class_dynamics = class_curves[:, 1:] - class_curves[:, :-1]
+        prototype_dynamics = class_prototype[:, 1:] - class_prototype[:, :-1]
+        class_dynamics_loss = (class_dynamics - prototype_dynamics).pow(2).sum(dim=2).mean()
+        prototype_dynamics_loss = prototype_dynamics_loss + class_dynamics_loss
+        dynamics_class_count += 1
+
+    if trajectory_class_count > 0:
+        trajectory_intra_loss = trajectory_intra_loss / (trajectory_class_count + eps)
+    if dynamics_class_count > 0:
+        prototype_dynamics_loss = prototype_dynamics_loss / (dynamics_class_count + eps)
+    return trajectory_intra_loss, prototype_dynamics_loss, trajectory_class_count, dynamics_class_count
 
 
 def _standardize_temporal_curve(curve, eps=1e-6):
@@ -1042,6 +1077,11 @@ def compute_source_phase_compactness_loss(spatial_feats, positions, labels, weig
     if weight_tracker is not None:
         phase_logs.update(weight_tracker.get_logs())
 
+    active_intra_loss = (
+        trajectory_intra_loss
+        if version in {"trajectory_prototype_dynamics", "whole_curve_prototype_dynamics", "prototype_dynamics", "v244"}
+        else intra_loss
+    )
     total_loss = SOURCE_PHASE_COMPACTNESS_LAMBDA * total_loss
     phase_logs["compactness_loss"] = float(total_loss.detach().item())
     return total_loss, phase_logs
@@ -1064,6 +1104,7 @@ def compute_source_structure_loss(
     boundary_window_trade_off=SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF,
     boundary_window_size=SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE,
     warp_invariant_trade_off=SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF,
+    prototype_dynamics_trade_off=SOURCE_STRUCTURE_PROTOTYPE_DYNAMICS_TRADE_OFF,
     anchor_spatial_feats=None,
     anchor_positions=None,
 ):
@@ -1119,6 +1160,11 @@ def compute_source_structure_loss(
         GTW-inspired relaxed transition objective:
           * keep v2.4.3b terms
           * add a weak local monotonic-warp-invariant transition consistency term
+    - trajectory_prototype_dynamics:
+        v2.4.4 whole-curve structural objective:
+          * class-wise full-trajectory compactness against source prototypes
+          * class-wise first-difference consistency against prototype dynamics
+          * does not require or assume meaningful segment boundaries
     """
     version = str(version).lower()
     if version == "compactness":
@@ -1159,6 +1205,10 @@ def compute_source_structure_loss(
         "trend_season",
         "season_pattern",
         "v235",
+        "trajectory_prototype_dynamics",
+        "whole_curve_prototype_dynamics",
+        "prototype_dynamics",
+        "v244",
     }:
         raise ValueError(f"Unsupported source structure loss version: {version}")
 
@@ -1274,6 +1324,8 @@ def compute_source_structure_loss(
     shape_disorder_loss = zero
     shape_fragment_loss = zero
     shape_collapse_loss = zero
+    trajectory_intra_loss = zero
+    prototype_dynamics_loss = zero
     trend_loss = zero
     season_loss = zero
     season_coherence_loss = zero
@@ -1284,13 +1336,22 @@ def compute_source_structure_loss(
     amplitude_class_count = 0
     interphase_class_count = 0
     shape_class_count = 0
+    trajectory_class_count = 0
+    prototype_dynamics_class_count = 0
     trend_class_count = 0
     season_class_count = 0
     segment_inter_class_count = 0
     boundary_window_class_count = 0
     warp_invariant_class_count = 0
 
-    if version in {"profiled_components", "profiled", "v233"}:
+    if version in {"trajectory_prototype_dynamics", "whole_curve_prototype_dynamics", "prototype_dynamics", "v244"}:
+        (
+            trajectory_intra_loss,
+            prototype_dynamics_loss,
+            trajectory_class_count,
+            prototype_dynamics_class_count,
+        ) = _compute_trajectory_prototype_losses(ordered_feats, labels, eps=eps)
+    elif version in {"profiled_components", "profiled", "v233"}:
         for class_id in class_ids:
             valid_phase_indices = [
                 phase_idx
@@ -1597,7 +1658,12 @@ def compute_source_structure_loss(
             + SEASON_REG_REDUNDANCY_TRADE_OFF * season_redundancy_loss
         )
 
-    if version in {"profiled_components", "profiled", "v233"}:
+    if version in {"trajectory_prototype_dynamics", "whole_curve_prototype_dynamics", "prototype_dynamics", "v244"}:
+        total_loss = (
+            float(intra_trade_off) * trajectory_intra_loss
+            + float(prototype_dynamics_trade_off) * prototype_dynamics_loss
+        )
+    elif version in {"profiled_components", "profiled", "v233"}:
         total_loss = (
             float(intra_trade_off) * intra_loss
             + float(shape_trade_off) * shape_loss
@@ -1646,7 +1712,7 @@ def compute_source_structure_loss(
     phase_logs["source_structure_loss_version"] = (
         1.0 if version in {"multi_component", "multicomponent", "v232"} else 2.0
     )
-    phase_logs["source_structure_intra_loss"] = float((SOURCE_PHASE_COMPACTNESS_LAMBDA * intra_loss).detach().item())
+    phase_logs["source_structure_intra_loss"] = float((SOURCE_PHASE_COMPACTNESS_LAMBDA * active_intra_loss).detach().item())
     phase_logs["source_structure_amplitude_loss"] = float(
         (SOURCE_PHASE_COMPACTNESS_LAMBDA * amplitude_loss).detach().item()
     )
@@ -1664,6 +1730,12 @@ def compute_source_structure_loss(
     )
     phase_logs["source_structure_shape_collapse_loss"] = float(
         (SOURCE_PHASE_COMPACTNESS_LAMBDA * shape_collapse_loss).detach().item()
+    )
+    phase_logs["source_structure_trajectory_intra_loss"] = float(
+        (SOURCE_PHASE_COMPACTNESS_LAMBDA * trajectory_intra_loss).detach().item()
+    )
+    phase_logs["source_structure_prototype_dynamics_loss"] = float(
+        (SOURCE_PHASE_COMPACTNESS_LAMBDA * prototype_dynamics_loss).detach().item()
     )
     phase_logs["source_structure_trend_loss"] = float(
         (SOURCE_PHASE_COMPACTNESS_LAMBDA * trend_loss).detach().item()
@@ -1689,6 +1761,8 @@ def compute_source_structure_loss(
     phase_logs["source_structure_amplitude_classes"] = float(amplitude_class_count)
     phase_logs["source_structure_interphase_classes"] = float(interphase_class_count)
     phase_logs["source_structure_shape_classes"] = float(shape_class_count)
+    phase_logs["source_structure_trajectory_classes"] = float(trajectory_class_count)
+    phase_logs["source_structure_prototype_dynamics_classes"] = float(prototype_dynamics_class_count)
     phase_logs["source_structure_trend_classes"] = float(trend_class_count)
     phase_logs["source_structure_season_classes"] = float(season_class_count)
     phase_logs["source_structure_segment_inter_classes"] = float(segment_inter_class_count)

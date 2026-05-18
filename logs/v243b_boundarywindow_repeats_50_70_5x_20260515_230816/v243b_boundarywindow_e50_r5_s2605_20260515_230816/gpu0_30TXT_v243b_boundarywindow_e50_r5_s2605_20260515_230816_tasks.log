@@ -1,0 +1,260 @@
+Namespace(data_root='/data/user/DBL/timematch_data', num_blocks=100, source='france/30TXT/2017', target='france/30TXT/2017', num_folds=1, val_ratio=0.1, test_ratio=0.2, sample_pixels_val=True, output_dir='outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', experiment_name='pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', num_workers=8, seed=2605, device='cuda', log_step=10, eval=False, overall=False, skip_final_test=False, combine_spring_and_winter=False, closed_set=True, epochs=50, batch_size=128, lr=0.001, weight_decay=0.0001, focal_loss_gamma=1.0, num_pixels=64, seq_length=30, model='pseltae', input_dim=10, with_extra=False, tensorboard_log_dir='runs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', train_on_target=False, source_checkpoint_epochs='', source_checkpoint_dirname='checkpoints', with_shift_aug=False, shift_aug_p=1.0, max_shift_aug=60, source_feature_reshaper='residual_temporal_conv', source_feature_reshaper_strength=0.1, source_feature_reshaper_kernel_size=3, source_feature_reshaper_reg_trade_off=0.05, source_feature_dual_path=True, source_feature_dual_cls_trade_off=1.0, source_feature_dual_relation_trade_off=0.03, source_phase_partition_mode='doy_gap', source_segment_partition_mode='doy_gap', source_phase_count=5, source_segment_count=5, source_phase_gap_threshold=45, source_phase_min_points=3, source_phase_max_points=8, source_phase_max_span=120, source_phase_min_sample_points=2, source_phase_grid_count=5, source_phase_grid_trade_off=0.0, source_phase_grid_kernel='linear', source_phase_grid_bandwidth=0.0, source_phase_grid_min_support=0.2, source_segment_semantic_quantile=0.75, source_segment_semantic_max_samples_per_class=128, source_segment_semantic_curvature_trade_off=0.5, source_segment_semantic_energy_trade_off=0.25, source_segment_semantic_similarity_trade_off=0.25, source_segment_semantic_max_extra_cuts_per_base=2, source_segment_semantic_merge_boundary_trade_off=0.5, source_segment_semantic_aggl_min_points=3, source_segment_semantic_aggl_target_slack=1, source_segment_semantic_aggl_merge_cost_tolerance=1.15, source_segment_semantic_aggl_dynamics_trade_off=0.35, source_structure_loss_version='segment_boundary_window_residual', source_structure_intra_trade_off=1.0, source_structure_amplitude_trade_off=0.0, source_structure_interphase_trade_off=0.0, source_structure_shape_trade_off=0.0, source_structure_trend_trade_off=0.05, source_structure_season_trade_off=0.0, source_structure_segment_inter_trade_off=0.02, source_structure_boundary_window_trade_off=0.2, source_structure_boundary_window_size=2, source_structure_warp_invariant_trade_off=0.35, method='sourcephasecompact')
+Excluded 9510 parcels from closed-set loading because class 'unknown' is not kept.
+Using classes: ['corn', 'horsebeans', 'meadow', 'spring_barley', 'spring_peas', 'sunflowers', 'winter_barley', 'winter_oat', 'winter_rapeseed', 'winter_triticale', 'winter_wheat']
+Excluded 41 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 10 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 3 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 32 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 9510 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 79 parcels from closed-set loading because class 'winter_peas' is not kept.
+Excluded 51 parcels from closed-set loading because class 'winter_rye' is not kept.
+Starting fold 0...
+Excluded 2 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 4 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 933 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 6 parcels from closed-set loading because class 'winter_peas' is not kept.
+Excluded 2 parcels from closed-set loading because class 'winter_rye' is not kept.
+Excluded 10 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 2 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 2 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 1811 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 15 parcels from closed-set loading because class 'winter_peas' is not kept.
+Excluded 6 parcels from closed-set loading because class 'winter_rye' is not kept.
+evaluation dataset: france/30TXT/2017
+val target data: 9655 (76 batches)
+test taget data: 19358 (1353 batches)
+PseLTae(
+  (spatial_encoder): PixelSetEncoder(
+    (mlp1): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=10, out_features=32, bias=False)
+        (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+      (1): LinearLayer(
+        (linear): Linear(in_features=32, out_features=64, bias=False)
+        (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (mlp2): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=128, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+  )
+  (temporal_encoder): LTAE(
+    (inconv): LinearLayer(
+      (linear): Linear(in_features=128, out_features=256, bias=False)
+      (norm): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (positional_enc): Embedding(565, 256)
+    (attention_heads): MultiHeadAttention(
+      (key): Linear(in_features=256, out_features=128, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+      (softmax): Softmax(dim=-1)
+    )
+    (mlp): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=256, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (dropout): Dropout(p=0.2, inplace=False)
+  )
+  (decoder): Sequential(
+    (0): LinearLayer(
+      (linear): Linear(in_features=128, out_features=64, bias=False)
+      (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (1): LinearLayer(
+      (linear): Linear(in_features=64, out_features=32, bias=False)
+      (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (2): Linear(in_features=32, out_features=11, bias=True)
+  )
+)
+Number of trainable parameters: 129323
+Excluded 27 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 7 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 2 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 21 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 6282 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 53 parcels from closed-set loading because class 'winter_peas' is not kept.
+Excluded 42 parcels from closed-set loading because class 'winter_rye' is not kept.
+training dataset: france/30TXT/2017, n=67786, batches=529
+source segment partition: mode=doy_gap, segment_count=8, gap_threshold=45, min_points=3, max_points=8, max_span=120, intervals=[18,88], [91,128], [138,178], [183,213], [216,251], [253,291], [293,326], [328,361]
+====================Epoch 1/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:30,  2.47it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 19.63it/s]Validating:  17%|█▋        | 13/76 [00:00<00:02, 26.94it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 32.62it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 39.52it/s]Validating:  42%|████▏     | 32/76 [00:00<00:00, 46.33it/s]Validating:  50%|█████     | 38/76 [00:01<00:00, 47.35it/s]Validating:  58%|█████▊    | 44/76 [00:01<00:00, 45.86it/s]Validating:  66%|██████▌   | 50/76 [00:01<00:00, 47.85it/s]Validating:  75%|███████▌  | 57/76 [00:01<00:00, 50.38it/s]Validating:  84%|████████▍ | 64/76 [00:01<00:00, 54.05it/s]Validating:  93%|█████████▎| 71/76 [00:01<00:00, 56.78it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 42.02it/s]
+Validation result: loss=0.1210, acc=0.95, f1=0.5629
+Validation F1 improved from 0.0000 to 0.5629!
+Saving best model to outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 2/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:31,  2.40it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 19.28it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 23.53it/s]Validating:  22%|██▏       | 17/76 [00:00<00:02, 29.21it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 39.50it/s]Validating:  38%|███▊      | 29/76 [00:00<00:01, 42.16it/s]Validating:  46%|████▌     | 35/76 [00:01<00:00, 45.44it/s]Validating:  54%|█████▍    | 41/76 [00:01<00:00, 47.31it/s]Validating:  63%|██████▎   | 48/76 [00:01<00:00, 52.78it/s]Validating:  71%|███████   | 54/76 [00:01<00:00, 52.70it/s]Validating:  79%|███████▉  | 60/76 [00:01<00:00, 53.13it/s]Validating:  87%|████████▋ | 66/76 [00:01<00:00, 53.04it/s]Validating:  96%|█████████▌| 73/76 [00:01<00:00, 55.98it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 41.47it/s]
+Validation result: loss=0.0539, acc=0.98, f1=0.8534
+Validation F1 improved from 0.5629 to 0.8534!
+Saving best model to outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 3/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:32,  2.34it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 18.64it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 24.06it/s]Validating:  22%|██▏       | 17/76 [00:00<00:01, 30.49it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 40.55it/s]Validating:  39%|███▉      | 30/76 [00:00<00:01, 43.16it/s]Validating:  46%|████▌     | 35/76 [00:01<00:00, 44.05it/s]Validating:  54%|█████▍    | 41/76 [00:01<00:00, 45.93it/s]Validating:  63%|██████▎   | 48/76 [00:01<00:00, 51.51it/s]Validating:  71%|███████   | 54/76 [00:01<00:00, 50.91it/s]Validating:  79%|███████▉  | 60/76 [00:01<00:00, 51.52it/s]Validating:  87%|████████▋ | 66/76 [00:01<00:00, 52.68it/s]Validating:  96%|█████████▌| 73/76 [00:01<00:00, 56.49it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 41.43it/s]
+Validation result: loss=0.1342, acc=0.94, f1=0.7335
+Validation F1 did not improve from 0.8534.
+====================Epoch 4/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:30,  2.50it/s]Validating:   8%|▊         | 6/76 [00:00<00:04, 14.86it/s]Validating:  14%|█▍        | 11/76 [00:00<00:02, 23.94it/s]Validating:  22%|██▏       | 17/76 [00:00<00:01, 32.34it/s]Validating:  30%|███       | 23/76 [00:00<00:01, 39.33it/s]Validating:  37%|███▋      | 28/76 [00:00<00:01, 41.56it/s]Validating:  45%|████▍     | 34/76 [00:01<00:00, 45.08it/s]Validating:  54%|█████▍    | 41/76 [00:01<00:00, 48.31it/s]Validating:  63%|██████▎   | 48/76 [00:01<00:00, 53.31it/s]Validating:  71%|███████   | 54/76 [00:01<00:00, 53.93it/s]Validating:  79%|███████▉  | 60/76 [00:01<00:00, 53.99it/s]Validating:  87%|████████▋ | 66/76 [00:01<00:00, 54.47it/s]Validating:  96%|█████████▌| 73/76 [00:01<00:00, 57.79it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 42.27it/s]
+Validation result: loss=0.0435, acc=0.98, f1=0.9066
+Validation F1 improved from 0.8534 to 0.9066!
+Saving best model to outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 5/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:29,  2.54it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 19.91it/s]Validating:  17%|█▋        | 13/76 [00:00<00:02, 27.41it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 33.03it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 39.67it/s]Validating:  42%|████▏     | 32/76 [00:00<00:00, 47.54it/s]Validating:  50%|█████     | 38/76 [00:01<00:00, 49.13it/s]Validating:  58%|█████▊    | 44/76 [00:01<00:00, 49.89it/s]Validating:  66%|██████▌   | 50/76 [00:01<00:00, 49.94it/s]Validating:  75%|███████▌  | 57/76 [00:01<00:00, 51.51it/s]Validating:  84%|████████▍ | 64/76 [00:01<00:00, 56.08it/s]Validating:  92%|█████████▏| 70/76 [00:01<00:00, 56.66it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 43.11it/s]
+Validation result: loss=0.0503, acc=0.98, f1=0.8928
+Validation F1 did not improve from 0.9066.
+====================Epoch 6/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:29,  2.57it/s]Validating:   9%|▉         | 7/76 [00:00<00:03, 17.80it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 26.19it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 34.36it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 42.40it/s]Validating:  41%|████      | 31/76 [00:00<00:01, 43.02it/s]Validating:  47%|████▋     | 36/76 [00:01<00:00, 44.83it/s]Validating:  57%|█████▋    | 43/76 [00:01<00:00, 47.25it/s]Validating:  66%|██████▌   | 50/76 [00:01<00:00, 50.88it/s]Validating:  74%|███████▎  | 56/76 [00:01<00:00, 46.07it/s]Validating:  80%|████████  | 61/76 [00:01<00:00, 47.03it/s]Validating:  88%|████████▊ | 67/76 [00:01<00:00, 48.46it/s]Validating:  97%|█████████▋| 74/76 [00:01<00:00, 54.10it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 40.90it/s]
+Validation result: loss=0.0655, acc=0.97, f1=0.8611
+Validation F1 did not improve from 0.9066.
+====================Epoch 7/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:30,  2.43it/s]Validating:   9%|▉         | 7/76 [00:00<00:03, 17.25it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 25.43it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 33.20it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 39.77it/s]Validating:  38%|███▊      | 29/76 [00:00<00:01, 40.85it/s]Validating:  46%|████▌     | 35/76 [00:01<00:00, 43.15it/s]Validating:  54%|█████▍    | 41/76 [00:01<00:00, 45.45it/s]Validating:  61%|██████    | 46/76 [00:01<00:00, 46.65it/s]Validating:  68%|██████▊   | 52/76 [00:01<00:00, 48.49it/s]Validating:  76%|███████▋  | 58/76 [00:01<00:00, 50.29it/s]Validating:  84%|████████▍ | 64/76 [00:01<00:00, 52.58it/s]Validating:  93%|█████████▎| 71/76 [00:01<00:00, 55.75it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 40.43it/s]
+Validation result: loss=0.0901, acc=0.96, f1=0.8422
+Validation F1 did not improve from 0.9066.
+====================Epoch 8/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:33,  2.21it/s]Validating:  12%|█▏        | 9/76 [00:00<00:03, 17.97it/s]Validating:  22%|██▏       | 17/76 [00:00<00:02, 28.92it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 37.62it/s]Validating:  43%|████▎     | 33/76 [00:01<00:00, 43.29it/s]Validating:  51%|█████▏    | 39/76 [00:01<00:00, 47.15it/s]Validating:  59%|█████▉    | 45/76 [00:01<00:00, 48.47it/s]Validating:  67%|██████▋   | 51/76 [00:01<00:00, 50.54it/s]Validating:  75%|███████▌  | 57/76 [00:01<00:00, 51.37it/s]Validating:  84%|████████▍ | 64/76 [00:01<00:00, 56.12it/s]Validating:  93%|█████████▎| 71/76 [00:01<00:00, 58.30it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 41.87it/s]
+Validation result: loss=0.0478, acc=0.98, f1=0.9204
+Validation F1 improved from 0.9066 to 0.9204!
+Saving best model to outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 9/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:33,  2.24it/s]Validating:  12%|█▏        | 9/76 [00:00<00:03, 20.18it/s]Validating:  20%|█▉        | 15/76 [00:00<00:02, 29.36it/s]Validating:  26%|██▋       | 20/76 [00:00<00:01, 33.67it/s]Validating:  34%|███▍      | 26/76 [00:00<00:01, 39.84it/s]Validating:  43%|████▎     | 33/76 [00:01<00:00, 46.83it/s]Validating:  54%|█████▍    | 41/76 [00:01<00:00, 52.15it/s]Validating:  63%|██████▎   | 48/76 [00:01<00:00, 56.33it/s]Validating:  72%|███████▏  | 55/76 [00:01<00:00, 57.14it/s]Validating:  82%|████████▏ | 62/76 [00:01<00:00, 53.95it/s]Validating:  89%|████████▉ | 68/76 [00:01<00:00, 53.79it/s]Validating:  99%|█████████▊| 75/76 [00:01<00:00, 56.48it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 42.54it/s]
+Validation result: loss=0.0680, acc=0.97, f1=0.8816
+Validation F1 did not improve from 0.9204.
+====================Epoch 10/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:32,  2.32it/s]Validating:   9%|▉         | 7/76 [00:00<00:04, 16.23it/s]Validating:  14%|█▍        | 11/76 [00:00<00:03, 21.58it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 31.90it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 40.24it/s]Validating:  41%|████      | 31/76 [00:01<00:01, 44.22it/s]Validating:  49%|████▊     | 37/76 [00:01<00:00, 45.54it/s]Validating:  57%|█████▋    | 43/76 [00:01<00:00, 45.40it/s]Validating:  64%|██████▍   | 49/76 [00:01<00:00, 49.13it/s]Validating:  72%|███████▏  | 55/76 [00:01<00:00, 49.74it/s]Validating:  80%|████████  | 61/76 [00:01<00:00, 50.62it/s]Validating:  88%|████████▊ | 67/76 [00:01<00:00, 52.31it/s]Validating:  97%|█████████▋| 74/76 [00:01<00:00, 55.70it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 40.16it/s]
+Validation result: loss=0.0411, acc=0.98, f1=0.9188
+Validation F1 did not improve from 0.9204.
+====================Epoch 11/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:30,  2.50it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 19.65it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 23.68it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 31.73it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 39.13it/s]Validating:  41%|████      | 31/76 [00:00<00:01, 44.07it/s]Validating:  49%|████▊     | 37/76 [00:01<00:00, 46.22it/s]Validating:  57%|█████▋    | 43/76 [00:01<00:00, 48.00it/s]Validating:  66%|██████▌   | 50/76 [00:01<00:00, 51.86it/s]Validating:  75%|███████▌  | 57/76 [00:01<00:00, 53.62it/s]Validating:  84%|████████▍ | 64/76 [00:01<00:00, 56.42it/s]Validating:  93%|█████████▎| 71/76 [00:01<00:00, 58.35it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 42.38it/s]
+Validation result: loss=0.0341, acc=0.99, f1=0.9388
+Validation F1 improved from 0.9204 to 0.9388!
+Saving best model to outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 12/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:29,  2.52it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 19.66it/s]Validating:  17%|█▋        | 13/76 [00:00<00:02, 27.56it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 33.45it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 39.94it/s]Validating:  41%|████      | 31/76 [00:00<00:01, 44.76it/s]Validating:  49%|████▊     | 37/76 [00:01<00:00, 46.48it/s]Validating:  57%|█████▋    | 43/76 [00:01<00:00, 48.08it/s]Validating:  64%|██████▍   | 49/76 [00:01<00:00, 49.78it/s]Validating:  72%|███████▏  | 55/76 [00:01<00:00, 52.14it/s]Validating:  80%|████████  | 61/76 [00:01<00:00, 52.32it/s]Validating:  88%|████████▊ | 67/76 [00:01<00:00, 53.03it/s]Validating:  97%|█████████▋| 74/76 [00:01<00:00, 57.02it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 41.99it/s]
+Validation result: loss=0.0564, acc=0.98, f1=0.9059
+Validation F1 did not improve from 0.9388.
+====================Epoch 13/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:29,  2.56it/s]Validating:   7%|▋         | 5/76 [00:00<00:05, 12.21it/s]Validating:  13%|█▎        | 10/76 [00:00<00:02, 22.15it/s]Validating:  21%|██        | 16/76 [00:00<00:01, 31.97it/s]Validating:  28%|██▊       | 21/76 [00:00<00:01, 36.19it/s]Validating:  34%|███▍      | 26/76 [00:00<00:01, 39.93it/s]Validating:  43%|████▎     | 33/76 [00:01<00:00, 46.17it/s]Validating:  51%|█████▏    | 39/76 [00:01<00:00, 47.90it/s]Validating:  59%|█████▉    | 45/76 [00:01<00:00, 49.01it/s]Validating:  67%|██████▋   | 51/76 [00:01<00:00, 50.64it/s]Validating:  75%|███████▌  | 57/76 [00:01<00:00, 52.54it/s]Validating:  83%|████████▎ | 63/76 [00:01<00:00, 53.15it/s]Validating:  92%|█████████▏| 70/76 [00:01<00:00, 56.62it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 40.55it/s]
+Validation result: loss=0.0434, acc=0.98, f1=0.9330
+Validation F1 did not improve from 0.9388.
+====================Epoch 14/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:28,  2.60it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 20.45it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 25.72it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 34.02it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 40.67it/s]Validating:  42%|████▏     | 32/76 [00:00<00:00, 47.91it/s]Validating:  50%|█████     | 38/76 [00:01<00:00, 48.97it/s]Validating:  58%|█████▊    | 44/76 [00:01<00:00, 46.85it/s]Validating:  66%|██████▌   | 50/76 [00:01<00:00, 47.09it/s]Validating:  74%|███████▎  | 56/76 [00:01<00:00, 49.70it/s]Validating:  82%|████████▏ | 62/76 [00:01<00:00, 46.49it/s]Validating:  88%|████████▊ | 67/76 [00:01<00:00, 46.49it/s]Validating:  97%|█████████▋| 74/76 [00:01<00:00, 50.87it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 40.03it/s]
+Validation result: loss=0.0420, acc=0.98, f1=0.9436
+Validation F1 improved from 0.9388 to 0.9436!
+Saving best model to outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 15/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:32,  2.31it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 18.74it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 21.72it/s]Validating:  22%|██▏       | 17/76 [00:00<00:02, 28.15it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 38.41it/s]Validating:  38%|███▊      | 29/76 [00:01<00:01, 40.63it/s]Validating:  45%|████▍     | 34/76 [00:01<00:00, 43.02it/s]Validating:  54%|█████▍    | 41/76 [00:01<00:00, 45.76it/s]Validating:  63%|██████▎   | 48/76 [00:01<00:00, 52.17it/s]Validating:  71%|███████   | 54/76 [00:01<00:00, 52.58it/s]Validating:  79%|███████▉  | 60/76 [00:01<00:00, 53.49it/s]Validating:  87%|████████▋ | 66/76 [00:01<00:00, 53.38it/s]Validating:  96%|█████████▌| 73/76 [00:01<00:00, 57.61it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 40.91it/s]
+Validation result: loss=0.0371, acc=0.98, f1=0.9284
+Validation F1 did not improve from 0.9436.
+====================Epoch 16/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:29,  2.51it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 19.64it/s]Validating:  17%|█▋        | 13/76 [00:00<00:02, 26.59it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 32.37it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 39.81it/s]Validating:  38%|███▊      | 29/76 [00:00<00:01, 41.67it/s]Validating:  46%|████▌     | 35/76 [00:01<00:00, 44.03it/s]Validating:  55%|█████▌    | 42/76 [00:01<00:00, 48.02it/s]Validating:  63%|██████▎   | 48/76 [00:01<00:00, 49.64it/s]Validating:  71%|███████   | 54/76 [00:01<00:00, 50.20it/s]Validating:  79%|███████▉  | 60/76 [00:01<00:00, 51.68it/s]Validating:  88%|████████▊ | 67/76 [00:01<00:00, 54.37it/s]Validating:  97%|█████████▋| 74/76 [00:01<00:00, 58.14it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 41.62it/s]
+Validation result: loss=0.0677, acc=0.97, f1=0.8715
+Validation F1 did not improve from 0.9436.
+====================Epoch 17/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:34,  2.16it/s]Validating:   9%|▉         | 7/76 [00:00<00:04, 15.30it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 23.17it/s]Validating:  22%|██▏       | 17/76 [00:00<00:02, 28.79it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 38.74it/s]Validating:  38%|███▊      | 29/76 [00:01<00:01, 39.90it/s]Validating:  45%|████▍     | 34/76 [00:01<00:01, 40.97it/s]Validating:  54%|█████▍    | 41/76 [00:01<00:00, 44.15it/s]Validating:  63%|██████▎   | 48/76 [00:01<00:00, 50.55it/s]Validating:  71%|███████   | 54/76 [00:01<00:00, 51.28it/s]Validating:  79%|███████▉  | 60/76 [00:01<00:00, 51.29it/s]Validating:  87%|████████▋ | 66/76 [00:01<00:00, 52.38it/s]Validating:  96%|█████████▌| 73/76 [00:01<00:00, 55.07it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 39.67it/s]
+Validation result: loss=0.0387, acc=0.98, f1=0.9346
+Validation F1 did not improve from 0.9436.
+====================Epoch 18/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:29,  2.51it/s]Validating:   9%|▉         | 7/76 [00:00<00:03, 17.58it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 25.75it/s]Validating:  22%|██▏       | 17/76 [00:00<00:01, 32.41it/s]Validating:  30%|███       | 23/76 [00:00<00:01, 39.87it/s]Validating:  37%|███▋      | 28/76 [00:00<00:01, 41.20it/s]Validating:  45%|████▍     | 34/76 [00:01<00:00, 44.80it/s]Validating:  53%|█████▎    | 40/76 [00:01<00:00, 47.96it/s]Validating:  61%|██████    | 46/76 [00:01<00:00, 49.52it/s]Validating:  68%|██████▊   | 52/76 [00:01<00:00, 49.75it/s]Validating:  76%|███████▋  | 58/76 [00:01<00:00, 49.94it/s]Validating:  86%|████████▌ | 65/76 [00:01<00:00, 52.52it/s]Validating:  95%|█████████▍| 72/76 [00:01<00:00, 56.89it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 41.31it/s]
+Validation result: loss=0.0600, acc=0.97, f1=0.9163
+Validation F1 did not improve from 0.9436.
+====================Epoch 19/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:35,  2.10it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 17.13it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 22.41it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 30.03it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 36.25it/s]Validating:  38%|███▊      | 29/76 [00:01<00:01, 38.62it/s]Validating:  46%|████▌     | 35/76 [00:01<00:00, 42.49it/s]Validating:  55%|█████▌    | 42/76 [00:01<00:00, 46.53it/s]Validating:  63%|██████▎   | 48/76 [00:01<00:00, 49.64it/s]Validating:  71%|███████   | 54/76 [00:01<00:00, 50.78it/s]Validating:  79%|███████▉  | 60/76 [00:01<00:00, 52.39it/s]Validating:  87%|████████▋ | 66/76 [00:01<00:00, 53.90it/s]Validating:  96%|█████████▌| 73/76 [00:01<00:00, 57.22it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 39.82it/s]
+Validation result: loss=0.0402, acc=0.98, f1=0.9335
+Validation F1 did not improve from 0.9436.
+====================Epoch 20/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:30,  2.42it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 19.17it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 24.61it/s]Validating:  22%|██▏       | 17/76 [00:00<00:01, 31.13it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 40.47it/s]Validating:  38%|███▊      | 29/76 [00:00<00:01, 42.62it/s]Validating:  45%|████▍     | 34/76 [00:01<00:00, 42.82it/s]Validating:  54%|█████▍    | 41/76 [00:01<00:00, 45.94it/s]Validating:  63%|██████▎   | 48/76 [00:01<00:00, 50.87it/s]Validating:  71%|███████   | 54/76 [00:01<00:00, 50.92it/s]Validating:  79%|███████▉  | 60/76 [00:01<00:00, 50.01it/s]Validating:  87%|████████▋ | 66/76 [00:01<00:00, 51.42it/s]Validating:  96%|█████████▌| 73/76 [00:01<00:00, 54.89it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 40.77it/s]
+Validation result: loss=0.0348, acc=0.99, f1=0.9476
+Validation F1 improved from 0.9436 to 0.9476!
+Saving best model to outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 21/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:29,  2.58it/s]Validating:   8%|▊         | 6/76 [00:00<00:04, 15.27it/s]Validating:  14%|█▍        | 11/76 [00:00<00:02, 24.37it/s]Validating:  22%|██▏       | 17/76 [00:00<00:01, 32.56it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 41.62it/s]Validating:  39%|███▉      | 30/76 [00:00<00:01, 44.15it/s]Validating:  46%|████▌     | 35/76 [00:01<00:00, 45.09it/s]Validating:  54%|█████▍    | 41/76 [00:01<00:00, 46.70it/s]Validating:  63%|██████▎   | 48/76 [00:01<00:00, 51.58it/s]Validating:  71%|███████   | 54/76 [00:01<00:00, 51.75it/s]Validating:  79%|███████▉  | 60/76 [00:01<00:00, 51.91it/s]Validating:  87%|████████▋ | 66/76 [00:01<00:00, 52.59it/s]Validating:  96%|█████████▌| 73/76 [00:01<00:00, 55.83it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 41.84it/s]
+Validation result: loss=0.0339, acc=0.99, f1=0.9471
+Validation F1 did not improve from 0.9476.
+====================Epoch 22/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:28,  2.59it/s]Validating:   9%|▉         | 7/76 [00:00<00:03, 17.66it/s]Validating:  14%|█▍        | 11/76 [00:00<00:02, 23.34it/s]Validating:  22%|██▏       | 17/76 [00:00<00:01, 32.02it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 40.80it/s]Validating:  38%|███▊      | 29/76 [00:00<00:01, 42.50it/s]Validating:  46%|████▌     | 35/76 [00:01<00:00, 44.82it/s]Validating:  55%|█████▌    | 42/76 [00:01<00:00, 49.28it/s]Validating:  63%|██████▎   | 48/76 [00:01<00:00, 50.91it/s]Validating:  71%|███████   | 54/76 [00:01<00:00, 50.95it/s]Validating:  79%|███████▉  | 60/76 [00:01<00:00, 51.23it/s]Validating:  88%|████████▊ | 67/76 [00:01<00:00, 53.84it/s]Validating:  97%|█████████▋| 74/76 [00:01<00:00, 56.61it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 41.57it/s]
+Validation result: loss=0.0365, acc=0.99, f1=0.9368
+Validation F1 did not improve from 0.9476.
+====================Epoch 23/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:34,  2.17it/s]Validating:   9%|▉         | 7/76 [00:00<00:04, 15.26it/s]Validating:  14%|█▍        | 11/76 [00:00<00:03, 21.08it/s]Validating:  22%|██▏       | 17/76 [00:00<00:02, 29.15it/s]Validating:  30%|███       | 23/76 [00:00<00:01, 35.96it/s]Validating:  37%|███▋      | 28/76 [00:01<00:01, 38.32it/s]Validating:  43%|████▎     | 33/76 [00:01<00:01, 39.38it/s]Validating:  51%|█████▏    | 39/76 [00:01<00:00, 44.57it/s]Validating:  58%|█████▊    | 44/76 [00:01<00:00, 44.97it/s]Validating:  64%|██████▍   | 49/76 [00:01<00:00, 45.11it/s]Validating:  72%|███████▏  | 55/76 [00:01<00:00, 48.54it/s]Validating:  80%|████████  | 61/76 [00:01<00:00, 48.52it/s]Validating:  88%|████████▊ | 67/76 [00:01<00:00, 49.66it/s]Validating:  96%|█████████▌| 73/76 [00:01<00:00, 52.41it/s]Validating: 100%|██████████| 76/76 [00:02<00:00, 37.95it/s]
+Validation result: loss=0.0341, acc=0.99, f1=0.9411
+Validation F1 did not improve from 0.9476.
+====================Epoch 24/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:28,  2.61it/s]Validating:   9%|▉         | 7/76 [00:00<00:03, 18.05it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 26.06it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 33.63it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 40.49it/s]Validating:  41%|████      | 31/76 [00:00<00:00, 45.34it/s]Validating:  49%|████▊     | 37/76 [00:01<00:00, 46.24it/s]Validating:  57%|█████▋    | 43/76 [00:01<00:00, 48.21it/s]Validating:  66%|██████▌   | 50/76 [00:01<00:00, 50.86it/s]Validating:  74%|███████▎  | 56/76 [00:01<00:00, 52.99it/s]Validating:  82%|████████▏ | 62/76 [00:01<00:00, 52.69it/s]Validating:  89%|████████▉ | 68/76 [00:01<00:00, 53.90it/s]Validating:  99%|█████████▊| 75/76 [00:01<00:00, 56.32it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 42.22it/s]
+Validation result: loss=0.0284, acc=0.99, f1=0.9474
+Validation F1 did not improve from 0.9476.
+====================Epoch 25/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:35,  2.13it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 17.77it/s]Validating:  17%|█▋        | 13/76 [00:00<00:02, 25.43it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 31.11it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 38.08it/s]Validating:  42%|████▏     | 32/76 [00:01<00:00, 44.33it/s]Validating:  50%|█████     | 38/76 [00:01<00:00, 45.82it/s]Validating:  58%|█████▊    | 44/76 [00:01<00:00, 46.88it/s]Validating:  66%|██████▌   | 50/76 [00:01<00:00, 48.06it/s]Validating:  74%|███████▎  | 56/76 [00:01<00:00, 50.02it/s]Validating:  82%|████████▏ | 62/76 [00:01<00:00, 50.61it/s]Validating:  89%|████████▉ | 68/76 [00:01<00:00, 51.35it/s]Validating:  99%|█████████▊| 75/76 [00:01<00:00, 55.77it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 40.20it/s]
+Validation result: loss=0.0273, acc=0.99, f1=0.9534
+Validation F1 improved from 0.9476 to 0.9534!
+Saving best model to outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 26/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:31,  2.37it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 19.18it/s]Validating:  17%|█▋        | 13/76 [00:00<00:02, 26.24it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 30.51it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 37.96it/s]Validating:  42%|████▏     | 32/76 [00:00<00:00, 46.14it/s]Validating:  50%|█████     | 38/76 [00:01<00:00, 47.81it/s]Validating:  58%|█████▊    | 44/76 [00:01<00:00, 48.91it/s]Validating:  66%|██████▌   | 50/76 [00:01<00:00, 49.91it/s]Validating:  75%|███████▌  | 57/76 [00:01<00:00, 51.95it/s]Validating:  84%|████████▍ | 64/76 [00:01<00:00, 56.10it/s]Validating:  93%|█████████▎| 71/76 [00:01<00:00, 58.45it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 42.37it/s]
+Validation result: loss=0.0298, acc=0.99, f1=0.9511
+Validation F1 did not improve from 0.9534.
+====================Epoch 27/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:35,  2.11it/s]Validating:   9%|▉         | 7/76 [00:00<00:04, 15.41it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 23.51it/s]Validating:  22%|██▏       | 17/76 [00:00<00:01, 29.85it/s]Validating:  30%|███       | 23/76 [00:00<00:01, 36.13it/s]Validating:  37%|███▋      | 28/76 [00:01<00:01, 39.02it/s]Validating:  45%|████▍     | 34/76 [00:01<00:00, 42.66it/s]Validating:  53%|█████▎    | 40/76 [00:01<00:00, 47.18it/s]Validating:  61%|██████    | 46/76 [00:01<00:00, 48.73it/s]Validating:  68%|██████▊   | 52/76 [00:01<00:00, 50.20it/s]Validating:  76%|███████▋  | 58/76 [00:01<00:00, 50.40it/s]Validating:  86%|████████▌ | 65/76 [00:01<00:00, 54.77it/s]Validating:  95%|█████████▍| 72/76 [00:01<00:00, 57.12it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 39.85it/s]
+Validation result: loss=0.0313, acc=0.99, f1=0.9543
+Validation F1 improved from 0.9534 to 0.9543!
+Saving best model to outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 28/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:29,  2.55it/s]Validating:   9%|▉         | 7/76 [00:00<00:04, 17.18it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 25.37it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 33.41it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 40.84it/s]Validating:  42%|████▏     | 32/76 [00:00<00:00, 47.51it/s]Validating:  50%|█████     | 38/76 [00:01<00:00, 49.27it/s]Validating:  58%|█████▊    | 44/76 [00:01<00:00, 49.73it/s]Validating:  66%|██████▌   | 50/76 [00:01<00:00, 50.35it/s]Validating:  75%|███████▌  | 57/76 [00:01<00:00, 52.29it/s]Validating:  84%|████████▍ | 64/76 [00:01<00:00, 55.62it/s]Validating:  93%|█████████▎| 71/76 [00:01<00:00, 57.55it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 42.87it/s]
+Validation result: loss=0.0358, acc=0.99, f1=0.9410
+Validation F1 did not improve from 0.9543.
+====================Epoch 29/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:29,  2.57it/s]Validating:   8%|▊         | 6/76 [00:00<00:04, 15.15it/s]Validating:  14%|█▍        | 11/76 [00:00<00:02, 22.28it/s]Validating:  22%|██▏       | 17/76 [00:00<00:01, 31.17it/s]Validating:  30%|███       | 23/76 [00:00<00:01, 38.62it/s]Validating:  38%|███▊      | 29/76 [00:00<00:01, 42.92it/s]Validating:  46%|████▌     | 35/76 [00:01<00:00, 45.23it/s]Validating:  54%|█████▍    | 41/76 [00:01<00:00, 49.20it/s]Validating:  62%|██████▏   | 47/76 [00:01<00:00, 49.88it/s]Validating:  70%|██████▉   | 53/76 [00:01<00:00, 50.85it/s]Validating:  78%|███████▊  | 59/76 [00:01<00:00, 49.66it/s]Validating:  86%|████████▌ | 65/76 [00:01<00:00, 50.64it/s]Validating:  95%|█████████▍| 72/76 [00:01<00:00, 54.01it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 40.90it/s]
+Validation result: loss=0.0311, acc=0.99, f1=0.9368
+Validation F1 did not improve from 0.9543.
+====================Epoch 30/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:30,  2.43it/s]Validating:   9%|▉         | 7/76 [00:00<00:04, 17.02it/s]Validating:  14%|█▍        | 11/76 [00:00<00:02, 22.88it/s]Validating:  22%|██▏       | 17/76 [00:00<00:01, 30.78it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 40.62it/s]Validating:  38%|███▊      | 29/76 [00:00<00:01, 42.94it/s]Validating:  45%|████▍     | 34/76 [00:01<00:00, 44.74it/s]Validating:  54%|█████▍    | 41/76 [00:01<00:00, 48.02it/s]Validating:  62%|██████▏   | 47/76 [00:01<00:00, 51.28it/s]Validating:  70%|██████▉   | 53/76 [00:01<00:00, 52.06it/s]Validating:  78%|███████▊  | 59/76 [00:01<00:00, 51.96it/s]Validating:  86%|████████▌ | 65/76 [00:01<00:00, 53.92it/s]Validating:  95%|█████████▍| 72/76 [00:01<00:00, 57.95it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 41.66it/s]
+Validation result: loss=0.0294, acc=0.99, f1=0.9541
+Validation F1 did not improve from 0.9543.
+====================Epoch 31/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:28,  2.61it/s]Validating:   7%|▋         | 5/76 [00:00<00:05, 12.56it/s]Validating:  13%|█▎        | 10/76 [00:00<00:02, 22.33it/s]Validating:  21%|██        | 16/76 [00:00<00:01, 31.60it/s]Validating:  28%|██▊       | 21/76 [00:00<00:01, 36.16it/s]Validating:  36%|███▌      | 27/76 [00:00<00:01, 40.19it/s]Validating:  43%|████▎     | 33/76 [00:01<00:00, 44.64it/s]Validating:  50%|█████     | 38/76 [00:01<00:00, 44.90it/s]Validating:  58%|█████▊    | 44/76 [00:01<00:00, 47.52it/s]Validating:  66%|██████▌   | 50/76 [00:01<00:00, 49.70it/s]Validating:  74%|███████▎  | 56/76 [00:01<00:00, 51.12it/s]Validating:  82%|████████▏ | 62/76 [00:01<00:00, 52.43it/s]Validating:  89%|████████▉ | 68/76 [00:01<00:00, 53.75it/s]Validating:  99%|█████████▊| 75/76 [00:01<00:00, 57.16it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 40.89it/s]
+Validation result: loss=0.0339, acc=0.99, f1=0.9511
+Validation F1 did not improve from 0.9543.
+====================Epoch 32/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:39,  1.91it/s]Validating:   9%|▉         | 7/76 [00:00<00:04, 13.93it/s]Validating:  14%|█▍        | 11/76 [00:00<00:03, 19.34it/s]Validating:  22%|██▏       | 17/76 [00:00<00:02, 26.52it/s]Validating:  30%|███       | 23/76 [00:00<00:01, 34.19it/s]Validating:  37%|███▋      | 28/76 [00:01<00:01, 36.65it/s]Validating:  43%|████▎     | 33/76 [00:01<00:01, 39.34it/s]Validating:  53%|█████▎    | 40/76 [00:01<00:00, 46.32it/s]Validating:  61%|██████    | 46/76 [00:01<00:00, 47.46it/s]Validating:  68%|██████▊   | 52/76 [00:01<00:00, 47.36it/s]Validating:  75%|███████▌  | 57/76 [00:01<00:00, 47.79it/s]Validating:  84%|████████▍ | 64/76 [00:01<00:00, 53.66it/s]Validating:  92%|█████████▏| 70/76 [00:01<00:00, 53.83it/s]Validating: 100%|██████████| 76/76 [00:02<00:00, 37.76it/s]
+Validation result: loss=0.0269, acc=0.99, f1=0.9544
+Validation F1 improved from 0.9543 to 0.9544!
+Saving best model to outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 33/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:28,  2.59it/s]Validating:   9%|▉         | 7/76 [00:00<00:03, 17.97it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 26.68it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 34.58it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 42.20it/s]Validating:  41%|████      | 31/76 [00:00<00:01, 44.42it/s]Validating:  49%|████▊     | 37/76 [00:01<00:00, 46.56it/s]Validating:  57%|█████▋    | 43/76 [00:01<00:00, 48.32it/s]Validating:  66%|██████▌   | 50/76 [00:01<00:00, 50.42it/s]Validating:  75%|███████▌  | 57/76 [00:01<00:00, 53.50it/s]Validating:  83%|████████▎ | 63/76 [00:01<00:00, 52.99it/s]Validating:  91%|█████████ | 69/76 [00:01<00:00, 53.98it/s]Validating:  99%|█████████▊| 75/76 [00:01<00:00, 55.57it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 42.36it/s]
+Validation result: loss=0.0259, acc=0.99, f1=0.9522
+Validation F1 did not improve from 0.9544.
+====================Epoch 34/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:32,  2.30it/s]Validating:   8%|▊         | 6/76 [00:00<00:05, 13.71it/s]Validating:  14%|█▍        | 11/76 [00:00<00:03, 20.59it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 31.12it/s]Validating:  33%|███▎      | 25/76 [00:00<00:01, 39.36it/s]Validating:  39%|███▉      | 30/76 [00:01<00:01, 41.76it/s]Validating:  46%|████▌     | 35/76 [00:01<00:00, 42.98it/s]Validating:  55%|█████▌    | 42/76 [00:01<00:00, 48.54it/s]Validating:  63%|██████▎   | 48/76 [00:01<00:00, 49.57it/s]Validating:  71%|███████   | 54/76 [00:01<00:00, 50.65it/s]Validating:  79%|███████▉  | 60/76 [00:01<00:00, 50.86it/s]Validating:  88%|████████▊ | 67/76 [00:01<00:00, 53.45it/s]Validating:  97%|█████████▋| 74/76 [00:01<00:00, 57.62it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 40.14it/s]
+Validation result: loss=0.0254, acc=0.99, f1=0.9618
+Validation F1 improved from 0.9544 to 0.9618!
+Saving best model to outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 35/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:30,  2.46it/s]Validating:   9%|▉         | 7/76 [00:00<00:03, 17.37it/s]Validating:  14%|█▍        | 11/76 [00:00<00:02, 23.21it/s]Validating:  22%|██▏       | 17/76 [00:00<00:01, 33.23it/s]Validating:  30%|███       | 23/76 [00:00<00:01, 39.57it/s]Validating:  37%|███▋      | 28/76 [00:00<00:01, 41.94it/s]Validating:  45%|████▍     | 34/76 [00:01<00:00, 44.33it/s]Validating:  53%|█████▎    | 40/76 [00:01<00:00, 47.02it/s]Validating:  61%|██████    | 46/76 [00:01<00:00, 48.03it/s]Validating:  68%|██████▊   | 52/76 [00:01<00:00, 50.46it/s]Validating:  76%|███████▋  | 58/76 [00:01<00:00, 52.25it/s]Validating:  84%|████████▍ | 64/76 [00:01<00:00, 54.35it/s]Validating:  93%|█████████▎| 71/76 [00:01<00:00, 56.56it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 41.69it/s]
+Validation result: loss=0.0263, acc=0.99, f1=0.9548
+Validation F1 did not improve from 0.9618.
+====================Epoch 36/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:30,  2.45it/s]Validating:   9%|▉         | 7/76 [00:00<00:04, 16.85it/s]Validating:  14%|█▍        | 11/76 [00:00<00:02, 22.87it/s]Validating:  22%|██▏       | 17/76 [00:00<00:01, 32.68it/s]Validating:  29%|██▉       | 22/76 [00:00<00:01, 37.24it/s]Validating:  36%|███▌      | 27/76 [00:00<00:01, 38.89it/s]Validating:  43%|████▎     | 33/76 [00:01<00:00, 43.10it/s]Validating:  50%|█████     | 38/76 [00:01<00:00, 44.57it/s]Validating:  57%|█████▋    | 43/76 [00:01<00:00, 46.04it/s]Validating:  64%|██████▍   | 49/76 [00:01<00:00, 48.05it/s]Validating:  72%|███████▏  | 55/76 [00:01<00:00, 49.00it/s]Validating:  80%|████████  | 61/76 [00:01<00:00, 48.83it/s]Validating:  88%|████████▊ | 67/76 [00:01<00:00, 51.38it/s]Validating:  96%|█████████▌| 73/76 [00:01<00:00, 53.71it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 39.38it/s]
+Validation result: loss=0.0262, acc=0.99, f1=0.9549
+Validation F1 did not improve from 0.9618.
+====================Epoch 37/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:36,  2.05it/s]Validating:  11%|█         | 8/76 [00:00<00:03, 17.24it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 21.93it/s]Validating:  22%|██▏       | 17/76 [00:00<00:02, 27.07it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 37.66it/s]Validating:  39%|███▉      | 30/76 [00:01<00:01, 42.58it/s]Validating:  47%|████▋     | 36/76 [00:01<00:00, 44.55it/s]Validating:  55%|█████▌    | 42/76 [00:01<00:00, 46.23it/s]Validating:  64%|██████▍   | 49/76 [00:01<00:00, 47.76it/s]Validating:  74%|███████▎  | 56/76 [00:01<00:00, 52.81it/s]Validating:  82%|████████▏ | 62/76 [00:01<00:00, 51.66it/s]Validating:  89%|████████▉ | 68/76 [00:01<00:00, 52.91it/s]Validating:  99%|█████████▊| 75/76 [00:01<00:00, 56.85it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 39.04it/s]
+Validation result: loss=0.0268, acc=0.99, f1=0.9571
+Validation F1 did not improve from 0.9618.
+====================Epoch 38/50====================
+Validating:   0%|          | 0/76 [00:00<?, ?it/s]Validating:   1%|▏         | 1/76 [00:00<00:30,  2.49it/s]Validating:   9%|▉         | 7/76 [00:00<00:04, 16.91it/s]Validating:  16%|█▌        | 12/76 [00:00<00:02, 25.06it/s]Validating:  24%|██▎       | 18/76 [00:00<00:01, 32.40it/s]Validating:  32%|███▏      | 24/76 [00:00<00:01, 39.40it/s]Validating:  38%|███▊      | 29/76 [00:00<00:01, 40.51it/s]Validating:  45%|████▍     | 34/76 [00:01<00:00, 42.66it/s]Validating:  51%|█████▏    | 39/76 [00:01<00:00, 43.93it/s]Validating:  58%|█████▊    | 44/76 [00:01<00:00, 43.97it/s]Validating:  64%|██████▍   | 49/76 [00:01<00:00, 44.97it/s]Validating:  72%|███████▏  | 55/76 [00:01<00:00, 47.65it/s]Validating:  80%|████████  | 61/76 [00:01<00:00, 49.08it/s]Validating:  87%|████████▋ | 66/76 [00:01<00:00, 48.95it/s]Validating:  96%|█████████▌| 73/76 [00:01<00:00, 52.40it/s]Validating: 100%|██████████| 76/76 [00:01<00:00, 39.33it/s]
+Validation result: loss=0.0252, acc=0.99, f1=0.9643
+Validation F1 improved from 0.9618 to 0.9643!
+Saving best model to outputs/pseltae_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 39/50====================

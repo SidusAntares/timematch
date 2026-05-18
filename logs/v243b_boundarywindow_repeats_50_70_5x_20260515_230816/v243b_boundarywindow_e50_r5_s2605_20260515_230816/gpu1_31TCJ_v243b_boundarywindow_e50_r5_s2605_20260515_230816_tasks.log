@@ -1,0 +1,554 @@
+Namespace(data_root='/data/user/DBL/timematch_data', num_blocks=100, source='france/31TCJ/2017', target='france/31TCJ/2017', num_folds=1, val_ratio=0.1, test_ratio=0.2, sample_pixels_val=True, output_dir='outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', experiment_name='pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', num_workers=8, seed=2605, device='cuda', log_step=10, eval=False, overall=False, skip_final_test=False, combine_spring_and_winter=False, closed_set=True, epochs=50, batch_size=128, lr=0.001, weight_decay=0.0001, focal_loss_gamma=1.0, num_pixels=64, seq_length=30, model='pseltae', input_dim=10, with_extra=False, tensorboard_log_dir='runs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', train_on_target=False, source_checkpoint_epochs='', source_checkpoint_dirname='checkpoints', with_shift_aug=False, shift_aug_p=1.0, max_shift_aug=60, source_feature_reshaper='residual_temporal_conv', source_feature_reshaper_strength=0.1, source_feature_reshaper_kernel_size=3, source_feature_reshaper_reg_trade_off=0.05, source_feature_dual_path=True, source_feature_dual_cls_trade_off=1.0, source_feature_dual_relation_trade_off=0.03, source_phase_partition_mode='doy_gap', source_segment_partition_mode='doy_gap', source_phase_count=5, source_segment_count=5, source_phase_gap_threshold=45, source_phase_min_points=3, source_phase_max_points=8, source_phase_max_span=120, source_phase_min_sample_points=2, source_phase_grid_count=5, source_phase_grid_trade_off=0.0, source_phase_grid_kernel='linear', source_phase_grid_bandwidth=0.0, source_phase_grid_min_support=0.2, source_segment_semantic_quantile=0.75, source_segment_semantic_max_samples_per_class=128, source_segment_semantic_curvature_trade_off=0.5, source_segment_semantic_energy_trade_off=0.25, source_segment_semantic_similarity_trade_off=0.25, source_segment_semantic_max_extra_cuts_per_base=2, source_segment_semantic_merge_boundary_trade_off=0.5, source_segment_semantic_aggl_min_points=3, source_segment_semantic_aggl_target_slack=1, source_segment_semantic_aggl_merge_cost_tolerance=1.15, source_segment_semantic_aggl_dynamics_trade_off=0.35, source_structure_loss_version='segment_boundary_window_residual', source_structure_intra_trade_off=1.0, source_structure_amplitude_trade_off=0.0, source_structure_interphase_trade_off=0.0, source_structure_shape_trade_off=0.0, source_structure_trend_trade_off=0.05, source_structure_season_trade_off=0.0, source_structure_segment_inter_trade_off=0.02, source_structure_boundary_window_trade_off=0.2, source_structure_boundary_window_size=2, source_structure_warp_invariant_trade_off=0.35, method='sourcephasecompact')
+Excluded 15690 parcels from closed-set loading because class 'unknown' is not kept.
+Using classes: ['corn', 'horsebeans', 'meadow', 'spring_barley', 'spring_peas', 'sunflowers', 'winter_barley', 'winter_oat', 'winter_peas', 'winter_rapeseed', 'winter_triticale', 'winter_wheat']
+Excluded 43 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 11 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 50 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 15690 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 33 parcels from closed-set loading because class 'winter_rye' is not kept.
+Starting fold 0...
+Excluded 5 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 2 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 6 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 1204 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 5 parcels from closed-set loading because class 'winter_rye' is not kept.
+Excluded 9 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 3 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 11 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 2428 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 4 parcels from closed-set loading because class 'winter_rye' is not kept.
+evaluation dataset: france/31TCJ/2017
+val target data: 6192 (49 batches)
+test taget data: 12376 (1522 batches)
+PseLTae(
+  (spatial_encoder): PixelSetEncoder(
+    (mlp1): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=10, out_features=32, bias=False)
+        (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+      (1): LinearLayer(
+        (linear): Linear(in_features=32, out_features=64, bias=False)
+        (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (mlp2): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=128, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+  )
+  (temporal_encoder): LTAE(
+    (inconv): LinearLayer(
+      (linear): Linear(in_features=128, out_features=256, bias=False)
+      (norm): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (positional_enc): Embedding(565, 256)
+    (attention_heads): MultiHeadAttention(
+      (key): Linear(in_features=256, out_features=128, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+      (softmax): Softmax(dim=-1)
+    )
+    (mlp): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=256, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (dropout): Dropout(p=0.2, inplace=False)
+  )
+  (decoder): Sequential(
+    (0): LinearLayer(
+      (linear): Linear(in_features=128, out_features=64, bias=False)
+      (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (1): LinearLayer(
+      (linear): Linear(in_features=64, out_features=32, bias=False)
+      (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (2): Linear(in_features=32, out_features=12, bias=True)
+  )
+)
+Number of trainable parameters: 129356
+Excluded 26 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 5 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 25 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 8591 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 20 parcels from closed-set loading because class 'winter_rye' is not kept.
+training dataset: france/31TCJ/2017, n=43242, batches=337
+source segment partition: mode=doy_gap, segment_count=8, gap_threshold=45, min_points=3, max_points=8, max_span=120, intervals=[25,85], [95,155], [165,215], [225,250], [255,280], [285,310], [315,335], [340,360]
+====================Epoch 1/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.79it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.91it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 35.34it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 46.34it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 52.26it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 58.70it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 46.12it/s]
+Validation result: loss=0.1525, acc=0.95, f1=0.5981
+Validation F1 improved from 0.0000 to 0.5981!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 2/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.98it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 25.21it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 38.47it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 47.10it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 53.98it/s]Validating:  88%|████████▊ | 43/49 [00:00<00:00, 63.29it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 47.98it/s]
+Validation result: loss=0.1100, acc=0.96, f1=0.6603
+Validation F1 improved from 0.5981 to 0.6603!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 3/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.89it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.64it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 36.32it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 47.38it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 53.31it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 59.51it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 47.44it/s]
+Validation result: loss=0.1100, acc=0.96, f1=0.6894
+Validation F1 improved from 0.6603 to 0.6894!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 4/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.96it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 25.80it/s]Validating:  31%|███       | 15/49 [00:00<00:00, 35.60it/s]Validating:  45%|████▍     | 22/49 [00:00<00:00, 45.67it/s]Validating:  57%|█████▋    | 28/49 [00:00<00:00, 49.37it/s]Validating:  71%|███████▏  | 35/49 [00:00<00:00, 54.42it/s]Validating:  92%|█████████▏| 45/49 [00:00<00:00, 66.28it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 47.82it/s]
+Validation result: loss=0.1093, acc=0.96, f1=0.7241
+Validation F1 improved from 0.6894 to 0.7241!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 5/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.88it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.46it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 35.11it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 45.65it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 52.87it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 59.41it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 46.33it/s]
+Validation result: loss=0.1190, acc=0.95, f1=0.7268
+Validation F1 improved from 0.7241 to 0.7268!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 6/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.80it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 23.32it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 35.14it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 45.25it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 51.59it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 57.21it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 45.82it/s]
+Validation result: loss=0.0909, acc=0.96, f1=0.7697
+Validation F1 improved from 0.7268 to 0.7697!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 7/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.92it/s]Validating:  16%|█▋        | 8/49 [00:00<00:01, 22.62it/s]Validating:  29%|██▊       | 14/49 [00:00<00:01, 33.23it/s]Validating:  41%|████      | 20/49 [00:00<00:00, 40.79it/s]Validating:  55%|█████▌    | 27/49 [00:00<00:00, 48.12it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 54.19it/s]Validating:  88%|████████▊ | 43/49 [00:00<00:00, 62.42it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 46.72it/s]
+Validation result: loss=0.1457, acc=0.95, f1=0.7028
+Validation F1 did not improve from 0.7697.
+====================Epoch 8/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:20,  2.39it/s]Validating:  18%|█▊        | 9/49 [00:00<00:02, 19.92it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 32.92it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 43.89it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 50.19it/s]Validating:  84%|████████▎ | 41/49 [00:01<00:00, 57.02it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 43.75it/s]
+Validation result: loss=0.0873, acc=0.96, f1=0.7677
+Validation F1 did not improve from 0.7697.
+====================Epoch 9/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.73it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 21.15it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 32.37it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 42.38it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 46.52it/s]Validating:  84%|████████▎ | 41/49 [00:01<00:00, 52.22it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 42.15it/s]
+Validation result: loss=0.0875, acc=0.96, f1=0.7708
+Validation F1 improved from 0.7697 to 0.7708!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 10/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.81it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.47it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 36.04it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 47.24it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 53.25it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 60.39it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 47.25it/s]
+Validation result: loss=0.0863, acc=0.97, f1=0.7860
+Validation F1 improved from 0.7708 to 0.7860!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 11/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:18,  2.59it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 21.14it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 34.19it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 45.37it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 51.64it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 57.79it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 45.08it/s]
+Validation result: loss=0.0844, acc=0.96, f1=0.7786
+Validation F1 did not improve from 0.7860.
+====================Epoch 12/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:18,  2.62it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 23.18it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 36.98it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 45.68it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 52.31it/s]Validating:  88%|████████▊ | 43/49 [00:00<00:00, 61.68it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 45.58it/s]
+Validation result: loss=0.1048, acc=0.96, f1=0.7561
+Validation F1 did not improve from 0.7860.
+====================Epoch 13/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.85it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.97it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 36.92it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 47.15it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 52.72it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 59.77it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 46.42it/s]
+Validation result: loss=0.0928, acc=0.96, f1=0.8074
+Validation F1 improved from 0.7860 to 0.8074!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 14/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.75it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.68it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 36.47it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 46.93it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 52.49it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 58.87it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 46.32it/s]
+Validation result: loss=0.0720, acc=0.97, f1=0.7984
+Validation F1 did not improve from 0.8074.
+====================Epoch 15/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.90it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 24.80it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 37.66it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 46.51it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 50.74it/s]Validating:  86%|████████▌ | 42/49 [00:00<00:00, 55.95it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 45.50it/s]
+Validation result: loss=0.0876, acc=0.97, f1=0.8007
+Validation F1 did not improve from 0.8074.
+====================Epoch 16/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:25,  1.91it/s]Validating:  18%|█▊        | 9/49 [00:00<00:02, 17.56it/s]Validating:  35%|███▍      | 17/49 [00:00<00:01, 30.28it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 40.43it/s]Validating:  67%|██████▋   | 33/49 [00:01<00:00, 47.80it/s]Validating:  84%|████████▎ | 41/49 [00:01<00:00, 54.46it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 39.77it/s]
+Validation result: loss=0.1488, acc=0.93, f1=0.7207
+Validation F1 did not improve from 0.8074.
+====================Epoch 17/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.74it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 24.18it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 38.54it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 42.88it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 49.59it/s]Validating:  88%|████████▊ | 43/49 [00:00<00:00, 59.42it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 45.42it/s]
+Validation result: loss=0.0755, acc=0.97, f1=0.8159
+Validation F1 improved from 0.8074 to 0.8159!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 18/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.93it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.66it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 35.64it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 46.16it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 52.85it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 59.20it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 46.73it/s]
+Validation result: loss=0.0862, acc=0.97, f1=0.8243
+Validation F1 improved from 0.8159 to 0.8243!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 19/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.91it/s]Validating:  12%|█▏        | 6/49 [00:00<00:02, 16.57it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 22.63it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 36.83it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 45.91it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 52.56it/s]Validating:  88%|████████▊ | 43/49 [00:01<00:00, 62.50it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 44.40it/s]
+Validation result: loss=0.1500, acc=0.94, f1=0.6881
+Validation F1 did not improve from 0.8243.
+====================Epoch 20/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.68it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 21.43it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 33.20it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 44.31it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 52.79it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 59.43it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 45.14it/s]
+Validation result: loss=0.0783, acc=0.97, f1=0.8143
+Validation F1 did not improve from 0.8243.
+====================Epoch 21/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:15,  3.06it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 23.89it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 37.69it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 46.17it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 53.00it/s]Validating:  88%|████████▊ | 43/49 [00:00<00:00, 61.57it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 47.12it/s]
+Validation result: loss=0.1017, acc=0.96, f1=0.7642
+Validation F1 did not improve from 0.8243.
+====================Epoch 22/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:24,  1.94it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 20.98it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 34.27it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 42.28it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 49.10it/s]Validating:  88%|████████▊ | 43/49 [00:01<00:00, 55.34it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 41.28it/s]
+Validation result: loss=0.0815, acc=0.97, f1=0.8057
+Validation F1 did not improve from 0.8243.
+====================Epoch 23/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.70it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 24.20it/s]Validating:  33%|███▎      | 16/49 [00:00<00:00, 36.83it/s]Validating:  45%|████▍     | 22/49 [00:00<00:00, 41.06it/s]Validating:  57%|█████▋    | 28/49 [00:00<00:00, 45.93it/s]Validating:  71%|███████▏  | 35/49 [00:00<00:00, 51.86it/s]Validating:  88%|████████▊ | 43/49 [00:01<00:00, 58.56it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 44.67it/s]
+Validation result: loss=0.0825, acc=0.97, f1=0.8053
+Validation F1 did not improve from 0.8243.
+====================Epoch 24/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:18,  2.62it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 21.56it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 34.37it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 45.98it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 50.83it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 56.52it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 44.86it/s]
+Validation result: loss=0.0723, acc=0.97, f1=0.8463
+Validation F1 improved from 0.8243 to 0.8463!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 25/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:22,  2.15it/s]Validating:  18%|█▊        | 9/49 [00:00<00:02, 18.59it/s]Validating:  35%|███▍      | 17/49 [00:00<00:01, 31.68it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 43.03it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 48.13it/s]Validating:  84%|████████▎ | 41/49 [00:01<00:00, 54.40it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 41.33it/s]
+Validation result: loss=0.0675, acc=0.98, f1=0.8478
+Validation F1 improved from 0.8463 to 0.8478!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 26/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.84it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 24.87it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 36.27it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 45.61it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 51.67it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 57.31it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 46.52it/s]
+Validation result: loss=0.0847, acc=0.97, f1=0.8142
+Validation F1 did not improve from 0.8478.
+====================Epoch 27/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.67it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.71it/s]Validating:  31%|███       | 15/49 [00:00<00:01, 32.27it/s]Validating:  45%|████▍     | 22/49 [00:00<00:00, 42.03it/s]Validating:  57%|█████▋    | 28/49 [00:00<00:00, 46.17it/s]Validating:  71%|███████▏  | 35/49 [00:00<00:00, 51.50it/s]Validating:  90%|████████▉ | 44/49 [00:01<00:00, 61.57it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 44.65it/s]
+Validation result: loss=0.0820, acc=0.97, f1=0.8044
+Validation F1 did not improve from 0.8478.
+====================Epoch 28/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.79it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.52it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 36.18it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 47.74it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 53.00it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 59.48it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 46.02it/s]
+Validation result: loss=0.0688, acc=0.97, f1=0.8296
+Validation F1 did not improve from 0.8478.
+====================Epoch 29/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.82it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 23.23it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 37.14it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 47.42it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 52.82it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 56.64it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 46.33it/s]
+Validation result: loss=0.1096, acc=0.96, f1=0.7713
+Validation F1 did not improve from 0.8478.
+====================Epoch 30/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.89it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.39it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 33.29it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 44.97it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 51.28it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 58.29it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 45.84it/s]
+Validation result: loss=0.0657, acc=0.98, f1=0.8455
+Validation F1 did not improve from 0.8478.
+====================Epoch 31/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.88it/s]Validating:  16%|█▋        | 8/49 [00:00<00:01, 22.27it/s]Validating:  27%|██▋       | 13/49 [00:00<00:01, 29.48it/s]Validating:  39%|███▉      | 19/49 [00:00<00:00, 38.11it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 45.39it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 53.15it/s]Validating:  86%|████████▌ | 42/49 [00:00<00:00, 59.24it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 44.68it/s]
+Validation result: loss=0.0732, acc=0.97, f1=0.8409
+Validation F1 did not improve from 0.8478.
+====================Epoch 32/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:18,  2.62it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 21.32it/s]Validating:  33%|███▎      | 16/49 [00:00<00:00, 33.83it/s]Validating:  45%|████▍     | 22/49 [00:00<00:00, 38.22it/s]Validating:  59%|█████▉    | 29/49 [00:00<00:00, 46.30it/s]Validating:  71%|███████▏  | 35/49 [00:00<00:00, 49.16it/s]Validating:  88%|████████▊ | 43/49 [00:01<00:00, 57.49it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 42.63it/s]
+Validation result: loss=0.0649, acc=0.98, f1=0.8610
+Validation F1 improved from 0.8478 to 0.8610!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 33/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:19,  2.51it/s]Validating:  18%|█▊        | 9/49 [00:00<00:02, 19.99it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 33.18it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 43.47it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 50.21it/s]Validating:  84%|████████▎ | 41/49 [00:01<00:00, 57.12it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 44.21it/s]
+Validation result: loss=0.0630, acc=0.98, f1=0.8636
+Validation F1 improved from 0.8610 to 0.8636!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 34/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.91it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.45it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 35.87it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 46.71it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 52.82it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 58.76it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 45.68it/s]
+Validation result: loss=0.0646, acc=0.98, f1=0.8575
+Validation F1 did not improve from 0.8636.
+====================Epoch 35/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.95it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 27.07it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 40.20it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 50.74it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 56.01it/s]Validating:  86%|████████▌ | 42/49 [00:00<00:00, 61.23it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 47.68it/s]
+Validation result: loss=0.0625, acc=0.98, f1=0.8637
+Validation F1 improved from 0.8636 to 0.8637!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 36/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.81it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.23it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 35.99it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 46.35it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 49.41it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 56.98it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 45.57it/s]
+Validation result: loss=0.0615, acc=0.98, f1=0.8576
+Validation F1 did not improve from 0.8637.
+====================Epoch 37/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.99it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 24.29it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 37.10it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 45.33it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 52.72it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 59.21it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 47.47it/s]
+Validation result: loss=0.0603, acc=0.98, f1=0.8678
+Validation F1 improved from 0.8637 to 0.8678!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 38/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.82it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 22.27it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 34.18it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 43.48it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 50.53it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 57.55it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 45.05it/s]
+Validation result: loss=0.0619, acc=0.98, f1=0.8709
+Validation F1 improved from 0.8678 to 0.8709!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 39/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.92it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 26.54it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 36.55it/s]Validating:  49%|████▉     | 24/49 [00:00<00:00, 45.68it/s]Validating:  63%|██████▎   | 31/49 [00:00<00:00, 51.33it/s]Validating:  78%|███████▊  | 38/49 [00:00<00:00, 56.10it/s]Validating:  96%|█████████▌| 47/49 [00:01<00:00, 64.87it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 46.37it/s]
+Validation result: loss=0.0622, acc=0.98, f1=0.8674
+Validation F1 did not improve from 0.8709.
+====================Epoch 40/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:15,  3.04it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 25.68it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 38.83it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 46.80it/s]Validating:  65%|██████▌   | 32/49 [00:00<00:00, 52.19it/s]Validating:  80%|███████▉  | 39/49 [00:00<00:00, 56.09it/s]Validating:  98%|█████████▊| 48/49 [00:01<00:00, 64.31it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 46.24it/s]
+Validation result: loss=0.0616, acc=0.98, f1=0.8761
+Validation F1 improved from 0.8709 to 0.8761!
+Saving best model to outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+====================Epoch 41/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:15,  3.03it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 24.18it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 37.31it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 45.60it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 52.01it/s]Validating:  88%|████████▊ | 43/49 [00:01<00:00, 55.57it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 45.11it/s]
+Validation result: loss=0.0617, acc=0.98, f1=0.8657
+Validation F1 did not improve from 0.8761.
+====================Epoch 42/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.93it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 23.66it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 36.35it/s]Validating:  49%|████▉     | 24/49 [00:00<00:00, 45.30it/s]Validating:  63%|██████▎   | 31/49 [00:00<00:00, 51.17it/s]Validating:  78%|███████▊  | 38/49 [00:00<00:00, 55.24it/s]Validating:  92%|█████████▏| 45/49 [00:01<00:00, 58.40it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 44.80it/s]
+Validation result: loss=0.0614, acc=0.98, f1=0.8592
+Validation F1 did not improve from 0.8761.
+====================Epoch 43/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:16,  2.96it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 25.27it/s]Validating:  31%|███       | 15/49 [00:00<00:00, 35.27it/s]Validating:  47%|████▋     | 23/49 [00:00<00:00, 47.42it/s]Validating:  61%|██████    | 30/49 [00:00<00:00, 51.61it/s]Validating:  76%|███████▌  | 37/49 [00:00<00:00, 55.39it/s]Validating:  96%|█████████▌| 47/49 [00:00<00:00, 67.63it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 47.54it/s]
+Validation result: loss=0.0606, acc=0.98, f1=0.8650
+Validation F1 did not improve from 0.8761.
+====================Epoch 44/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:20,  2.33it/s]Validating:  18%|█▊        | 9/49 [00:00<00:02, 19.57it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 32.45it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 43.44it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 48.33it/s]Validating:  84%|████████▎ | 41/49 [00:01<00:00, 53.49it/s]Validating:  98%|█████████▊| 48/49 [00:01<00:00, 56.49it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 39.13it/s]
+Validation result: loss=0.0611, acc=0.98, f1=0.8652
+Validation F1 did not improve from 0.8761.
+====================Epoch 45/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.80it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 23.68it/s]Validating:  29%|██▊       | 14/49 [00:00<00:01, 30.43it/s]Validating:  39%|███▉      | 19/49 [00:00<00:00, 34.66it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 42.14it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 47.10it/s]Validating:  88%|████████▊ | 43/49 [00:01<00:00, 57.50it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 42.56it/s]
+Validation result: loss=0.0613, acc=0.98, f1=0.8552
+Validation F1 did not improve from 0.8761.
+====================Epoch 46/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:18,  2.64it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 21.20it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 34.43it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 45.87it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 52.01it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 58.30it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 44.50it/s]
+Validation result: loss=0.0608, acc=0.98, f1=0.8646
+Validation F1 did not improve from 0.8761.
+====================Epoch 47/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:18,  2.61it/s]Validating:  18%|█▊        | 9/49 [00:00<00:01, 21.05it/s]Validating:  35%|███▍      | 17/49 [00:00<00:00, 34.04it/s]Validating:  51%|█████     | 25/49 [00:00<00:00, 45.06it/s]Validating:  67%|██████▋   | 33/49 [00:00<00:00, 51.07it/s]Validating:  84%|████████▎ | 41/49 [00:00<00:00, 57.96it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 44.52it/s]
+Validation result: loss=0.0616, acc=0.98, f1=0.8728
+Validation F1 did not improve from 0.8761.
+====================Epoch 48/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.72it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 24.53it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 36.79it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 44.54it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 50.58it/s]Validating:  86%|████████▌ | 42/49 [00:00<00:00, 58.10it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 44.95it/s]
+Validation result: loss=0.0617, acc=0.98, f1=0.8676
+Validation F1 did not improve from 0.8761.
+====================Epoch 49/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:17,  2.74it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 23.62it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 37.02it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 44.51it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 51.26it/s]Validating:  88%|████████▊ | 43/49 [00:00<00:00, 60.23it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 45.75it/s]
+Validation result: loss=0.0600, acc=0.98, f1=0.8674
+Validation F1 did not improve from 0.8761.
+====================Epoch 50/50====================
+Validating:   0%|          | 0/49 [00:00<?, ?it/s]Validating:   2%|▏         | 1/49 [00:00<00:15,  3.06it/s]Validating:  20%|██        | 10/49 [00:00<00:01, 25.80it/s]Validating:  37%|███▋      | 18/49 [00:00<00:00, 39.71it/s]Validating:  53%|█████▎    | 26/49 [00:00<00:00, 47.88it/s]Validating:  69%|██████▉   | 34/49 [00:00<00:00, 53.96it/s]Validating:  88%|████████▊ | 43/49 [00:00<00:00, 58.91it/s]Validating: 100%|██████████| 49/49 [00:01<00:00, 47.21it/s]
+Validation result: loss=0.0593, acc=0.98, f1=0.8643
+Validation F1 did not improve from 0.8761.
+Restoring best model weights for testing...
+Testing:   0%|          | 0/1522 [00:00<?, ?it/s]Testing:   0%|          | 1/1522 [00:00<05:58,  4.24it/s]Testing:   1%|          | 12/1522 [00:00<00:34, 43.93it/s]Testing:   2%|▏         | 27/1522 [00:00<00:18, 79.97it/s]Testing:   3%|▎         | 41/1522 [00:00<00:15, 98.31it/s]Testing:   4%|▎         | 55/1522 [00:00<00:13, 109.81it/s]Testing:   4%|▍         | 68/1522 [00:00<00:12, 114.99it/s]Testing:   5%|▌         | 82/1522 [00:00<00:11, 121.39it/s]Testing:   6%|▋         | 97/1522 [00:00<00:11, 127.78it/s]Testing:   7%|▋         | 112/1522 [00:01<00:10, 134.20it/s]Testing:   8%|▊         | 126/1522 [00:01<00:10, 131.67it/s]Testing:   9%|▉         | 140/1522 [00:01<00:10, 129.64it/s]Testing:  10%|█         | 154/1522 [00:01<00:10, 129.64it/s]Testing:  11%|█         | 168/1522 [00:01<00:10, 132.09it/s]Testing:  12%|█▏        | 182/1522 [00:01<00:10, 131.78it/s]Testing:  13%|█▎        | 196/1522 [00:01<00:10, 129.51it/s]Testing:  14%|█▍        | 210/1522 [00:01<00:10, 128.30it/s]Testing:  15%|█▍        | 223/1522 [00:01<00:10, 123.34it/s]Testing:  16%|█▌        | 236/1522 [00:02<00:10, 124.94it/s]Testing:  16%|█▋        | 249/1522 [00:02<00:10, 125.69it/s]Testing:  17%|█▋        | 262/1522 [00:02<00:10, 125.32it/s]Testing:  18%|█▊        | 275/1522 [00:02<00:09, 125.42it/s]Testing:  19%|█▉        | 289/1522 [00:02<00:09, 128.43it/s]Testing:  20%|█▉        | 302/1522 [00:02<00:09, 123.14it/s]Testing:  21%|██        | 315/1522 [00:02<00:09, 124.78it/s]Testing:  22%|██▏       | 329/1522 [00:02<00:09, 127.39it/s]Testing:  22%|██▏       | 342/1522 [00:02<00:09, 124.50it/s]Testing:  23%|██▎       | 356/1522 [00:02<00:09, 127.69it/s]Testing:  24%|██▍       | 370/1522 [00:03<00:08, 130.42it/s]Testing:  25%|██▌       | 384/1522 [00:03<00:08, 130.40it/s]Testing:  26%|██▌       | 399/1522 [00:03<00:08, 132.98it/s]Testing:  27%|██▋       | 413/1522 [00:03<00:08, 130.08it/s]Testing:  28%|██▊       | 430/1522 [00:03<00:07, 139.26it/s]Testing:  29%|██▉       | 444/1522 [00:03<00:07, 137.94it/s]Testing:  30%|███       | 458/1522 [00:03<00:07, 137.51it/s]Testing:  31%|███       | 472/1522 [00:03<00:07, 135.57it/s]Testing:  32%|███▏      | 487/1522 [00:03<00:07, 139.04it/s]Testing:  33%|███▎      | 503/1522 [00:04<00:07, 141.41it/s]Testing:  34%|███▍      | 518/1522 [00:04<00:07, 137.50it/s]Testing:  35%|███▍      | 532/1522 [00:04<00:07, 135.65it/s]Testing:  36%|███▌      | 546/1522 [00:04<00:07, 136.55it/s]Testing:  37%|███▋      | 562/1522 [00:04<00:06, 140.89it/s]Testing:  38%|███▊      | 577/1522 [00:04<00:06, 143.23it/s]Testing:  39%|███▉      | 593/1522 [00:04<00:06, 145.50it/s]Testing:  40%|███▉      | 608/1522 [00:04<00:06, 145.26it/s]Testing:  41%|████      | 624/1522 [00:04<00:06, 148.92it/s]Testing:  42%|████▏     | 640/1522 [00:04<00:05, 151.16it/s]Testing:  43%|████▎     | 656/1522 [00:05<00:05, 151.17it/s]Testing:  44%|████▍     | 672/1522 [00:05<00:05, 147.31it/s]Testing:  45%|████▌     | 687/1522 [00:05<00:05, 146.92it/s]Testing:  46%|████▌     | 702/1522 [00:05<00:05, 144.36it/s]Testing:  47%|████▋     | 717/1522 [00:05<00:05, 144.07it/s]Testing:  48%|████▊     | 734/1522 [00:05<00:05, 151.39it/s]Testing:  49%|████▉     | 750/1522 [00:05<00:05, 151.40it/s]Testing:  50%|█████     | 766/1522 [00:05<00:04, 153.84it/s]Testing:  51%|█████▏    | 783/1522 [00:05<00:04, 157.28it/s]Testing:  52%|█████▏    | 799/1522 [00:06<00:04, 155.92it/s]Testing:  54%|█████▎    | 815/1522 [00:06<00:04, 155.90it/s]Testing:  55%|█████▍    | 832/1522 [00:06<00:04, 159.42it/s]Testing:  56%|█████▌    | 849/1522 [00:06<00:04, 161.95it/s]Testing:  57%|█████▋    | 866/1522 [00:06<00:04, 163.47it/s]Testing:  58%|█████▊    | 884/1522 [00:06<00:03, 167.18it/s]Testing:  59%|█████▉    | 902/1522 [00:06<00:03, 169.73it/s]Testing:  60%|██████    | 919/1522 [00:06<00:03, 165.89it/s]Testing:  61%|██████▏   | 936/1522 [00:06<00:03, 163.36it/s]Testing:  63%|██████▎   | 953/1522 [00:06<00:03, 161.59it/s]Testing:  64%|██████▎   | 970/1522 [00:07<00:03, 158.51it/s]Testing:  65%|██████▍   | 986/1522 [00:07<00:03, 158.78it/s]Testing:  66%|██████▌   | 1002/1522 [00:07<00:03, 157.84it/s]Testing:  67%|██████▋   | 1018/1522 [00:07<00:03, 157.22it/s]Testing:  68%|██████▊   | 1034/1522 [00:07<00:03, 152.40it/s]Testing:  69%|██████▉   | 1050/1522 [00:07<00:03, 148.42it/s]Testing:  70%|██████▉   | 1065/1522 [00:07<00:03, 142.98it/s]Testing:  71%|███████   | 1081/1522 [00:07<00:03, 145.67it/s]Testing:  72%|███████▏  | 1096/1522 [00:07<00:02, 143.42it/s]Testing:  73%|███████▎  | 1111/1522 [00:08<00:02, 140.45it/s]Testing:  74%|███████▍  | 1126/1522 [00:08<00:02, 137.55it/s]Testing:  75%|███████▍  | 1140/1522 [00:08<00:02, 132.25it/s]Testing:  76%|███████▌  | 1155/1522 [00:08<00:02, 136.14it/s]Testing:  77%|███████▋  | 1171/1522 [00:08<00:02, 141.50it/s]Testing:  78%|███████▊  | 1187/1522 [00:08<00:02, 145.54it/s]Testing:  79%|███████▉  | 1203/1522 [00:08<00:02, 148.55it/s]Testing:  80%|████████  | 1219/1522 [00:08<00:02, 151.50it/s]Testing:  81%|████████  | 1235/1522 [00:08<00:01, 151.99it/s]Testing:  82%|████████▏ | 1251/1522 [00:09<00:01, 153.52it/s]Testing:  83%|████████▎ | 1267/1522 [00:09<00:01, 155.12it/s]Testing:  84%|████████▍ | 1283/1522 [00:09<00:01, 155.73it/s]Testing:  85%|████████▌ | 1299/1522 [00:09<00:01, 155.94it/s]Testing:  86%|████████▋ | 1315/1522 [00:09<00:01, 153.94it/s]Testing:  88%|████████▊ | 1333/1522 [00:09<00:01, 161.46it/s]Testing:  89%|████████▊ | 1350/1522 [00:09<00:01, 163.92it/s]Testing:  90%|████████▉ | 1368/1522 [00:09<00:00, 166.07it/s]Testing:  91%|█████████ | 1385/1522 [00:09<00:00, 161.63it/s]Testing:  92%|█████████▏| 1403/1522 [00:09<00:00, 164.45it/s]Testing:  93%|█████████▎| 1421/1522 [00:10<00:00, 167.87it/s]Testing:  94%|█████████▍| 1438/1522 [00:10<00:00, 166.19it/s]Testing:  96%|█████████▌| 1457/1522 [00:10<00:00, 170.63it/s]Testing:  97%|█████████▋| 1475/1522 [00:10<00:00, 170.33it/s]Testing:  98%|█████████▊| 1493/1522 [00:10<00:00, 172.72it/s]Testing:  99%|█████████▉| 1512/1522 [00:10<00:00, 177.66it/s]Testing: 100%|██████████| 1522/1522 [00:10<00:00, 142.82it/s]
+Test result for pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816: accuracy=0.9744, f1=0.8475
+                  precision    recall  f1-score   support
+
+            corn       0.99      1.00      0.99       933
+      horsebeans       0.94      0.86      0.90       145
+          meadow       0.98      0.98      0.98      2359
+   spring_barley       0.55      0.52      0.53        52
+     spring_peas       0.55      0.76      0.64        74
+      sunflowers       0.99      0.99      0.99      2741
+   winter_barley       0.94      0.95      0.94       668
+      winter_oat       0.85      0.65      0.74        52
+     winter_peas       0.82      0.60      0.69       126
+ winter_rapeseed       0.99      0.99      0.99       467
+winter_triticale       0.91      0.69      0.78       144
+    winter_wheat       0.98      0.99      0.99      4615
+
+        accuracy                           0.97     12376
+       macro avg       0.87      0.83      0.85     12376
+    weighted avg       0.97      0.97      0.97     12376
+
+corn [930   0   1   0   0   1   0   0   0   0   0   1]
+horsebeans [  3 124   5   0   1   2   0   0   1   0   0   9]
+meadow [   4    1 2323    0    0   13    5    2    1    2    0    8]
+spring_barley [ 0  0  2 27  0  0 21  0  0  0  0  2]
+spring_peas [ 0  0  3  0 56  1  0  0 14  0  0  0]
+sunflowers [   6    0   13    0    0 2711    1    1    0    1    0    8]
+winter_barley [  1   0   1  14   0   2 636   1   0   0   2  11]
+winter_oat [ 0  2  4  4  0  0  1 34  0  0  4  3]
+winter_peas [ 0  2  2  1 44  0  2  0 75  0  0  0]
+winter_rapeseed [  0   1   0   0   0   0   0   0   0 464   1   1]
+winter_triticale [ 0  0  3  0  0  0  1  0  0  0 99 41]
+winter_wheat [   0    2    3    3    0    9   12    2    1    0    3 4580]
+Overall result across 1 folds:
+|                  | precision   | recall   | f1-score   | support     |
+|:-----------------|:------------|:---------|:-----------|:------------|
+| corn             | 98.5±0.0    | 99.7±0.0 | 99.1±0.0   | 933.0±0.0   |
+| horsebeans       | 93.9±0.0    | 85.5±0.0 | 89.5±0.0   | 145.0±0.0   |
+| meadow           | 98.4±0.0    | 98.5±0.0 | 98.5±0.0   | 2359.0±0.0  |
+| spring_barley    | 55.1±0.0    | 51.9±0.0 | 53.5±0.0   | 52.0±0.0    |
+| spring_peas      | 55.4±0.0    | 75.7±0.0 | 64.0±0.0   | 74.0±0.0    |
+| sunflowers       | 99.0±0.0    | 98.9±0.0 | 98.9±0.0   | 2741.0±0.0  |
+| winter_barley    | 93.7±0.0    | 95.2±0.0 | 94.4±0.0   | 668.0±0.0   |
+| winter_oat       | 85.0±0.0    | 65.4±0.0 | 73.9±0.0   | 52.0±0.0    |
+| winter_peas      | 81.5±0.0    | 59.5±0.0 | 68.8±0.0   | 126.0±0.0   |
+| winter_rapeseed  | 99.4±0.0    | 99.4±0.0 | 99.4±0.0   | 467.0±0.0   |
+| winter_triticale | 90.8±0.0    | 68.8±0.0 | 78.3±0.0   | 144.0±0.0   |
+| winter_wheat     | 98.2±0.0    | 99.2±0.0 | 98.7±0.0   | 4615.0±0.0  |
+|                  |             |          |            |             |
+| accuracy         |             |          |            | 97.4±0.0    |
+| macro avg        | 87.4±0.0    | 83.1±0.0 | 84.7±0.0   | 12376.0±0.0 |
+accuracy: 97.4±0.0
+loss: 0.0±0.0
+macro_f1: 84.7±0.0
+weighted_f1: 97.4±0.0
+kappa: 96.6±0.0
+Namespace(data_root='/data/user/DBL/timematch_data', num_blocks=100, source='france/31TCJ/2017', target='france/30TXT/2017', num_folds=1, val_ratio=0.1, test_ratio=0.2, sample_pixels_val=True, output_dir='outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', experiment_name='pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', num_workers=8, seed=2605, device='cuda', log_step=10, eval=True, overall=False, skip_final_test=False, combine_spring_and_winter=False, closed_set=True, epochs=50, batch_size=128, lr=0.001, weight_decay=0.0001, focal_loss_gamma=1.0, num_pixels=64, seq_length=30, model='pseltae', input_dim=10, with_extra=False, tensorboard_log_dir='runs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', train_on_target=False, source_checkpoint_epochs='', source_checkpoint_dirname='checkpoints', with_shift_aug=False, shift_aug_p=1.0, max_shift_aug=60, source_feature_reshaper='residual_temporal_conv', source_feature_reshaper_strength=0.1, source_feature_reshaper_kernel_size=3, source_feature_reshaper_reg_trade_off=0.05, source_feature_dual_path=True, source_feature_dual_cls_trade_off=1.0, source_feature_dual_relation_trade_off=0.03, source_phase_partition_mode='doy_gap', source_segment_partition_mode='doy_gap', source_phase_count=5, source_segment_count=5, source_phase_gap_threshold=45, source_phase_min_points=3, source_phase_max_points=8, source_phase_max_span=120, source_phase_min_sample_points=2, source_phase_grid_count=5, source_phase_grid_trade_off=0.0, source_phase_grid_kernel='linear', source_phase_grid_bandwidth=0.0, source_phase_grid_min_support=0.2, source_segment_semantic_quantile=0.75, source_segment_semantic_max_samples_per_class=128, source_segment_semantic_curvature_trade_off=0.5, source_segment_semantic_energy_trade_off=0.25, source_segment_semantic_similarity_trade_off=0.25, source_segment_semantic_max_extra_cuts_per_base=2, source_segment_semantic_merge_boundary_trade_off=0.5, source_segment_semantic_aggl_min_points=3, source_segment_semantic_aggl_target_slack=1, source_segment_semantic_aggl_merge_cost_tolerance=1.15, source_segment_semantic_aggl_dynamics_trade_off=0.35, source_structure_loss_version='segment_boundary_window_residual', source_structure_intra_trade_off=1.0, source_structure_amplitude_trade_off=0.0, source_structure_interphase_trade_off=0.0, source_structure_shape_trade_off=0.0, source_structure_trend_trade_off=0.05, source_structure_season_trade_off=0.0, source_structure_segment_inter_trade_off=0.02, source_structure_boundary_window_trade_off=0.2, source_structure_boundary_window_size=2, source_structure_warp_invariant_trade_off=0.35, method=None)
+Excluded 15690 parcels from closed-set loading because class 'unknown' is not kept.
+Using classes: ['corn', 'horsebeans', 'meadow', 'spring_barley', 'spring_peas', 'sunflowers', 'winter_barley', 'winter_oat', 'winter_peas', 'winter_rapeseed', 'winter_triticale', 'winter_wheat']
+Excluded 41 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 10 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 3 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 32 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 9510 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 51 parcels from closed-set loading because class 'winter_rye' is not kept.
+Starting fold 0...
+Excluded 6 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 2 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 2 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 916 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 3 parcels from closed-set loading because class 'winter_rye' is not kept.
+Excluded 10 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 6 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 1804 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 9 parcels from closed-set loading because class 'winter_rye' is not kept.
+evaluation dataset: france/30TXT/2017
+val target data: 9681 (76 batches)
+test taget data: 19390 (1329 batches)
+Restoring best model weights for testing...
+Testing:   0%|          | 0/1329 [00:00<?, ?it/s]Testing:   0%|          | 1/1329 [00:00<10:27,  2.12it/s]Testing:   1%|          | 8/1329 [00:00<01:16, 17.36it/s]Testing:   1%|          | 13/1329 [00:00<00:52, 25.21it/s]Testing:   2%|▏         | 20/1329 [00:00<00:36, 36.10it/s]Testing:   2%|▏         | 26/1329 [00:00<00:32, 40.46it/s]Testing:   2%|▏         | 33/1329 [00:01<00:27, 47.90it/s]Testing:   3%|▎         | 39/1329 [00:01<00:25, 50.93it/s]Testing:   3%|▎         | 45/1329 [00:01<00:25, 50.93it/s]Testing:   4%|▍         | 52/1329 [00:01<00:23, 54.35it/s]Testing:   4%|▍         | 59/1329 [00:01<00:22, 55.84it/s]Testing:   5%|▍         | 66/1329 [00:01<00:21, 57.85it/s]Testing:   5%|▌         | 73/1329 [00:01<00:21, 59.70it/s]Testing:   6%|▌         | 80/1329 [00:01<00:21, 57.69it/s]Testing:   6%|▋         | 86/1329 [00:01<00:22, 55.94it/s]Testing:   7%|▋         | 93/1329 [00:02<00:21, 57.46it/s]Testing:   7%|▋         | 99/1329 [00:02<00:21, 55.97it/s]Testing:   8%|▊         | 106/1329 [00:02<00:20, 59.56it/s]Testing:   9%|▊         | 113/1329 [00:02<00:21, 56.81it/s]Testing:   9%|▉         | 119/1329 [00:02<00:22, 54.16it/s]Testing:   9%|▉         | 125/1329 [00:02<00:24, 49.91it/s]Testing:  10%|▉         | 131/1329 [00:02<00:23, 50.66it/s]Testing:  10%|█         | 138/1329 [00:02<00:21, 54.83it/s]Testing:  11%|█         | 144/1329 [00:02<00:21, 55.94it/s]Testing:  11%|█▏        | 152/1329 [00:03<00:19, 61.63it/s]Testing:  12%|█▏        | 159/1329 [00:03<00:19, 58.92it/s]Testing:  13%|█▎        | 168/1329 [00:03<00:17, 65.16it/s]Testing:  13%|█▎        | 175/1329 [00:03<00:18, 61.99it/s]Testing:  14%|█▎        | 182/1329 [00:03<00:19, 58.98it/s]Testing:  14%|█▍        | 189/1329 [00:03<00:18, 60.80it/s]Testing:  15%|█▍        | 196/1329 [00:03<00:18, 62.55it/s]Testing:  15%|█▌        | 204/1329 [00:03<00:17, 64.54it/s]Testing:  16%|█▌        | 211/1329 [00:04<00:17, 64.54it/s]Testing:  16%|█▋        | 218/1329 [00:04<00:18, 61.13it/s]Testing:  17%|█▋        | 225/1329 [00:04<00:17, 62.13it/s]Testing:  17%|█▋        | 232/1329 [00:04<00:17, 64.21it/s]Testing:  18%|█▊        | 239/1329 [00:04<00:17, 63.54it/s]Testing:  19%|█▊        | 246/1329 [00:04<00:16, 63.94it/s]Testing:  19%|█▉        | 253/1329 [00:04<00:18, 59.37it/s]Testing:  20%|█▉        | 260/1329 [00:04<00:18, 58.99it/s]Testing:  20%|██        | 266/1329 [00:04<00:18, 58.67it/s]Testing:  21%|██        | 273/1329 [00:05<00:17, 60.77it/s]Testing:  21%|██        | 280/1329 [00:05<00:17, 61.41it/s]Testing:  22%|██▏       | 287/1329 [00:05<00:16, 63.61it/s]Testing:  22%|██▏       | 294/1329 [00:05<00:16, 64.64it/s]Testing:  23%|██▎       | 302/1329 [00:05<00:15, 68.04it/s]Testing:  23%|██▎       | 309/1329 [00:05<00:15, 63.95it/s]Testing:  24%|██▍       | 317/1329 [00:05<00:15, 65.67it/s]Testing:  24%|██▍       | 324/1329 [00:05<00:15, 66.62it/s]Testing:  25%|██▌       | 333/1329 [00:05<00:13, 73.13it/s]Testing:  26%|██▌       | 341/1329 [00:06<00:13, 72.62it/s]Testing:  26%|██▋       | 349/1329 [00:06<00:13, 70.06it/s]Testing:  27%|██▋       | 357/1329 [00:06<00:14, 66.16it/s]Testing:  27%|██▋       | 364/1329 [00:06<00:15, 62.51it/s]Testing:  28%|██▊       | 371/1329 [00:06<00:15, 62.71it/s]Testing:  29%|██▊       | 380/1329 [00:06<00:14, 66.08it/s]Testing:  29%|██▉       | 387/1329 [00:06<00:14, 66.33it/s]Testing:  30%|██▉       | 395/1329 [00:06<00:13, 68.98it/s]Testing:  30%|███       | 403/1329 [00:06<00:12, 71.65it/s]Testing:  31%|███       | 411/1329 [00:07<00:12, 70.67it/s]Testing:  32%|███▏      | 419/1329 [00:07<00:12, 73.25it/s]Testing:  32%|███▏      | 427/1329 [00:07<00:12, 74.72it/s]Testing:  33%|███▎      | 436/1329 [00:07<00:11, 78.22it/s]Testing:  33%|███▎      | 444/1329 [00:07<00:11, 77.98it/s]Testing:  34%|███▍      | 452/1329 [00:07<00:11, 76.39it/s]Testing:  35%|███▍      | 460/1329 [00:07<00:11, 75.04it/s]Testing:  35%|███▌      | 469/1329 [00:07<00:11, 76.82it/s]Testing:  36%|███▌      | 477/1329 [00:07<00:11, 76.58it/s]Testing:  36%|███▋      | 485/1329 [00:08<00:11, 76.55it/s]Testing:  37%|███▋      | 494/1329 [00:08<00:10, 78.31it/s]Testing:  38%|███▊      | 503/1329 [00:08<00:10, 77.78it/s]Testing:  39%|███▊      | 512/1329 [00:08<00:10, 78.19it/s]Testing:  39%|███▉      | 520/1329 [00:08<00:11, 69.75it/s]Testing:  40%|███▉      | 529/1329 [00:08<00:10, 73.28it/s]Testing:  40%|████      | 537/1329 [00:08<00:10, 73.26it/s]Testing:  41%|████      | 545/1329 [00:08<00:10, 73.41it/s]Testing:  42%|████▏     | 553/1329 [00:08<00:10, 74.03it/s]Testing:  42%|████▏     | 562/1329 [00:09<00:10, 75.81it/s]Testing:  43%|████▎     | 570/1329 [00:09<00:09, 76.91it/s]Testing:  44%|████▎     | 579/1329 [00:09<00:09, 78.72it/s]Testing:  44%|████▍     | 588/1329 [00:09<00:09, 81.81it/s]Testing:  45%|████▍     | 597/1329 [00:09<00:08, 81.49it/s]Testing:  46%|████▌     | 606/1329 [00:09<00:08, 81.57it/s]Testing:  46%|████▋     | 616/1329 [00:09<00:08, 85.00it/s]Testing:  47%|████▋     | 625/1329 [00:09<00:08, 85.99it/s]Testing:  48%|████▊     | 634/1329 [00:09<00:08, 84.79it/s]Testing:  48%|████▊     | 644/1329 [00:10<00:07, 87.25it/s]Testing:  49%|████▉     | 653/1329 [00:10<00:07, 87.12it/s]Testing:  50%|████▉     | 663/1329 [00:10<00:07, 89.70it/s]Testing:  51%|█████     | 672/1329 [00:10<00:07, 87.29it/s]Testing:  51%|█████▏    | 683/1329 [00:10<00:07, 90.94it/s]Testing:  52%|█████▏    | 693/1329 [00:10<00:07, 90.64it/s]Testing:  53%|█████▎    | 703/1329 [00:10<00:06, 92.45it/s]Testing:  54%|█████▎    | 713/1329 [00:10<00:06, 94.34it/s]Testing:  54%|█████▍    | 723/1329 [00:10<00:06, 91.62it/s]Testing:  55%|█████▌    | 733/1329 [00:10<00:06, 92.40it/s]Testing:  56%|█████▌    | 743/1329 [00:11<00:06, 93.59it/s]Testing:  57%|█████▋    | 754/1329 [00:11<00:06, 93.87it/s]Testing:  58%|█████▊    | 767/1329 [00:11<00:05, 102.98it/s]Testing:  59%|█████▊    | 778/1329 [00:11<00:05, 98.32it/s] Testing:  59%|█████▉    | 788/1329 [00:11<00:05, 94.28it/s]Testing:  60%|██████    | 799/1329 [00:11<00:05, 97.45it/s]Testing:  61%|██████    | 813/1329 [00:11<00:04, 106.94it/s]Testing:  62%|██████▏   | 824/1329 [00:11<00:04, 103.11it/s]Testing:  63%|██████▎   | 835/1329 [00:12<00:05, 96.60it/s] Testing:  64%|██████▍   | 848/1329 [00:12<00:04, 103.53it/s]Testing:  65%|██████▍   | 861/1329 [00:12<00:04, 107.76it/s]Testing:  66%|██████▌   | 873/1329 [00:12<00:04, 110.89it/s]Testing:  67%|██████▋   | 885/1329 [00:12<00:03, 112.32it/s]Testing:  68%|██████▊   | 899/1329 [00:12<00:03, 118.02it/s]Testing:  69%|██████▊   | 911/1329 [00:12<00:03, 116.85it/s]Testing:  69%|██████▉   | 923/1329 [00:12<00:03, 117.14it/s]Testing:  70%|███████   | 935/1329 [00:12<00:03, 113.18it/s]Testing:  71%|███████▏  | 947/1329 [00:12<00:03, 113.34it/s]Testing:  72%|███████▏  | 960/1329 [00:13<00:03, 117.83it/s]Testing:  73%|███████▎  | 974/1329 [00:13<00:02, 122.12it/s]Testing:  74%|███████▍  | 989/1329 [00:13<00:02, 129.05it/s]Testing:  76%|███████▌  | 1004/1329 [00:13<00:02, 133.20it/s]Testing:  77%|███████▋  | 1018/1329 [00:13<00:02, 132.28it/s]Testing:  78%|███████▊  | 1033/1329 [00:13<00:02, 135.24it/s]Testing:  79%|███████▉  | 1047/1329 [00:13<00:02, 131.89it/s]Testing:  80%|███████▉  | 1062/1329 [00:13<00:01, 135.80it/s]Testing:  81%|████████  | 1076/1329 [00:13<00:01, 136.40it/s]Testing:  82%|████████▏ | 1091/1329 [00:14<00:01, 139.71it/s]Testing:  83%|████████▎ | 1105/1329 [00:14<00:01, 138.71it/s]Testing:  84%|████████▍ | 1120/1329 [00:14<00:01, 141.15it/s]Testing:  86%|████████▌ | 1137/1329 [00:14<00:01, 146.32it/s]Testing:  87%|████████▋ | 1153/1329 [00:14<00:01, 148.57it/s]Testing:  88%|████████▊ | 1168/1329 [00:14<00:01, 147.38it/s]Testing:  89%|████████▉ | 1184/1329 [00:14<00:00, 147.50it/s]Testing:  90%|█████████ | 1201/1329 [00:14<00:00, 153.34it/s]Testing:  92%|█████████▏| 1217/1329 [00:14<00:00, 153.91it/s]Testing:  93%|█████████▎| 1233/1329 [00:14<00:00, 154.15it/s]Testing:  94%|█████████▍| 1249/1329 [00:15<00:00, 154.62it/s]Testing:  95%|█████████▌| 1265/1329 [00:15<00:00, 150.72it/s]Testing:  96%|█████████▋| 1281/1329 [00:15<00:00, 149.62it/s]Testing:  98%|█████████▊| 1297/1329 [00:15<00:00, 150.88it/s]Testing:  99%|█████████▉| 1313/1329 [00:15<00:00, 151.99it/s]Testing: 100%|██████████| 1329/1329 [00:15<00:00, 85.07it/s] 
+Test result for pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816: accuracy=0.9543, f1=0.7047
+                  precision    recall  f1-score   support
+
+            corn       0.99      0.97      0.98      3348
+      horsebeans       0.89      0.71      0.79        79
+          meadow       0.98      0.99      0.99      9672
+   spring_barley       0.91      0.15      0.26        65
+     spring_peas       0.83      0.17      0.28        59
+      sunflowers       0.94      0.93      0.94       252
+   winter_barley       0.77      0.93      0.84       741
+      winter_oat       0.77      0.65      0.71        78
+     winter_peas       0.22      0.47      0.30        17
+ winter_rapeseed       0.96      0.99      0.97       720
+winter_triticale       0.78      0.32      0.46       506
+    winter_wheat       0.93      0.96      0.95      3853
+
+        accuracy                           0.95     19390
+       macro avg       0.83      0.69      0.70     19390
+    weighted avg       0.95      0.95      0.95     19390
+
+corn [3231    0   98    0    0    5    3    3    0    0    1    7]
+horsebeans [ 1 56  5  0  0  0  0  0  0 11  2  4]
+meadow [  20    2 9621    0    0    3   14    4    0    2    3    3]
+spring_barley [ 4  1 15 10  2  1 21  3  2  1  2  3]
+spring_peas [ 0  1  6  1 10  5  0  0 26  8  0  2]
+sunflowers [  6   0  11   0   0 234   0   0   0   0   0   1]
+winter_barley [  0   0  33   0   0   0 690   3   1   1   5   8]
+winter_oat [ 1  0  3  0  0  0  7 51  0  0  5 11]
+winter_peas [0 2 0 0 0 0 0 0 8 6 1 0]
+winter_rapeseed [  1   0   0   0   0   0   1   0   0 716   0   2]
+winter_triticale [  2   1  17   0   0   0  80   0   0   0 164 242]
+winter_wheat [   3    0   20    0    0    0   84    2    0    4   28 3712]
+Overall result across 1 folds:
+|                  | precision   | recall   | f1-score   | support     |
+|:-----------------|:------------|:---------|:-----------|:------------|
+| corn             | 98.8±0.0    | 96.5±0.0 | 97.7±0.0   | 3348.0±0.0  |
+| horsebeans       | 88.9±0.0    | 70.9±0.0 | 78.9±0.0   | 79.0±0.0    |
+| meadow           | 97.9±0.0    | 99.5±0.0 | 98.7±0.0   | 9672.0±0.0  |
+| spring_barley    | 90.9±0.0    | 15.4±0.0 | 26.3±0.0   | 65.0±0.0    |
+| spring_peas      | 83.3±0.0    | 16.9±0.0 | 28.2±0.0   | 59.0±0.0    |
+| sunflowers       | 94.4±0.0    | 92.9±0.0 | 93.6±0.0   | 252.0±0.0   |
+| winter_barley    | 76.7±0.0    | 93.1±0.0 | 84.1±0.0   | 741.0±0.0   |
+| winter_oat       | 77.3±0.0    | 65.4±0.0 | 70.8±0.0   | 78.0±0.0    |
+| winter_peas      | 21.6±0.0    | 47.1±0.0 | 29.6±0.0   | 17.0±0.0    |
+| winter_rapeseed  | 95.6±0.0    | 99.4±0.0 | 97.5±0.0   | 720.0±0.0   |
+| winter_triticale | 77.7±0.0    | 32.4±0.0 | 45.7±0.0   | 506.0±0.0   |
+| winter_wheat     | 92.9±0.0    | 96.3±0.0 | 94.6±0.0   | 3853.0±0.0  |
+|                  |             |          |            |             |
+| accuracy         |             |          |            | 95.4±0.0    |
+| macro avg        | 83.0±0.0    | 68.8±0.0 | 70.5±0.0   | 19390.0±0.0 |
+accuracy: 95.4±0.0
+loss: 0.0±0.0
+macro_f1: 70.5±0.0
+weighted_f1: 94.9±0.0
+kappa: 93.2±0.0
+Namespace(data_root='/data/user/DBL/timematch_data', num_blocks=100, source='france/31TCJ/2017', target='france/30TXT/2017', num_folds=1, val_ratio=0.1, test_ratio=0.2, sample_pixels_val=True, output_dir='outputs/timematch_31TCJ_to_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', experiment_name='timematch_31TCJ_to_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', num_workers=8, seed=2605, device='cuda', log_step=10, eval=False, overall=False, skip_final_test=False, combine_spring_and_winter=False, closed_set=True, epochs=20, batch_size=128, lr=0.0001, weight_decay=0.0001, focal_loss_gamma=1.0, num_pixels=64, seq_length=30, model='pseltae', input_dim=10, with_extra=False, tensorboard_log_dir='runs/timematch_31TCJ_to_30TXT_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', train_on_target=False, source_checkpoint_epochs='', source_checkpoint_dirname='checkpoints', with_shift_aug=False, shift_aug_p=1.0, max_shift_aug=60, source_feature_reshaper='residual_temporal_conv', source_feature_reshaper_strength=0.1, source_feature_reshaper_kernel_size=3, source_feature_reshaper_reg_trade_off=0.05, source_feature_dual_path=True, source_feature_dual_cls_trade_off=1.0, source_feature_dual_relation_trade_off=0.03, source_phase_partition_mode='doy_gap', source_segment_partition_mode='doy_gap', source_phase_count=5, source_segment_count=5, source_phase_gap_threshold=45, source_phase_min_points=3, source_phase_max_points=8, source_phase_max_span=120, source_phase_min_sample_points=2, source_phase_grid_count=5, source_phase_grid_trade_off=0.0, source_phase_grid_kernel='linear', source_phase_grid_bandwidth=0.0, source_phase_grid_min_support=0.2, source_segment_semantic_quantile=0.75, source_segment_semantic_max_samples_per_class=128, source_segment_semantic_curvature_trade_off=0.5, source_segment_semantic_energy_trade_off=0.25, source_segment_semantic_similarity_trade_off=0.25, source_segment_semantic_max_extra_cuts_per_base=2, source_segment_semantic_merge_boundary_trade_off=0.5, source_segment_semantic_aggl_min_points=3, source_segment_semantic_aggl_target_slack=1, source_segment_semantic_aggl_merge_cost_tolerance=1.15, source_segment_semantic_aggl_dynamics_trade_off=0.35, source_structure_loss_version='segment_boundary_window_residual', source_structure_intra_trade_off=1.0, source_structure_amplitude_trade_off=0.0, source_structure_interphase_trade_off=0.0, source_structure_shape_trade_off=0.0, source_structure_trend_trade_off=0.05, source_structure_season_trade_off=0.0, source_structure_segment_inter_trade_off=0.02, source_structure_boundary_window_trade_off=0.2, source_structure_boundary_window_size=2, source_structure_warp_invariant_trade_off=0.35, method='timematch', weights='outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816', weights_checkpoint='model.pt', pseudo_threshold=0.9, ema_decay=0.9999, trade_off=2.0, estimate_shift=True, steps_per_epoch=500, balance_source=True, use_focal_loss=True, shift_source=True, sample_size=100, max_temporal_shift=60, domain_specific_bn=True, shift_estimator='AM', run_validation=True, disable_validation_in_timematch=False, output_student=True, selection_metrics_out=None, selection_score_coverage_weight=0.25, selection_score_confidence_weight=0.15, selection_score_agreement_weight=0.15, selection_score_entropy_weight=0.1, selection_score_class_balance_weight=0.45, selection_score_source_prior_weight=0.25, selection_score_shift_stability_weight=0.2, selection_metric_batches=200, selection_score_mode='temporal_perturbation', selection_time_mask_p=0.15, selection_temporal_jitter=3, selection_value_noise_std=0.03, selection_perturbation_weight=1.0, selection_collapse_penalty_weight=0.35, selection_trajectory_alpha=0.3, selection_late_gain_threshold=0.2, selection_late_reject_threshold=0.8, selection_margin_tiebreak=0.01, selection_blend_robust_weight=0.7, selection_monotonic_warp_weight=0.55)
+Excluded 15690 parcels from closed-set loading because class 'unknown' is not kept.
+Using classes: ['corn', 'horsebeans', 'meadow', 'spring_barley', 'spring_peas', 'sunflowers', 'winter_barley', 'winter_oat', 'winter_peas', 'winter_rapeseed', 'winter_triticale', 'winter_wheat']
+Excluded 41 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 10 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 3 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 32 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 9510 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 51 parcels from closed-set loading because class 'winter_rye' is not kept.
+Starting fold 0...
+Excluded 6 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 2 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 2 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 916 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 3 parcels from closed-set loading because class 'winter_rye' is not kept.
+Excluded 10 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 6 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 1804 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 9 parcels from closed-set loading because class 'winter_rye' is not kept.
+evaluation dataset: france/30TXT/2017
+val target data: 9681 (76 batches)
+test taget data: 19390 (1329 batches)
+PseLTae(
+  (spatial_encoder): PixelSetEncoder(
+    (mlp1): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=10, out_features=32, bias=False)
+        (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+      (1): LinearLayer(
+        (linear): Linear(in_features=32, out_features=64, bias=False)
+        (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (mlp2): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=128, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+  )
+  (temporal_encoder): LTAE(
+    (inconv): LinearLayer(
+      (linear): Linear(in_features=128, out_features=256, bias=False)
+      (norm): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (positional_enc): Embedding(565, 256)
+    (attention_heads): MultiHeadAttention(
+      (key): Linear(in_features=256, out_features=128, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+      (softmax): Softmax(dim=-1)
+    )
+    (mlp): Sequential(
+      (0): LinearLayer(
+        (linear): Linear(in_features=256, out_features=128, bias=False)
+        (norm): BatchNorm1d(128, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        (activation): ReLU()
+      )
+    )
+    (dropout): Dropout(p=0.2, inplace=False)
+  )
+  (decoder): Sequential(
+    (0): LinearLayer(
+      (linear): Linear(in_features=128, out_features=64, bias=False)
+      (norm): BatchNorm1d(64, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (1): LinearLayer(
+      (linear): Linear(in_features=64, out_features=32, bias=False)
+      (norm): BatchNorm1d(32, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+      (activation): ReLU()
+    )
+    (2): Linear(in_features=32, out_features=12, bias=True)
+  )
+)
+Number of trainable parameters: 129356
+Excluded 26 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 10 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 28 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 8623 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 21 parcels from closed-set loading because class 'winter_rye' is not kept.
+using balanced loader for source
+Excluded 23 parcels from closed-set loading because class 'spring_oat' is not kept.
+Excluded 6 parcels from closed-set loading because class 'spring_rapeseed' is not kept.
+Excluded 1 parcels from closed-set loading because class 'spring_rye' is not kept.
+Excluded 2 parcels from closed-set loading because class 'spring_triticale' is not kept.
+Excluded 19 parcels from closed-set loading because class 'spring_wheat' is not kept.
+Excluded 6308 parcels from closed-set loading because class 'unknown' is not kept.
+Excluded 38 parcels from closed-set loading because class 'winter_rye' is not kept.
+size of source dataset: 43298 (338 batches)
+size of target dataset: 67879 (530 batches)
+Loading source weights from outputs/pseltae_31TCJ_closedset_noshift_sourcephasecompact_p5_v243b_boundarywindow_s010_rel003_e50_r5_s2605_20260515_230816/fold_0/model.pt
+source segment partition: mode=doy_gap, segment_count=8, gap_threshold=45, min_points=3, max_points=8, max_span=120, intervals=[25,85], [95,155], [165,215], [225,250], [255,280], [285,310], [315,335], [340,360]
+Estimating shift between [-60, 60]:   0%|          | 0/100 [00:00<?, ?it/s]Estimating shift between [-60, 60]:   1%|          | 1/100 [00:00<00:54,  1.82it/s]Estimating shift between [-60, 60]:   2%|▏         | 2/100 [00:00<00:28,  3.46it/s]Estimating shift between [-60, 60]:   3%|▎         | 3/100 [00:00<00:19,  4.91it/s]Estimating shift between [-60, 60]:   4%|▍         | 4/100 [00:00<00:15,  6.09it/s]Estimating shift between [-60, 60]:   6%|▌         | 6/100 [00:01<00:12,  7.75it/s]Estimating shift between [-60, 60]:   8%|▊         | 8/100 [00:01<00:10,  8.67it/s]Estimating shift between [-60, 60]:   9%|▉         | 9/100 [00:01<00:10,  8.64it/s]Estimating shift between [-60, 60]:  11%|█         | 11/100 [00:01<00:09,  9.15it/s]Estimating shift between [-60, 60]:  13%|█▎        | 13/100 [00:01<00:09,  9.56it/s]Estimating shift between [-60, 60]:  15%|█▌        | 15/100 [00:01<00:09,  9.15it/s]Estimating shift between [-60, 60]:  17%|█▋        | 17/100 [00:02<00:08,  9.49it/s]Estimating shift between [-60, 60]:  18%|█▊        | 18/100 [00:02<00:08,  9.58it/s]Estimating shift between [-60, 60]:  19%|█▉        | 19/100 [00:02<00:08,  9.66it/s]Estimating shift between [-60, 60]:  20%|██        | 20/100 [00:02<00:08,  9.73it/s]Estimating shift between [-60, 60]:  21%|██        | 21/100 [00:02<00:08,  9.77it/s]Estimating shift between [-60, 60]:  22%|██▏       | 22/100 [00:02<00:07,  9.82it/s]Estimating shift between [-60, 60]:  24%|██▍       | 24/100 [00:02<00:07,  9.88it/s]Estimating shift between [-60, 60]:  26%|██▌       | 26/100 [00:03<00:07,  9.90it/s]Estimating shift between [-60, 60]:  27%|██▋       | 27/100 [00:03<00:07,  9.89it/s]Estimating shift between [-60, 60]:  28%|██▊       | 28/100 [00:03<00:07,  9.89it/s]Estimating shift between [-60, 60]:  30%|███       | 30/100 [00:03<00:07,  9.92it/s]Estimating shift between [-60, 60]:  31%|███       | 31/100 [00:03<00:06,  9.89it/s]Estimating shift between [-60, 60]:  32%|███▏      | 32/100 [00:03<00:07,  9.63it/s]Estimating shift between [-60, 60]:  33%|███▎      | 33/100 [00:03<00:06,  9.67it/s]Estimating shift between [-60, 60]:  34%|███▍      | 34/100 [00:03<00:06,  9.66it/s]Estimating shift between [-60, 60]:  35%|███▌      | 35/100 [00:04<00:06,  9.66it/s]Estimating shift between [-60, 60]:  36%|███▌      | 36/100 [00:04<00:06,  9.68it/s]Estimating shift between [-60, 60]:  37%|███▋      | 37/100 [00:04<00:06,  9.72it/s]Estimating shift between [-60, 60]:  38%|███▊      | 38/100 [00:04<00:06,  9.69it/s]Estimating shift between [-60, 60]:  39%|███▉      | 39/100 [00:04<00:06,  9.72it/s]Estimating shift between [-60, 60]:  40%|████      | 40/100 [00:04<00:06,  8.93it/s]Estimating shift between [-60, 60]:  41%|████      | 41/100 [00:04<00:06,  8.98it/s]Estimating shift between [-60, 60]:  42%|████▏     | 42/100 [00:04<00:06,  9.21it/s]Estimating shift between [-60, 60]:  43%|████▎     | 43/100 [00:04<00:06,  9.36it/s]Estimating shift between [-60, 60]:  44%|████▍     | 44/100 [00:04<00:05,  9.47it/s]Estimating shift between [-60, 60]:  45%|████▌     | 45/100 [00:05<00:05,  9.59it/s]Estimating shift between [-60, 60]:  46%|████▌     | 46/100 [00:05<00:05,  9.70it/s]Estimating shift between [-60, 60]:  47%|████▋     | 47/100 [00:05<00:05,  9.69it/s]Estimating shift between [-60, 60]:  48%|████▊     | 48/100 [00:05<00:05,  9.45it/s]Estimating shift between [-60, 60]:  49%|████▉     | 49/100 [00:05<00:05,  9.38it/s]Estimating shift between [-60, 60]:  50%|█████     | 50/100 [00:05<00:05,  9.48it/s]Estimating shift between [-60, 60]:  51%|█████     | 51/100 [00:05<00:05,  9.48it/s]Estimating shift between [-60, 60]:  52%|█████▏    | 52/100 [00:05<00:04,  9.60it/s]Estimating shift between [-60, 60]:  53%|█████▎    | 53/100 [00:05<00:04,  9.67it/s]Estimating shift between [-60, 60]:  54%|█████▍    | 54/100 [00:06<00:04,  9.64it/s]Estimating shift between [-60, 60]:  56%|█████▌    | 56/100 [00:06<00:04,  9.73it/s]Estimating shift between [-60, 60]:  57%|█████▋    | 57/100 [00:06<00:04,  9.39it/s]Estimating shift between [-60, 60]:  58%|█████▊    | 58/100 [00:06<00:04,  9.01it/s]Estimating shift between [-60, 60]:  59%|█████▉    | 59/100 [00:06<00:04,  8.74it/s]Estimating shift between [-60, 60]:  60%|██████    | 60/100 [00:06<00:04,  8.59it/s]Estimating shift between [-60, 60]:  61%|██████    | 61/100 [00:06<00:04,  8.50it/s]Estimating shift between [-60, 60]:  62%|██████▏   | 62/100 [00:06<00:04,  8.40it/s]Estimating shift between [-60, 60]:  63%|██████▎   | 63/100 [00:07<00:04,  8.34it/s]Estimating shift between [-60, 60]:  64%|██████▍   | 64/100 [00:07<00:04,  8.34it/s]Estimating shift between [-60, 60]:  65%|██████▌   | 65/100 [00:07<00:04,  8.28it/s]Estimating shift between [-60, 60]:  66%|██████▌   | 66/100 [00:07<00:04,  8.21it/s]Estimating shift between [-60, 60]:  67%|██████▋   | 67/100 [00:07<00:04,  8.07it/s]Estimating shift between [-60, 60]:  68%|██████▊   | 68/100 [00:07<00:03,  8.12it/s]Estimating shift between [-60, 60]:  69%|██████▉   | 69/100 [00:07<00:03,  8.14it/s]Estimating shift between [-60, 60]:  70%|███████   | 70/100 [00:07<00:03,  8.19it/s]Estimating shift between [-60, 60]:  71%|███████   | 71/100 [00:08<00:03,  8.17it/s]Estimating shift between [-60, 60]:  72%|███████▏  | 72/100 [00:08<00:03,  8.08it/s]Estimating shift between [-60, 60]:  73%|███████▎  | 73/100 [00:08<00:03,  8.46it/s]Estimating shift between [-60, 60]:  74%|███████▍  | 74/100 [00:08<00:03,  8.48it/s]Estimating shift between [-60, 60]:  75%|███████▌  | 75/100 [00:08<00:02,  8.85it/s]Estimating shift between [-60, 60]:  76%|███████▌  | 76/100 [00:08<00:02,  9.15it/s]Estimating shift between [-60, 60]:  78%|███████▊  | 78/100 [00:08<00:02,  9.62it/s]Estimating shift between [-60, 60]:  80%|████████  | 80/100 [00:09<00:02,  9.82it/s]Estimating shift between [-60, 60]:  82%|████████▏ | 82/100 [00:09<00:01,  9.89it/s]Estimating shift between [-60, 60]:  84%|████████▍ | 84/100 [00:09<00:01,  9.88it/s]Estimating shift between [-60, 60]:  85%|████████▌ | 85/100 [00:09<00:01,  9.80it/s]Estimating shift between [-60, 60]:  86%|████████▌ | 86/100 [00:09<00:01,  9.13it/s]Estimating shift between [-60, 60]:  87%|████████▋ | 87/100 [00:09<00:01,  9.01it/s]Estimating shift between [-60, 60]:  88%|████████▊ | 88/100 [00:09<00:01,  9.06it/s]Estimating shift between [-60, 60]:  89%|████████▉ | 89/100 [00:09<00:01,  9.16it/s]Estimating shift between [-60, 60]:  90%|█████████ | 90/100 [00:10<00:01,  9.10it/s]Estimating shift between [-60, 60]:  91%|█████████ | 91/100 [00:10<00:00,  9.09it/s]Estimating shift between [-60, 60]:  92%|█████████▏| 92/100 [00:10<00:00,  9.30it/s]Estimating shift between [-60, 60]:  93%|█████████▎| 93/100 [00:10<00:00,  9.21it/s]Estimating shift between [-60, 60]:  94%|█████████▍| 94/100 [00:10<00:00,  9.32it/s]Estimating shift between [-60, 60]:  95%|█████████▌| 95/100 [00:10<00:00,  9.42it/s]Estimating shift between [-60, 60]:  96%|█████████▌| 96/100 [00:10<00:00,  9.43it/s]Estimating shift between [-60, 60]:  97%|█████████▋| 97/100 [00:10<00:00,  9.56it/s]Estimating shift between [-60, 60]:  98%|█████████▊| 98/100 [00:10<00:00,  9.65it/s]Estimating shift between [-60, 60]:  99%|█████████▉| 99/100 [00:11<00:00,  9.73it/s]Estimating shift between [-60, 60]: 100%|██████████| 100/100 [00:11<00:00,  9.60it/s]Estimating shift between [-60, 60]: 100%|██████████| 100/100 [00:11<00:00,  8.97it/s]
+Most accurate shift 8 with 0.956
+Best Inception Score shift -11 with accuracy 0.947
+computing pseudo labels:   0%|          | 0/531 [00:00<?, ?it/s]computing pseudo labels:   0%|          | 1/531 [00:00<04:01,  2.20it/s]computing pseudo labels:   2%|▏         | 8/531 [00:00<00:29, 17.89it/s]computing pseudo labels:   3%|▎         | 14/531 [00:00<00:18, 27.65it/s]computing pseudo labels:   4%|▎         | 19/531 [00:00<00:15, 33.27it/s]computing pseudo labels:   5%|▍         | 25/531 [00:00<00:13, 36.19it/s]computing pseudo labels:   6%|▌         | 33/531 [00:01<00:11, 43.26it/s]computing pseudo labels:   8%|▊         | 40/531 [00:01<00:10, 48.60it/s]computing pseudo labels:   9%|▊         | 46/531 [00:01<00:09, 51.18it/s]computing pseudo labels:  10%|▉         | 52/531 [00:01<00:09, 52.59it/s]computing pseudo labels:  11%|█         | 58/531 [00:01<00:08, 53.08it/s]computing pseudo labels:  12%|█▏        | 65/531 [00:01<00:08, 53.07it/s]computing pseudo labels:  14%|█▎        | 72/531 [00:01<00:08, 55.44it/s]computing pseudo labels:  15%|█▍        | 78/531 [00:01<00:08, 55.86it/s]computing pseudo labels:  16%|█▌        | 84/531 [00:01<00:08, 52.77it/s]computing pseudo labels:  17%|█▋        | 90/531 [00:02<00:08, 52.70it/s]computing pseudo labels:  18%|█▊        | 97/531 [00:02<00:07, 54.70it/s]computing pseudo labels:  20%|█▉        | 104/531 [00:02<00:07, 57.69it/s]computing pseudo labels:  21%|██        | 111/531 [00:02<00:07, 57.79it/s]computing pseudo labels:  22%|██▏       | 118/531 [00:02<00:06, 59.80it/s]computing pseudo labels:  24%|██▎       | 125/531 [00:02<00:06, 59.25it/s]computing pseudo labels:  25%|██▍       | 131/531 [00:02<00:06, 58.39it/s]computing pseudo labels:  26%|██▌       | 137/531 [00:02<00:06, 56.52it/s]computing pseudo labels:  27%|██▋       | 143/531 [00:02<00:06, 57.19it/s]computing pseudo labels:  28%|██▊       | 149/531 [00:03<00:06, 57.79it/s]computing pseudo labels:  29%|██▉       | 155/531 [00:03<00:06, 58.02it/s]computing pseudo labels:  30%|███       | 161/531 [00:03<00:06, 58.11it/s]computing pseudo labels:  31%|███▏      | 167/531 [00:03<00:06, 56.99it/s]computing pseudo labels:  33%|███▎      | 175/531 [00:03<00:06, 56.77it/s]computing pseudo labels:  34%|███▍      | 183/531 [00:03<00:06, 57.37it/s]computing pseudo labels:  36%|███▌      | 191/531 [00:03<00:05, 57.39it/s]computing pseudo labels:  37%|███▋      | 198/531 [00:03<00:05, 59.15it/s]computing pseudo labels:  38%|███▊      | 204/531 [00:04<00:05, 57.21it/s]computing pseudo labels:  40%|███▉      | 210/531 [00:04<00:05, 55.30it/s]computing pseudo labels:  41%|████      | 216/531 [00:04<00:05, 55.35it/s]computing pseudo labels:  42%|████▏     | 223/531 [00:04<00:05, 55.72it/s]computing pseudo labels:  43%|████▎     | 230/531 [00:04<00:05, 58.21it/s]computing pseudo labels:  44%|████▍     | 236/531 [00:04<00:05, 57.36it/s]computing pseudo labels:  46%|████▌     | 242/531 [00:04<00:05, 55.46it/s]computing pseudo labels:  47%|████▋     | 248/531 [00:04<00:05, 54.70it/s]computing pseudo labels:  48%|████▊     | 255/531 [00:04<00:04, 57.77it/s]computing pseudo labels:  49%|████▉     | 262/531 [00:05<00:04, 56.08it/s]computing pseudo labels:  51%|█████     | 270/531 [00:05<00:04, 57.42it/s]computing pseudo labels:  52%|█████▏    | 277/531 [00:05<00:04, 58.39it/s]computing pseudo labels:  53%|█████▎    | 283/531 [00:05<00:04, 58.23it/s]computing pseudo labels:  54%|█████▍    | 289/531 [00:05<00:04, 56.56it/s]computing pseudo labels:  56%|█████▌    | 296/531 [00:05<00:04, 56.93it/s]computing pseudo labels:  57%|█████▋    | 303/531 [00:05<00:03, 58.83it/s]computing pseudo labels:  58%|█████▊    | 309/531 [00:05<00:03, 57.54it/s]computing pseudo labels:  59%|█████▉    | 315/531 [00:06<00:03, 56.26it/s]computing pseudo labels:  60%|██████    | 321/531 [00:06<00:03, 55.55it/s]computing pseudo labels:  62%|██████▏   | 328/531 [00:06<00:03, 55.69it/s]computing pseudo labels:  63%|██████▎   | 335/531 [00:06<00:03, 58.15it/s]computing pseudo labels:  64%|██████▍   | 342/531 [00:06<00:03, 55.89it/s]computing pseudo labels:  66%|██████▌   | 348/531 [00:06<00:03, 56.72it/s]computing pseudo labels:  67%|██████▋   | 354/531 [00:06<00:03, 54.25it/s]computing pseudo labels:  68%|██████▊   | 360/531 [00:06<00:03, 53.81it/s]computing pseudo labels:  69%|██████▉   | 367/531 [00:06<00:02, 57.00it/s]computing pseudo labels:  70%|███████   | 374/531 [00:07<00:02, 58.49it/s]computing pseudo labels:  72%|███████▏  | 380/531 [00:07<00:02, 58.26it/s]computing pseudo labels:  73%|███████▎  | 386/531 [00:07<00:02, 57.93it/s]computing pseudo labels:  74%|███████▍  | 392/531 [00:07<00:02, 56.52it/s]computing pseudo labels:  75%|███████▌  | 400/531 [00:07<00:02, 58.39it/s]computing pseudo labels:  77%|███████▋  | 408/531 [00:07<00:02, 58.55it/s]computing pseudo labels:  78%|███████▊  | 415/531 [00:07<00:01, 61.48it/s]computing pseudo labels:  79%|███████▉  | 422/531 [00:07<00:01, 61.49it/s]computing pseudo labels:  81%|████████  | 429/531 [00:07<00:01, 59.83it/s]computing pseudo labels:  82%|████████▏ | 436/531 [00:08<00:01, 58.90it/s]computing pseudo labels:  83%|████████▎ | 442/531 [00:08<00:01, 58.10it/s]computing pseudo labels:  84%|████████▍ | 448/531 [00:08<00:01, 55.23it/s]computing pseudo labels:  86%|████████▌ | 456/531 [00:08<00:01, 56.63it/s]
