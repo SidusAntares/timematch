@@ -245,6 +245,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
                         warp_invariant_trade_off=getattr(config, "source_structure_warp_invariant_trade_off", 0.35),
                         prototype_dynamics_trade_off=getattr(config, "source_structure_prototype_dynamics_trade_off", 0.05),
+                        trajectory_pooling=getattr(config, "source_structure_trajectory_pooling", "meanmax"),
+                        prototype_dynamics_mode=getattr(config, "source_structure_prototype_dynamics_mode", "cosine"),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
@@ -302,6 +304,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
                         warp_invariant_trade_off=getattr(config, "source_structure_warp_invariant_trade_off", 0.35),
                         prototype_dynamics_trade_off=getattr(config, "source_structure_prototype_dynamics_trade_off", 0.05),
+                        trajectory_pooling=getattr(config, "source_structure_trajectory_pooling", "meanmax"),
+                        prototype_dynamics_mode=getattr(config, "source_structure_prototype_dynamics_mode", "cosine"),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
