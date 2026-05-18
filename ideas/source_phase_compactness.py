@@ -5,6 +5,12 @@ import numpy as np
 import torch
 import zarr
 
+from ideas.temporal_structure.taxonomy import (
+    get_structure_view,
+    is_supported_structure_view,
+    normalize_structure_view,
+)
+
 
 UNIFORM_PHASE_COUNT = 5
 SOURCE_PHASE_COMPACTNESS_LAMBDA = 0.05
@@ -1224,6 +1230,10 @@ def compute_source_structure_loss(
           * weak time-aware prototype dynamics direction consistency
     """
     version = str(version).lower()
+    if not is_supported_structure_view(version):
+        raise ValueError(f"Unsupported source structure loss version: {version}")
+    canonical_view = normalize_structure_view(version)
+    view_metadata = get_structure_view(version)
     if version == "compactness":
         return compute_source_phase_compactness_loss(
             spatial_feats,
@@ -1232,45 +1242,6 @@ def compute_source_structure_loss(
             weight_tracker=weight_tracker,
             eps=eps,
         )
-
-    if version not in {
-        "multi_component",
-        "multicomponent",
-        "v232",
-        "profiled_components",
-        "profiled",
-        "v233",
-        "trend_residual",
-        "trend",
-        "v234",
-        "segment_trend_residual",
-        "segment_trend",
-        "v240",
-        "segment_transition_residual",
-        "segment_transition",
-        "segment_inter",
-        "v241",
-        "segment_transition_semantic",
-        "v242",
-        "segment_boundary_window_residual",
-        "segment_boundary_window_warp_residual",
-        "segment_boundary_window",
-        "boundary_window_segment",
-        "warp_boundary_window_segment",
-        "v243",
-        "trend_seasonal_residual",
-        "trend_season",
-        "season_pattern",
-        "v235",
-        "trajectory_prototype_dynamics",
-        "whole_curve_prototype_dynamics",
-        "prototype_dynamics",
-        "v244",
-        "trajectory_prototype_dynamics_v244b",
-        "trajectory_global_prototype_dynamics",
-        "v244b",
-    }:
-        raise ValueError(f"Unsupported source structure loss version: {version}")
 
     if spatial_feats.ndim != 3:
         raise ValueError(f"Expected spatial_feats to have shape [B, T, D], got {tuple(spatial_feats.shape)}")
@@ -1290,6 +1261,11 @@ def compute_source_structure_loss(
     phase_masks = _segment_masks_from_spec(ordered_positions, phase_partition_spec)
     zero = spatial_feats.sum() * 0.0
     phase_logs = {}
+    phase_logs["source_structure_view_active"] = 1.0 if view_metadata.active else 0.0
+    phase_logs["source_structure_view_segmented"] = 1.0 if view_metadata.segmented else 0.0
+    phase_logs["source_structure_view_family_global"] = 1.0 if view_metadata.family == "global" else 0.0
+    phase_logs["source_structure_view_family_segment"] = 1.0 if view_metadata.family == "segment" else 0.0
+    phase_logs["source_structure_view_family_trajectory"] = 1.0 if view_metadata.family == "trajectory" else 0.0
     phase_structures = []
 
     for phase_idx, phase_mask in enumerate(phase_masks):
@@ -1416,7 +1392,7 @@ def compute_source_structure_loss(
         "v244b",
     }
 
-    if version in v244_versions | v244b_versions:
+    if canonical_view in {"pointwise_dynamics", "global_trajectory"}:
         (
             trajectory_intra_loss,
             prototype_dynamics_loss,
@@ -1427,7 +1403,7 @@ def compute_source_structure_loss(
             ordered_positions,
             labels,
             eps=eps,
-            pointwise_intra=version in v244_versions,
+            pointwise_intra=canonical_view == "pointwise_dynamics",
             trajectory_pooling=trajectory_pooling,
             dynamics_mode=prototype_dynamics_mode,
         )
@@ -1738,7 +1714,7 @@ def compute_source_structure_loss(
             + SEASON_REG_REDUNDANCY_TRADE_OFF * season_redundancy_loss
         )
 
-    if version in v244_versions | v244b_versions:
+    if canonical_view in {"pointwise_dynamics", "global_trajectory"}:
         total_loss = (
             float(intra_trade_off) * trajectory_intra_loss
             + float(prototype_dynamics_trade_off) * prototype_dynamics_loss
@@ -1754,13 +1730,13 @@ def compute_source_structure_loss(
             + float(trend_trade_off) * trend_loss
             + float(season_trade_off) * season_loss
         )
-    elif version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241", "segment_transition_semantic", "v242"}:
+    elif canonical_view == "segmented_light_transition" or version in {"segment_transition_residual", "segment_transition", "segment_inter", "v241", "segment_transition_semantic", "v242"}:
         total_loss = (
             float(intra_trade_off) * intra_loss
             + float(trend_trade_off) * trend_loss
             + float(segment_inter_trade_off) * segment_inter_loss
         )
-    elif version in {"segment_boundary_window_residual", "segment_boundary_window", "boundary_window_segment", "v243"}:
+    elif canonical_view == "segmented_transition" or version in {"segment_boundary_window_residual", "segment_boundary_window", "boundary_window_segment", "v243"}:
         total_loss = (
             float(intra_trade_off) * intra_loss
             + float(trend_trade_off) * trend_loss
@@ -1790,7 +1766,7 @@ def compute_source_structure_loss(
 
     active_intra_loss = (
         trajectory_intra_loss
-        if version in v244_versions | v244b_versions
+        if canonical_view in {"pointwise_dynamics", "global_trajectory"}
         else intra_loss
     )
 

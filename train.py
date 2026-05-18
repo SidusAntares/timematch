@@ -40,6 +40,7 @@ from ideas.source_feature_reshaper import (
     forward_with_optional_source_reshaper,
 )
 from ideas.train_source_phase_compactness import train_supervised_source_phase_compactness
+from ideas.temporal_structure.taxonomy import STRUCTURE_VIEW_CHOICES
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
 from timematch import train_timematch
 from transforms import (
@@ -595,7 +596,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'segment_boundary_window_warp_residual', 'trajectory_prototype_dynamics', 'trajectory_prototype_dynamics_v244b'],
+        choices=STRUCTURE_VIEW_CHOICES,
         help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, v2.4.1 segment-transition-residual, v2.4.2 semantic-segment transition residual, v2.4.3 boundary-window segment transition residual, or v2.4.4 trajectory prototype dynamics',
     )
     parser.add_argument(
