@@ -10,7 +10,6 @@ import random
 import numpy as np
 import torch
 import torch.backends.cudnn
-from torchvision.transforms import transforms
 try:
     from torch.utils.tensorboard import SummaryWriter
 except ModuleNotFoundError:
@@ -33,7 +32,13 @@ from competitors.dann.dann import train_dann
 from competitors.jumbot.jumbot import train_jumbot
 from competitors.mmd.train_mmd import train_mmd
 from competitors.alda.train_alda import train_alda
-from dataset import PixelSetData, create_evaluation_loaders, create_train_loader
+from data_adapters.factory import (
+    create_evaluation_loaders_for_config,
+    create_train_dataset,
+    create_training_loader,
+    get_classes_for_config,
+    get_dataset_length,
+)
 from evaluation import evaluation, validation
 from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
@@ -43,15 +48,6 @@ from ideas.train_source_phase_compactness import train_supervised_source_phase_c
 from ideas.temporal_structure.taxonomy import STRUCTURE_VIEW_CHOICES
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
 from timematch import train_timematch
-from transforms import (
-    Normalize,
-    RandomSamplePixels,
-    RandomSampleTimeSteps,
-    ToTensor,
-    RandomTemporalShift,
-    Identity,
-)
-from utils import label_utils
 from utils.focal_loss import FocalLoss
 from utils.metrics import overall_classification_report
 from utils.train_utils import AverageMeter, bool_flag, to_cuda
@@ -64,21 +60,15 @@ def main(config):
     torch.manual_seed(config.seed)
     device = torch.device(config.device)
 
-    # Select classes that appear at least 200 times source
-    source_classes = label_utils.get_classes(cfg.source.split('/')[0], combine_spring_and_winter=cfg.combine_spring_and_winter)
-    if config.closed_set:
-        source_classes = [cls for cls in source_classes if cls != 'unknown']
-    source_data = PixelSetData(cfg.data_root, cfg.source, source_classes, closed_set=config.closed_set)
-    labels, counts = np.unique(source_data.get_labels(), return_counts=True)
-    source_classes = [source_classes[i] for i in labels[counts >= 200]]
+    source_classes = get_classes_for_config(config)
     print('Using classes:', source_classes)
-    cfg.classes = source_classes
-    cfg.num_classes = len(source_classes)
+    config.classes = source_classes
+    config.num_classes = len(source_classes)
 
     # Randomly assign parcels to train/val/test
     indices = {
-        config.source: len(source_data),
-        config.target: len(PixelSetData(config.data_root, config.target, source_classes, closed_set=config.closed_set))
+        config.source: get_dataset_length(config, config.source, split="train"),
+        config.target: get_dataset_length(config, config.target, split="train"),
     }
     folds = create_train_val_test_folds([config.source, config.target], config.num_folds, indices, config.val_ratio, config.test_ratio)
 
@@ -92,8 +82,15 @@ def main(config):
         config.fold_dir = os.path.join(config.output_dir, f'fold_{fold_num}')
         config.fold_num = fold_num
 
-        sample_pixels_val = config.sample_pixels_val or (config.eval and config.temporal_shift)
-        val_loader, test_loader = create_evaluation_loaders(config.target, splits, config, sample_pixels_val)
+        sample_pixels_val = config.sample_pixels_val or (
+            config.eval and bool(getattr(config, "temporal_shift", False))
+        )
+        val_loader, test_loader = create_evaluation_loaders_for_config(
+            config.target,
+            splits,
+            config,
+            sample_pixels_val,
+        )
 
         if config.model == 'pseltae':
             model = PseLTae(input_dim=config.input_dim, num_classes=config.num_classes, with_extra=config.with_extra)
@@ -205,23 +202,12 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
         params += list(source_feature_reshaper.parameters())
     optimizer = torch.optim.Adam(params, lr=config.lr, weight_decay=config.weight_decay)
 
-    train_transform = transforms.Compose([
-        RandomSamplePixels(config.num_pixels),
-        RandomSampleTimeSteps(config.seq_length),
-        RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
-        Normalize(),
-        ToTensor(),
-    ])
-
-    dataset = PixelSetData(
-        config.data_root,
+    dataset = create_train_dataset(
+        config,
         dataset_name,
-        config.classes,
-        train_transform,
-        splits[dataset_name]['train'],
-        closed_set=config.closed_set,
+        splits,
     )
-    data_loader = create_train_loader(dataset, config.batch_size, config.num_workers)
+    data_loader = create_training_loader(dataset, config)
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
 
     criterion = FocalLoss(gamma=config.focal_loss_gamma)
@@ -356,12 +342,16 @@ if __name__ == '__main__':
     # Setup parameters
     parser.add_argument('--data_root', default='/data/user/DBL/timematch_data', type=str,
                         help='Path to datasets root directory')
+    parser.add_argument(
+        '--dataset_type',
+        default='remote_sensing',
+        choices=['remote_sensing', 'har'],
+        help='Dataset adapter to use. remote_sensing keeps the original parcel loader; har reads TFDA-style .pt files.',
+    )
     parser.add_argument('--num_blocks', default=100, type=int, help='Number of geographical blocks in dataset for splitting. Default 100.')
 
-    available_tiles = ['denmark/32VNH/2017', 'france/30TXT/2017', 'france/31TCJ/2017', 'austria/33UVP/2017']
-
-    parser.add_argument('--source', default='denmark/32VNH/2017', help='source dataset', choices=available_tiles)
-    parser.add_argument('--target', default='france/30TXT/2017', help='target dataset', choices=available_tiles)
+    parser.add_argument('--source', default='denmark/32VNH/2017', help='source dataset/domain')
+    parser.add_argument('--target', default='france/30TXT/2017', help='target dataset/domain')
     parser.add_argument('--num_folds', default=1, type=int, help='Number of train/test folds for cross validation')
     parser.add_argument("--val_ratio", default=0.1, type=float,
                         help='Ratio of training data to use for validation. Default 10%.')
@@ -379,6 +369,11 @@ if __name__ == '__main__':
     parser.add_argument('--skip_final_test', default=False, type=bool_flag, help='skip final labeled test/eval stage after training; useful for warmup-only checkpoint-selection runs')
     parser.add_argument('--combine_spring_and_winter', default=False, type=bool_flag)
     parser.add_argument('--closed_set', default=False, type=bool_flag, help='exclude unknown / out-of-class parcels')
+    parser.add_argument(
+        '--har_label_offset',
+        default='auto',
+        help='HAR label offset. auto subtracts 1 when labels are 1..6; use 0 when labels are already 0..5.',
+    )
 
     # Training configuration
     parser.add_argument('--epochs', default=50, type=int, help='Number of epochs per fold')
@@ -805,6 +800,10 @@ if __name__ == '__main__':
 
     cfg = parser.parse_args()
 
+    if cfg.source_segment_partition_mode is None:
+        cfg.source_segment_partition_mode = cfg.source_phase_partition_mode
+    if cfg.source_segment_count is None:
+        cfg.source_segment_count = cfg.source_phase_count
 
     # Setup folders based on name
     if cfg.experiment_name is not None:

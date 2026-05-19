@@ -1,6 +1,4 @@
-from torch.utils.data.sampler import WeightedRandomSampler
 import sklearn.metrics
-from collections import Counter
 from copy import deepcopy
 import json
 import os
@@ -9,10 +7,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils import data
-from torchvision import transforms
 from tqdm import tqdm
 
-from dataset import PixelSetData
+from data_adapters.factory import create_timematch_data_loaders
 from evaluation import validation
 from ideas.source_phase_compactness import (
     SourceSegmentWeightTracker,
@@ -24,14 +21,6 @@ from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
     compute_dual_path_relation_regularization,
     compute_source_feature_reshaper_regularization,
-)
-from transforms import (
-    Normalize,
-    RandomSamplePixels,
-    RandomSampleTimeSteps,
-    ToTensor,
-    RandomTemporalShift,
-    Identity,
 )
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda, cycle
@@ -891,84 +880,12 @@ def update_ema_variables(model, ema, decay=0.99):
 
 
 def get_data_loaders(splits, config, balance_source=True):
-    weak_aug = transforms.Compose([
-        RandomSamplePixels(config.num_pixels),
-        Normalize(),
-        ToTensor(),
-    ])
-
-    strong_aug = transforms.Compose([
-            RandomSamplePixels(config.num_pixels),
-            RandomSampleTimeSteps(config.seq_length),
-            Normalize(),
-            ToTensor(),
-    ])
-
-    source_dataset = PixelSetData(config.data_root, config.source,
-            config.classes, strong_aug,
-            indices=splits[config.source]['train'],
-            closed_set=getattr(config, 'closed_set', False),)
-
-    if balance_source:
-        source_labels = source_dataset.get_labels()
-        freq = Counter(source_labels)
-        class_weight = {x: 1.0 / freq[x] for x in freq}
-        source_weights = [class_weight[x] for x in source_labels]
-        sampler = WeightedRandomSampler(source_weights, len(source_labels))
-        print("using balanced loader for source")
-        source_loader = data.DataLoader(
-            source_dataset,
-            num_workers=config.num_workers,
-            pin_memory=True,
-            sampler=sampler,
-            batch_size=config.batch_size,
-            drop_last=True,
-        )
-    else:
-        source_loader = data.DataLoader(
-            source_dataset,
-            num_workers=config.num_workers,
-            pin_memory=True,
-            batch_size=config.batch_size,
-            shuffle=True,
-            drop_last=True,
-        )
-
-    target_dataset = PixelSetData(config.data_root, config.target,
-            config.classes, None,
-            indices=splits[config.target]['train'],
-            closed_set=getattr(config, 'closed_set', False))
-
-    strong_dataset = deepcopy(target_dataset)
-    strong_dataset.transform = strong_aug
-    weak_dataset = deepcopy(target_dataset)
-    weak_dataset.transform = weak_aug
-    target_dataset_weak_strong = TupleDataset(weak_dataset, strong_dataset)
-
-    no_aug_dataset = deepcopy(target_dataset)
-    no_aug_dataset.transform = weak_aug
-    # For shift estimation
-    target_loader_no_aug = data.DataLoader(
-        no_aug_dataset,
-        num_workers=config.num_workers,
-        batch_size=config.batch_size,
-        shuffle=True,
+    return create_timematch_data_loaders(
+        splits,
+        config,
+        TupleDataset,
+        balance_source=balance_source,
     )
-
-    # For mean teacher training
-    target_loader_weak_strong = data.DataLoader(
-        target_dataset_weak_strong,
-        num_workers=config.num_workers,
-        batch_size=config.batch_size,
-        shuffle=True,
-        pin_memory=True,
-        drop_last=True,
-    )
-
-    print(f'size of source dataset: {len(source_dataset)} ({len(source_loader)} batches)')
-    print(f'size of target dataset: {len(target_dataset)} ({len(target_loader_weak_strong)} batches)')
-
-    return source_loader, target_loader_no_aug, target_loader_weak_strong
 
 
 class TupleDataset(data.Dataset):

@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BLOCK_SCRIPT="$ROOT_DIR/launchers/gain_validation/run_source_structure_block.sh"
 
 BATCH_STAMP="${BATCH_STAMP:-$(date +%Y%m%d_%H%M%S)}"
-RUN_TAG="${RUN_TAG:-structure_component_overnight_probe_${BATCH_STAMP}}"
+RUN_TAG="${RUN_TAG:-v25_partition_theory_validation_${BATCH_STAMP}}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs/${RUN_TAG}}"
 GPU_IDS="${GPU_IDS:-0,1,2,3}"
 MAX_PARALLEL="${MAX_PARALLEL:-4}"
@@ -29,8 +29,8 @@ export SOURCE_SKIP_TRAIN="${SOURCE_SKIP_TRAIN:-0}"
 # - DK1->FR1: sensitive task where lighter structure and dynamics need checking.
 TASK_SPECS="${TASK_SPECS:-FR1_to_FR2|france/30TXT/2017|france/31TCJ/2017,FR2_to_FR1|france/31TCJ/2017|france/30TXT/2017,DK1_to_FR1|denmark/32VNH/2017|france/30TXT/2017}"
 
-# name:loss_version:phase_count:segment_count:intra:trend:segment_inter:boundary:prototype_dynamics:trajectory_pooling:dynamics_mode:dual_cls:dual_relation
-VARIANT_SPECS="${VARIANT_SPECS:-seg_full:segment_boundary_window_residual:5:5:1.0:0.05:0.02:0.20:0.00:meanmax:cosine:1.00:0.03,seg_no_dual:segment_boundary_window_residual:5:5:1.0:0.05:0.02:0.20:0.00:meanmax:cosine:0.00:0.00,seg_intra_only:segment_boundary_window_residual:5:5:1.0:0.00:0.00:0.00:0.00:meanmax:cosine:1.00:0.03,seg_transition_only:segment_boundary_window_residual:5:5:1.0:0.00:0.02:0.00:0.00:meanmax:cosine:1.00:0.03,seg_boundary_weighted:segment_boundary_window_residual:5:5:1.0:0.00:0.02:0.20:0.00:meanmax:cosine:1.00:0.03,global_compact:segment_boundary_window_residual:1:1:5.0:0.00:0.00:0.00:0.00:meanmax:cosine:1.00:0.03,global_dynamics:trajectory_prototype_dynamics_v244b:1:1:5.0:0.00:0.00:0.00:0.01:meanmax:cosine:1.00:0.03}"
+# name:partition_mode:loss_version:phase_count:segment_count:intra:trend:segment_inter:boundary:prototype_dynamics:trajectory_pooling:dynamics_mode:dual_cls:dual_relation
+VARIANT_SPECS="${VARIANT_SPECS:-doy_k5_full:doy_gap:segment_boundary_window_residual:5:5:1.0:0.05:0.02:0.20:0.00:meanmax:cosine:1.00:0.03,doy_k5_no_dual:doy_gap:segment_boundary_window_residual:5:5:1.0:0.05:0.02:0.20:0.00:meanmax:cosine:0.00:0.00,doy_k5_intra_only:doy_gap:segment_boundary_window_residual:5:5:1.0:0.00:0.00:0.00:0.00:meanmax:cosine:1.00:0.03,doy_k5_transition_only:doy_gap:segment_boundary_window_residual:5:5:1.0:0.00:0.02:0.00:0.00:meanmax:cosine:1.00:0.03,doy_k5_boundary_weighted:doy_gap:segment_boundary_window_residual:5:5:1.0:0.00:0.02:0.20:0.00:meanmax:cosine:1.00:0.03,uniform_k5_full:uniform:segment_boundary_window_residual:5:5:1.0:0.05:0.02:0.20:0.00:meanmax:cosine:1.00:0.03,uniform_k2_full:uniform:segment_boundary_window_residual:2:2:1.0:0.05:0.02:0.20:0.00:meanmax:cosine:1.00:0.03,uniform_k10_full:uniform:segment_boundary_window_residual:10:10:1.0:0.05:0.02:0.20:0.00:meanmax:cosine:1.00:0.03,global_k1_compact:uniform:segment_boundary_window_residual:1:1:5.0:0.00:0.00:0.00:0.00:meanmax:cosine:1.00:0.03,global_k1_dynamics:uniform:trajectory_prototype_dynamics_v244b:1:1:5.0:0.00:0.00:0.00:0.01:meanmax:cosine:1.00:0.03}"
 
 IFS=',' read -r -a GPU_ITEMS <<< "$GPU_IDS"
 IFS=',' read -r -a TASK_ITEMS <<< "$TASK_SPECS"
@@ -45,7 +45,7 @@ run_one() {
   local target_dataset="$3"
   local variant_spec="$4"
 
-  IFS=':' read -r variant_name loss_version phase_count segment_count intra_weight trend_weight segment_inter_weight boundary_weight proto_dyn_weight trajectory_pooling dynamics_mode dual_cls dual_relation <<< "$variant_spec"
+  IFS=':' read -r variant_name partition_mode loss_version phase_count segment_count intra_weight trend_weight segment_inter_weight boundary_weight proto_dyn_weight trajectory_pooling dynamics_mode dual_cls dual_relation <<< "$variant_spec"
 
   local gpu_id="${GPU_ITEMS[$((gpu_cursor % ${#GPU_ITEMS[@]}))]}"
   gpu_cursor=$((gpu_cursor + 1))
@@ -57,11 +57,6 @@ run_one() {
 
   local job_tag="${variant_name}_${task_name}_${BATCH_STAMP}"
   local log_file="$LOG_DIR/${job_tag}.log"
-
-  local partition_mode="doy_gap"
-  if [ "$phase_count" = "1" ] && [ "$segment_count" = "1" ]; then
-    partition_mode="uniform"
-  fi
 
   echo "START|${job_tag}|gpu=${gpu_id}|loss=${loss_version}|partition=${partition_mode}|intra=${intra_weight}|trend=${trend_weight}|segment_inter=${segment_inter_weight}|boundary=${boundary_weight}|proto_dyn=${proto_dyn_weight}|dual_cls=${dual_cls}|dual_relation=${dual_relation}"
   (

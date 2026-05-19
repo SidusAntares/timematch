@@ -1,8 +1,7 @@
 import os
 
 import torch
-from torchvision import transforms
-from dataset import PixelSetData, create_train_loader
+from data_adapters.factory import create_train_dataset, create_training_loader
 from evaluation import validation
 from ideas.source_phase_compactness import (
     SourceSegmentWeightTracker,
@@ -17,14 +16,6 @@ from ideas.source_feature_reshaper import (
 )
 from ideas.source_phase_grid import make_phase_grid_positions, project_to_phase_grid
 from ideas.source_structure_reliability import compute_svd_structure_reliability_factors
-from transforms import (
-    Identity,
-    Normalize,
-    RandomSamplePixels,
-    RandomSampleTimeSteps,
-    RandomTemporalShift,
-    ToTensor,
-)
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda
 
@@ -64,26 +55,16 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
     )
     model.to(device)
 
-    train_transform = transforms.Compose([
-        RandomSamplePixels(config.num_pixels),
-        RandomSampleTimeSteps(config.seq_length),
-        RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
-        Normalize(),
-        ToTensor(),
-    ])
     dataset_name = config.source
     if config.train_on_target:
         dataset_name = config.target
 
-    dataset = PixelSetData(
-        config.data_root,
+    dataset = create_train_dataset(
+        config,
         dataset_name,
-        config.classes,
-        train_transform,
-        splits[dataset_name]['train'],
-        closed_set=config.closed_set,
+        splits,
     )
-    data_loader = create_train_loader(dataset, config.batch_size, config.num_workers)
+    data_loader = create_training_loader(dataset, config)
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
     phase_partition_spec = build_source_segment_partition_spec(
         dataset.date_positions,

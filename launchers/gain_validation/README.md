@@ -27,19 +27,25 @@ signal. It compares:
 - `seg_intra_only`: segmented intra compactness only.
 - `global_compact`: no-segment global compactness.
 
-`run_structure_component_overnight_probe.sh` is the longer unattended run. By
-default it probes `FR1 -> FR2`, `FR2 -> FR1`, and `DK1 -> FR1` with:
+`run_structure_component_overnight_probe.sh` is the longer unattended v2.5
+partition-theory validation run. By default it probes `FR1 -> FR2`, `FR2 ->
+FR1`, and `DK1 -> FR1` with:
 
-- `seg_full`
-- `seg_no_dual`
-- `seg_intra_only`
-- `seg_transition_only`
-- `seg_boundary_weighted`
-- `global_compact`
-- `global_dynamics`
+- `doy_k5_full`
+- `doy_k5_no_dual`
+- `doy_k5_intra_only`
+- `doy_k5_transition_only`
+- `doy_k5_boundary_weighted`
+- `uniform_k5_full`
+- `uniform_k2_full`
+- `uniform_k10_full`
+- `global_k1_compact`
+- `global_k1_dynamics`
 
 These variants are intended to test whether gains come from compactness,
-segmentation, boundary weighting, dynamics, or preservation constraints.
+partition granularity, DOY-gap placement, boundary weighting, dynamics, or
+preservation constraints. Random/permuted partition controls are not included
+because the current training code does not expose a safe random partition mode.
 
 ## Shared Block
 
