@@ -39,6 +39,7 @@ from data_adapters.factory import (
     get_classes_for_config,
     get_dataset_length,
 )
+from data_adapters.har_dataset import get_adatime_input_dim
 from evaluation import evaluation, validation
 from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
@@ -373,6 +374,12 @@ if __name__ == '__main__':
         '--har_label_offset',
         default='auto',
         help='HAR label offset. auto subtracts 1 when labels are 1..6; use 0 when labels are already 0..5.',
+    )
+    parser.add_argument(
+        '--har_dataset_name',
+        default='HAR',
+        choices=['HAR', 'HHAR', 'HHAR_SA'],
+        help='AdaTime-style HAR dataset spec used for class names and default input channels.',
     )
 
     # Training configuration
@@ -799,6 +806,9 @@ if __name__ == '__main__':
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')
 
     cfg = parser.parse_args()
+
+    if cfg.dataset_type == 'har' and cfg.input_dim == 10:
+        cfg.input_dim = get_adatime_input_dim(cfg.har_dataset_name)
 
     if cfg.source_segment_partition_mode is None:
         cfg.source_segment_partition_mode = cfg.source_phase_partition_mode

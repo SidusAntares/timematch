@@ -5,11 +5,36 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${ROOT_DIR}"
 
-HAR_DATA_ROOT="${HAR_DATA_ROOT:-/data/user/DBL/timematch_data/PersonActivity}"
+ADATIME_DATASET="${ADATIME_DATASET:-HAR}"
+if [ "${ADATIME_DATASET}" = "HAR" ]; then
+  HAR_DATA_ROOT="${HAR_DATA_ROOT:-/data/user/dataset/UCIHAR/HAR}"
+  INPUT_DIM="${INPUT_DIM:-9}"
+  TASKS=(
+    "2 11"
+    "6 23"
+    "7 13"
+    "9 18"
+    "12 16"
+  )
+elif [ "${ADATIME_DATASET}" = "HHAR" ] || [ "${ADATIME_DATASET}" = "HHAR_SA" ]; then
+  HAR_DATA_ROOT="${HAR_DATA_ROOT:-/data/user/dataset/HHAR/HHAR_SA}"
+  INPUT_DIM="${INPUT_DIM:-3}"
+  TASKS=(
+    "0 6"
+    "1 6"
+    "2 7"
+    "3 8"
+    "4 5"
+  )
+else
+  echo "Unsupported ADATIME_DATASET=${ADATIME_DATASET}. Use HAR or HHAR_SA." >&2
+  exit 1
+fi
+
 STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)}"
-LOG_ROOT="${LOG_ROOT:-${ROOT_DIR}/logs/har_timematch_vs_v243b_${STAMP}}"
-OUT_ROOT="${OUT_ROOT:-${ROOT_DIR}/outputs/har_timematch_vs_v243b_${STAMP}}"
-RUN_ROOT="${RUN_ROOT:-${ROOT_DIR}/runs/har_timematch_vs_v243b_${STAMP}}"
+LOG_ROOT="${LOG_ROOT:-${ROOT_DIR}/logs/${ADATIME_DATASET,,}_timematch_vs_v243b_${STAMP}}"
+OUT_ROOT="${OUT_ROOT:-${ROOT_DIR}/outputs/${ADATIME_DATASET,,}_timematch_vs_v243b_${STAMP}}"
+RUN_ROOT="${RUN_ROOT:-${ROOT_DIR}/runs/${ADATIME_DATASET,,}_timematch_vs_v243b_${STAMP}}"
 
 SOURCE_EPOCHS="${SOURCE_EPOCHS:-50}"
 DA_EPOCHS="${DA_EPOCHS:-20}"
@@ -20,13 +45,6 @@ MAX_TEMPORAL_SHIFT="${MAX_TEMPORAL_SHIFT:-16}"
 
 mkdir -p "${LOG_ROOT}" "${OUT_ROOT}" "${RUN_ROOT}"
 
-TASKS=(
-  "2 11"
-  "6 23"
-  "7 13"
-  "9 18"
-  "12 16"
-)
 GPUS=(0 1 2 3)
 
 wait_for_slot() {
@@ -46,7 +64,7 @@ run_one_pair() {
   local variant="$3"
   local gpu="$4"
 
-  local tag="har_${variant}_${src}_to_${tgt}"
+  local tag="${ADATIME_DATASET,,}_${variant}_${src}_to_${tgt}"
   local source_exp="${tag}_source_${STAMP}"
   local da_exp="${tag}_timematch_${STAMP}"
   local source_out="${OUT_ROOT}/${source_exp}"
@@ -58,6 +76,7 @@ run_one_pair() {
   if [ "${variant}" = "baseline" ]; then
     CUDA_VISIBLE_DEVICES="${gpu}" python train.py \
       --dataset_type har \
+      --har_dataset_name "${ADATIME_DATASET}" \
       --data_root "${HAR_DATA_ROOT}" \
       --source "${src}" \
       --target "${tgt}" \
@@ -67,7 +86,7 @@ run_one_pair() {
       --test_ratio 0.0 \
       --epochs "${SOURCE_EPOCHS}" \
       --batch_size "${BATCH_SIZE}" \
-      --input_dim 9 \
+      --input_dim "${INPUT_DIM}" \
       --num_pixels 1 \
       --seq_length "${SEQ_LENGTH}" \
       --model pseltae \
@@ -79,6 +98,7 @@ run_one_pair() {
   else
     CUDA_VISIBLE_DEVICES="${gpu}" python train.py \
       --dataset_type har \
+      --har_dataset_name "${ADATIME_DATASET}" \
       --data_root "${HAR_DATA_ROOT}" \
       --source "${src}" \
       --target "${tgt}" \
@@ -88,7 +108,7 @@ run_one_pair() {
       --test_ratio 0.0 \
       --epochs "${SOURCE_EPOCHS}" \
       --batch_size "${BATCH_SIZE}" \
-      --input_dim 9 \
+      --input_dim "${INPUT_DIM}" \
       --num_pixels 1 \
       --seq_length "${SEQ_LENGTH}" \
       --model pseltae \
@@ -144,6 +164,7 @@ run_one_pair() {
 
   CUDA_VISIBLE_DEVICES="${gpu}" python train.py \
     --dataset_type har \
+    --har_dataset_name "${ADATIME_DATASET}" \
     --data_root "${HAR_DATA_ROOT}" \
     --source "${src}" \
     --target "${tgt}" \
@@ -153,7 +174,7 @@ run_one_pair() {
     --test_ratio 0.0 \
     --epochs "${SOURCE_EPOCHS}" \
     --batch_size "${BATCH_SIZE}" \
-    --input_dim 9 \
+    --input_dim "${INPUT_DIM}" \
     --num_pixels 1 \
     --seq_length "${SEQ_LENGTH}" \
     --model pseltae \
@@ -185,6 +206,6 @@ for variant in baseline v243b; do
 done
 
 wait
-echo "HAR TimeMatch vs v2.4.3b run finished."
+echo "${ADATIME_DATASET} TimeMatch vs v2.4.3b run finished."
 echo "Logs: ${LOG_ROOT}"
 echo "Outputs: ${OUT_ROOT}"

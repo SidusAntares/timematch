@@ -15,6 +15,7 @@ experiment needs to be recovered.
 - `run_v244b_global_trajectory_12tasks.sh`
 - `run_structure_component_short_probe.sh`
 - `run_structure_component_overnight_probe.sh`
+- `run_v25_theory_followup_probe.sh`
 
 ## Structure Component Probes
 
@@ -46,6 +47,15 @@ These variants are intended to test whether gains come from compactness,
 partition granularity, DOY-gap placement, boundary weighting, dynamics, or
 preservation constraints. Random/permuted partition controls are not included
 because the current training code does not expose a safe random partition mode.
+
+`run_v25_theory_followup_probe.sh` is the focused follow-up after the
+partition-theory validation run. It avoids boundary/dynamics-heavy variants and
+tests the theory claims on additional high-information tasks:
+
+- compactness as the core source-side structure objective;
+- global / uniform / DOY-gap as alternative temporal structure views;
+- dual-path relation as a semantic-preservation constraint, not a structure
+  component.
 
 ## Shared Block
 

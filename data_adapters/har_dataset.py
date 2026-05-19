@@ -5,19 +5,43 @@ import torch
 from torch.utils import data
 
 
-HAR_CLASSES = [
-    "walk",
-    "upstairs",
-    "downstairs",
-    "sit",
-    "stand",
-    "lie",
-]
+ADATIME_DATASET_SPECS = {
+    "HAR": {
+        "classes": ["walk", "upstairs", "downstairs", "sit", "stand", "lie"],
+        "input_dim": 9,
+    },
+    "HHAR": {
+        "classes": ["bike", "sit", "stand", "walk", "stairs_up", "stairs_down"],
+        "input_dim": 3,
+    },
+    "HHAR_SA": {
+        "classes": ["bike", "sit", "stand", "walk", "stairs_up", "stairs_down"],
+        "input_dim": 3,
+    },
+}
+
+
+def normalize_adatime_dataset_name(name):
+    name = str(name or "HAR").upper()
+    if name not in ADATIME_DATASET_SPECS:
+        raise ValueError(
+            f"Unsupported AdaTime dataset '{name}'. "
+            f"Expected one of: {', '.join(sorted(ADATIME_DATASET_SPECS))}"
+        )
+    return name
+
+
+def get_adatime_classes(name="HAR"):
+    return list(ADATIME_DATASET_SPECS[normalize_adatime_dataset_name(name)]["classes"])
+
+
+def get_adatime_input_dim(name="HAR"):
+    return int(ADATIME_DATASET_SPECS[normalize_adatime_dataset_name(name)]["input_dim"])
 
 
 class HARTFDAData(data.Dataset):
     """
-    Adapter for TFDA-style HAR .pt files.
+    Adapter for AdaTime/TFDA-style HAR .pt files.
 
     Expected files:
       - train_<domain>.pt
@@ -35,7 +59,7 @@ class HARTFDAData(data.Dataset):
       label:        int in [0, 5]
     """
 
-    classes = HAR_CLASSES
+    classes = get_adatime_classes("HAR")
 
     def __init__(
         self,
@@ -44,23 +68,29 @@ class HARTFDAData(data.Dataset):
         split="train",
         transform=None,
         indices=None,
-        input_dim=9,
+        input_dim=None,
         label_offset="auto",
+        adatime_dataset="HAR",
     ):
         super().__init__()
+        self.adatime_dataset = normalize_adatime_dataset_name(adatime_dataset)
+        self.classes = get_adatime_classes(self.adatime_dataset)
         self.data_root = data_root
         self.domain = str(domain)
         self.dataset_name = self.domain
-        self.country = "har"
+        self.country = self.adatime_dataset.lower()
         self.split = split
         self.transform = transform
-        self.input_dim = int(input_dim)
+        self.input_dim = int(input_dim) if input_dim is not None else get_adatime_input_dim(self.adatime_dataset)
         self.with_extra = False
         self.closed_set = True
 
         path = os.path.join(data_root, f"{split}_{self.domain}.pt")
         if not os.path.isfile(path):
-            raise FileNotFoundError(f"HAR TFDA file not found: {path}")
+            raise FileNotFoundError(
+                f"AdaTime {self.adatime_dataset} file not found: {path}. "
+                "This adapter expects train_<domain>.pt and test_<domain>.pt in data_root."
+            )
 
         dataset = torch.load(path, map_location="cpu", weights_only=False)
         if "samples" not in dataset or "labels" not in dataset:
@@ -88,13 +118,13 @@ class HARTFDAData(data.Dataset):
 
         labels = labels.long().view(-1)
         if label_offset == "auto":
-            if labels.numel() > 0 and int(labels.min()) == 1 and int(labels.max()) <= len(HAR_CLASSES):
+            if labels.numel() > 0 and int(labels.min()) == 1 and int(labels.max()) <= len(self.classes):
                 labels = labels - 1
         elif int(label_offset) != 0:
             labels = labels - int(label_offset)
-        if labels.numel() > 0 and (int(labels.min()) < 0 or int(labels.max()) >= len(HAR_CLASSES)):
+        if labels.numel() > 0 and (int(labels.min()) < 0 or int(labels.max()) >= len(self.classes)):
             raise ValueError(
-                f"HAR labels must map to [0, {len(HAR_CLASSES) - 1}], "
+                f"{self.adatime_dataset} labels must map to [0, {len(self.classes) - 1}], "
                 f"got range [{int(labels.min())}, {int(labels.max())}]"
             )
 
@@ -138,4 +168,3 @@ class HARTFDAData(data.Dataset):
         if self.transform is not None:
             sample = self.transform(sample)
         return sample
-

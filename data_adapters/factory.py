@@ -11,7 +11,7 @@ from dataset import (
     PixelSetData,
     create_train_loader,
 )
-from data_adapters.har_dataset import HAR_CLASSES, HARTFDAData
+from data_adapters.har_dataset import HARTFDAData, get_adatime_classes, get_adatime_input_dim
 from transforms import (
     Identity,
     Normalize,
@@ -47,7 +47,7 @@ class RandomSampleTimeStepsIfLonger:
 
 def get_classes_for_config(config):
     if is_har(config):
-        return list(HAR_CLASSES)
+        return get_adatime_classes(getattr(config, "har_dataset_name", "HAR"))
     source_classes = label_utils.get_classes(
         str(config.source).split("/")[0],
         combine_spring_and_winter=getattr(config, "combine_spring_and_winter", False),
@@ -62,14 +62,19 @@ def get_classes_for_config(config):
 
 def build_dataset(config, dataset_name, classes=None, transform=None, indices=None, split="train"):
     if is_har(config):
+        adatime_dataset = getattr(config, "har_dataset_name", "HAR")
+        input_dim = getattr(config, "input_dim", None)
+        if input_dim is None or int(input_dim) == 10:
+            input_dim = get_adatime_input_dim(adatime_dataset)
         return HARTFDAData(
             config.data_root,
             dataset_name,
             split=split,
             transform=transform,
             indices=indices,
-            input_dim=getattr(config, "input_dim", 9),
+            input_dim=input_dim,
             label_offset=getattr(config, "har_label_offset", "auto"),
+            adatime_dataset=adatime_dataset,
         )
     return PixelSetData(
         config.data_root,
