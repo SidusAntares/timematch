@@ -16,6 +16,7 @@ experiment needs to be recovered.
 - `run_structure_component_short_probe.sh`
 - `run_structure_component_overnight_probe.sh`
 - `run_v25_theory_followup_probe.sh`
+- `run_v25_boundary_transition_probe.sh`
 
 ## Structure Component Probes
 
@@ -56,6 +57,23 @@ tests the theory claims on additional high-information tasks:
 - global / uniform / DOY-gap as alternative temporal structure views;
 - dual-path relation as a semantic-preservation constraint, not a structure
   component.
+
+`run_v25_boundary_transition_probe.sh` is the local-transition follow-up. It
+keeps the same four theory tasks and tests whether the third v2.5 structure
+view should be treated as boundary-centered transition shaping. Since the
+current boundary-window term is a weighting modulator for adjacent
+segment-inter transitions rather than an independent loss, the script uses a
+clean factorial comparison:
+
+- `uniform_k5_intra_ref`: phase compactness only.
+- `uniform_k5_transition`: adds adjacent segment transition consistency.
+- `uniform_k5_boundary02`: reweights transition consistency around boundaries.
+- `uniform_k5_boundary05`: stronger boundary weighting sensitivity check.
+- `doy_k5_transition`: same transition test under DOY-gap partitions.
+- `doy_k5_boundary02`: DOY-gap boundary-weighted transition.
+
+Trend is disabled in these variants so gains can be attributed to transition
+and boundary weighting instead of the older smooth-trend regularizer.
 
 ## Shared Block
 
