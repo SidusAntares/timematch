@@ -36,12 +36,16 @@ LOG_ROOT="${LOG_ROOT:-${ROOT_DIR}/logs/${ADATIME_DATASET,,}_timematch_vs_v243b_$
 OUT_ROOT="${OUT_ROOT:-${ROOT_DIR}/outputs/${ADATIME_DATASET,,}_timematch_vs_v243b_${STAMP}}"
 RUN_ROOT="${RUN_ROOT:-${ROOT_DIR}/runs/${ADATIME_DATASET,,}_timematch_vs_v243b_${STAMP}}"
 
-SOURCE_EPOCHS="${SOURCE_EPOCHS:-50}"
-DA_EPOCHS="${DA_EPOCHS:-20}"
-STEPS_PER_EPOCH="${STEPS_PER_EPOCH:-200}"
-BATCH_SIZE="${BATCH_SIZE:-128}"
+# AdaTime HAR/HHAR defaults: 40 epochs, batch 32, lr 1e-3, weight decay 1e-4.
+SOURCE_EPOCHS="${SOURCE_EPOCHS:-40}"
+DA_EPOCHS="${DA_EPOCHS:-40}"
+# 0 means one TimeMatch epoch uses the current loader size, matching AdaTime's epoch scale.
+STEPS_PER_EPOCH="${STEPS_PER_EPOCH:-0}"
+BATCH_SIZE="${BATCH_SIZE:-32}"
+VAL_RATIO="${VAL_RATIO:-0.1}"
 SEQ_LENGTH="${SEQ_LENGTH:-128}"
 MAX_TEMPORAL_SHIFT="${MAX_TEMPORAL_SHIFT:-16}"
+SHIFT_SAMPLE_SIZE="${SHIFT_SAMPLE_SIZE:-100}"
 
 mkdir -p "${LOG_ROOT}" "${OUT_ROOT}" "${RUN_ROOT}"
 
@@ -82,10 +86,12 @@ run_one_pair() {
       --target "${tgt}" \
       --closed_set true \
       --num_folds 1 \
-      --val_ratio 0.1 \
+      --val_ratio "${VAL_RATIO}" \
       --test_ratio 0.0 \
       --epochs "${SOURCE_EPOCHS}" \
       --batch_size "${BATCH_SIZE}" \
+      --lr 0.001 \
+      --weight_decay 0.0001 \
       --input_dim "${INPUT_DIM}" \
       --num_pixels 1 \
       --seq_length "${SEQ_LENGTH}" \
@@ -104,10 +110,12 @@ run_one_pair() {
       --target "${tgt}" \
       --closed_set true \
       --num_folds 1 \
-      --val_ratio 0.1 \
+      --val_ratio "${VAL_RATIO}" \
       --test_ratio 0.0 \
       --epochs "${SOURCE_EPOCHS}" \
       --batch_size "${BATCH_SIZE}" \
+      --lr 0.001 \
+      --weight_decay 0.0001 \
       --input_dim "${INPUT_DIM}" \
       --num_pixels 1 \
       --seq_length "${SEQ_LENGTH}" \
@@ -170,10 +178,12 @@ run_one_pair() {
     --target "${tgt}" \
     --closed_set true \
     --num_folds 1 \
-    --val_ratio 0.1 \
+    --val_ratio "${VAL_RATIO}" \
     --test_ratio 0.0 \
     --epochs "${SOURCE_EPOCHS}" \
     --batch_size "${BATCH_SIZE}" \
+    --lr 0.001 \
+    --weight_decay 0.0001 \
     --input_dim "${INPUT_DIM}" \
     --num_pixels 1 \
     --seq_length "${SEQ_LENGTH}" \
@@ -184,11 +194,12 @@ run_one_pair() {
     "${reshaper_args[@]}" \
     timematch \
     --weights "${source_out}" \
+    --lr 0.001 \
     --epochs "${DA_EPOCHS}" \
     --steps_per_epoch "${STEPS_PER_EPOCH}" \
     --estimate_shift true \
     --max_temporal_shift "${MAX_TEMPORAL_SHIFT}" \
-    --sample_size 20 \
+    --sample_size "${SHIFT_SAMPLE_SIZE}" \
     --shift_source true \
     --balance_source true \
     > "${da_log}" 2>&1

@@ -250,6 +250,12 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
                 writer.add_scalar("train/loss", loss_meter.val, global_step + step)
                 writer.add_scalar("train/lr", lr, global_step + step)
 
+        lr = optimizer.param_groups[0]["lr"]
+        print(
+            f"Epoch train summary: "
+            f"loss={loss_meter.avg:.4f}, lr={lr:.6g}, batches={len(data_loader)}"
+        )
+
         model.eval()
         best_f1 = validation(
             best_f1,
@@ -284,7 +290,7 @@ def create_train_val_test_folds(datasets, num_folds, num_indices, val_ratio=0.1,
 
             train_indices = set(indices[:n_train])
             val_indices = set(indices[n_train:n_train + n_val])
-            test_indices = set(indices[-n_test:])
+            test_indices = set(indices[-n_test:]) if n_test > 0 else set()
             assert set.intersection(train_indices, val_indices, test_indices) == set()
             assert len(train_indices) + len(val_indices) + len(test_indices) == n
 

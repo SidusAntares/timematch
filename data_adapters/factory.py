@@ -235,6 +235,15 @@ def create_evaluation_loaders_for_config(dataset_name, splits, config, sample_pi
 
 
 def create_training_loader(dataset, config):
+    if is_har(config):
+        return data.DataLoader(
+            dataset=dataset,
+            batch_size=config.batch_size,
+            shuffle=True,
+            num_workers=config.num_workers,
+            drop_last=True,
+            pin_memory=torch.cuda.is_available(),
+        )
     return create_train_loader(dataset, config.batch_size, config.num_workers)
 
 
@@ -251,6 +260,8 @@ def create_timematch_data_loaders(splits, config, tuple_dataset_cls, balance_sou
         split="train",
     )
 
+    drop_last = True
+
     if balance_source:
         source_labels = source_dataset.get_labels()
         freq = Counter(source_labels)
@@ -264,7 +275,7 @@ def create_timematch_data_loaders(splits, config, tuple_dataset_cls, balance_sou
             pin_memory=torch.cuda.is_available(),
             sampler=sampler,
             batch_size=config.batch_size,
-            drop_last=True,
+            drop_last=drop_last,
         )
     else:
         source_loader = data.DataLoader(
@@ -273,7 +284,7 @@ def create_timematch_data_loaders(splits, config, tuple_dataset_cls, balance_sou
             pin_memory=torch.cuda.is_available(),
             batch_size=config.batch_size,
             shuffle=True,
-            drop_last=True,
+            drop_last=drop_last,
         )
 
     target_dataset = build_dataset(
@@ -305,7 +316,7 @@ def create_timematch_data_loaders(splits, config, tuple_dataset_cls, balance_sou
         batch_size=config.batch_size,
         shuffle=True,
         pin_memory=torch.cuda.is_available(),
-        drop_last=True,
+        drop_last=drop_last,
     )
 
     print(f"size of source dataset: {len(source_dataset)} ({len(source_loader)} batches)")

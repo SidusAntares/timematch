@@ -1,5 +1,247 @@
 # Project Next Steps
 
+## Active TODO (2026-05-19): v2.5 Theory Unification Route
+
+当前 `v2.5` 的目标已经更新：
+
+> **不是继续为每个任务手工寻找一种分段方式，而是把已有实验现象统一成“源域时序结构 view 的多尺度选择问题”，再用更统一的机制替代人工 view 搜索。**
+
+目前已经看到的现象：
+
+- `global / noseg` 往往太粗，不能解释多数任务的最优结构需求。
+- `uniform segmented` 和 `DOY-gap segmented` 都有有效任务，但任务偏好不同。
+- `transition-only` 往往不稳定，甚至明显伤害性能。
+- `boundary_window` 更适合作为 transition 的 saliency / weighting signal，而不是独立强 penalty。
+- 这说明分段的核心意义不是硬编码物候阶段，而是让结构约束能够关注局部时序结构。
+
+因此后续 TODO 应围绕：
+
+> **from manual structure views to source-anchored local-importance weighting**
+
+展开。
+
+### 1. 完成遥感 12 任务的 structure-view best 表
+
+优先级：最高。
+
+目的不是找统一参数，而是建立证据表：
+
+> **每个 source-target 任务是否存在某种源域结构约束 view 能带来相对 baseline 的正收益。**
+
+表格需要记录：
+
+- 任务
+- baseline
+- 当前最佳结构约束结果
+- vs baseline
+- 最佳结构 view
+  - `global / noseg`
+  - `uniform segmented intra`
+  - `DOY-gap segmented intra`
+  - `boundary-weighted transition`
+  - `trajectory / prototype dynamics`
+- 关键权重
+  - `intra`
+  - `trend`
+  - `segment_inter`
+  - `boundary_window`
+  - `prototype_dynamics`
+  - `dual_relation`
+- 是否分段
+- 分段方式
+- 备注：该任务为什么可能偏好该 view
+
+这张表的作用不是给出最终算法，而是支撑两个结论：
+
+1. 源域结构约束确实能产生迁移增益。
+2. 不同任务偏好的结构 view 不同，因此后续需要自适应或局部重要性建模。
+
+### 2. 完成 view taxonomy 的理论统一
+
+优先级：最高。
+
+需要把目前分散的设置统一为：
+
+> **multi-scale temporal structure shaping**
+
+建议理论层次如下：
+
+- **global structure view**
+  - 整条时序作为一个结构对象。
+  - 对应 noseg / global compactness。
+  - 适合整体形态稳定、局部阶段差异弱的任务。
+
+- **local phase structure view**
+  - 将时序看作多个局部结构单元。
+  - 对应 uniform / DOY-gap segmented intra compactness。
+  - 适合类别结构在局部阶段内更清晰、全局压缩过粗的任务。
+
+- **transition / boundary view**
+  - 关注局部阶段交界、转折、峰谷移动。
+  - 当前实验显示 transition-only 不可靠。
+  - boundary 更适合作为 transition weighting，而不是直接 penalty。
+
+- **trajectory dynamics view**
+  - 关注同类样本或 class prototype 的变化方向。
+  - 不应替代 compactness，而应作为动态一致性的补充结构视角。
+
+关键表述：
+
+> **分段不是为了模拟物候阶段本身，而是为了给结构约束提供局部作用域。**
+
+进一步推进：
+
+> **如果局部作用域是核心，那么下一步不应继续手工设计更多分段规则，而应让源域结构自己指示哪些局部重要。**
+
+### 3. 设计 source-only prototype dynamics attention
+
+优先级：高。
+
+这是当前理论推进后最重要的新机制。
+
+目标：
+
+> 用源域类别原型的动态变化来决定哪些时间局部更重要，从而把人工分段 view 搜索改成连续的 local-importance weighting。
+
+保守设计：
+
+1. 先训练或读取一个 source-only / baseline encoder。
+2. 在 reshaper 训练前冻结 encoder。
+3. 计算每个类别的 prototype trajectory：
+
+   ```text
+   P_c(t) = mean feature of class c at time t
+   ```
+
+4. 计算 source-only temporal importance：
+
+   ```text
+   a(t) ∝ mean_c || P_c(t+1) - P_c(t) ||
+   ```
+
+   可选增强：
+
+   ```text
+   a(t) = prototype shift
+        + class-separation change
+        + local curvature / turning strength
+   ```
+
+5. 用 `a(t)` 作为结构约束权重：
+
+   ```text
+   L_local = Σ_t a(t) || F_i(t) - P_y(t) ||²
+   ```
+
+   或者用于 soft segment weighting，而不是硬切段。
+
+原则：
+
+- 不使用 target labels。
+- 不使用 target pseudo-labels 作为强 loss。
+- 不直接用 LTAE attention，避免循环依赖。
+- 不在 reshaper 训练中反复更新 attention，先做 frozen source attention。
+
+这条线的意义：
+
+> 从“人工决定在哪里分段”转向“源域结构动态决定哪里需要更强局部约束”。
+
+### 4. 代码层面统一 structure view 接口
+
+优先级：高，但应在理论表和 attention 设计明确后动手。
+
+当前代码风险：
+
+> `global / uniform / DOY / boundary / dynamics` 如果继续以脚本和分支形式扩散，会再次变成碎片化实验库。
+
+需要重构为一个统一接口：
+
+```text
+temporal_structure_view
+  -> build_global_view()
+  -> build_local_view()
+  -> build_transition_view()
+  -> build_attention_weighted_view()
+```
+
+训练侧只接收统一输出：
+
+```text
+view_weights
+local_regions or soft_time_weights
+structure_loss_terms
+```
+
+最终 loss 形式统一成：
+
+```text
+L_structure =
+    alpha_global     L_global
+  + alpha_local      L_local
+  + alpha_transition L_transition
+  + alpha_dynamics   L_dynamics
+```
+
+第一版不需要学习 `alpha`，可以先由配置或 source descriptor 给出。
+
+### 5. 做 HAR / HHAR 最小验证
+
+优先级：中高。
+
+目的不是追最优，而是验证：
+
+> **源域结构 shaping 是否在非遥感时序 UDA 上也有正收益。**
+
+最小对照：
+
+- 原版 TimeMatch
+- TimeMatch + source reshaper
+- TimeMatch + source reshaper + structure loss
+
+数据集：
+
+- UCIHAR
+- HHAR / HHAR_SA
+
+注意：
+
+- HAR 不应强套遥感 DOY-gap。
+- 优先使用 uniform / global / attention-weighted local view。
+- 只要出现稳定正收益，即可支撑通用时序 UDA 叙事。
+
+### 6. 最后再做真正自适应
+
+优先级：后置。
+
+自适应现在不能硬做，因为当前证据说明：
+
+> 任务偏好不同是真实现象，但具体该如何判断偏好还没有稳定机制。
+
+真正的自适应应建立在：
+
+1. 12 任务 best-view 表；
+2. view taxonomy；
+3. source-only prototype dynamics attention；
+4. HAR / HHAR 最小验证；
+5. 统一 structure view 接口；
+
+之后。
+
+可能形式：
+
+- source descriptor -> bounded view weights
+- prototype dynamics attention -> local weighting
+- source-target warmup signal -> checkpoint / view selection
+
+第一版必须保守：
+
+- bounded weights
+- interpretable descriptors
+- no high-capacity neural gate
+- no direct target structure penalty
+
+---
+
 ## Status Note (2026-05-14): Final Closure Route
 
 The current work has moved past simply adding more structure-loss components.

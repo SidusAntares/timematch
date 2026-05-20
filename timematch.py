@@ -89,6 +89,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         criterion = torch.nn.CrossEntropyLoss()
 
     steps_per_epoch = config.steps_per_epoch
+    if steps_per_epoch <= 0:
+        steps_per_epoch = max(len(source_loader), len(target_loader))
+        print(f"Using loader-sized TimeMatch epoch: steps_per_epoch={steps_per_epoch}")
 
     params = list(student.parameters())
     if source_feature_reshaper is not None:
@@ -907,8 +910,13 @@ class TupleDataset(data.Dataset):
 def estimate_temporal_shift(model, target_loader, device, class_distribution=None, min_shift=-60, max_shift=60, sample_size=100, shift_estimator='IS'):
     shifts = list(range(min_shift, max_shift + 1))
     model.eval()
+    available_batches = len(target_loader)
+    if available_batches == 0:
+        raise ValueError("Cannot estimate temporal shift with an empty target loader.")
     if sample_size is None:
-        sample_size = len(target_loader)
+        sample_size = available_batches
+    else:
+        sample_size = min(int(sample_size), available_batches)
 
     target_iter = iter(target_loader)
     shift_softmaxes, labels = [], []

@@ -350,6 +350,21 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                 for key, value in dual_relation_logs.items():
                     writer.add_scalar(f"train/{key}", value, global_step + step)
 
+        lr = optimizer.param_groups[0]["lr"]
+        summary_parts = [
+            f"loss={loss_meter.avg:.4f}",
+            f"cls_raw={cls_loss_meter.avg:.4f}",
+            f"structure={compact_loss_meter.avg:.4f}",
+        ]
+        if source_feature_reshaper is not None:
+            summary_parts.append(f"reshaper_reg={reshaper_loss_meter.avg:.4f}")
+            summary_parts.append(f"cls_reshaped={dual_cls_loss_meter.avg:.4f}")
+            if getattr(config, "source_feature_dual_path", False):
+                summary_parts.append(f"dual_relation={dual_relation_loss_meter.avg:.4f}")
+        summary_parts.append(f"lr={lr:.6g}")
+        summary_parts.append(f"batches={len(data_loader)}")
+        print("Epoch train summary: " + ", ".join(summary_parts))
+
         model.eval()
         best_f1 = validation(
             best_f1,
