@@ -686,6 +686,78 @@ if __name__ == '__main__':
         help='prototype dynamics consistency mode for v2.4.4/v2.4.4b',
     )
     parser.add_argument(
+        '--source_structure_temporal_window_mode',
+        default='none',
+        choices=[
+            'none',
+            'full',
+            'uniform',
+            'early',
+            'middle',
+            'mid',
+            'late',
+            'gaussian',
+            'source_target_mask',
+            'source_target_static_mask',
+            'source_target_soft_support',
+        ],
+        help='v2.6.2 soft temporal window for phase/segment-level structure loss.',
+    )
+    parser.add_argument(
+        '--source_structure_temporal_window_center',
+        default=0.5,
+        type=float,
+        help='center in [0, 1] for gaussian temporal structure window.',
+    )
+    parser.add_argument(
+        '--source_structure_temporal_window_width',
+        default=0.35,
+        type=float,
+        help='width for gaussian/early/middle/late temporal structure window.',
+    )
+    parser.add_argument(
+        '--source_structure_temporal_window_min_weight',
+        default=0.15,
+        type=float,
+        help='minimum relative weight outside the v2.6.2 soft temporal window.',
+    )
+    parser.add_argument(
+        '--source_structure_static_mask_warmup_epochs',
+        default=0,
+        type=int,
+        help='Number of source epochs to run before computing a dataset-level source-target temporal mask.',
+    )
+    parser.add_argument(
+        '--source_structure_static_mask_max_batches',
+        default=64,
+        type=int,
+        help='Maximum source/target batches used to compute the dataset-level temporal mask; <=0 uses all batches.',
+    )
+    parser.add_argument(
+        '--source_structure_temporal_window_reliability_gate',
+        default=True,
+        type=bool_flag,
+        help='Mix source-target temporal mask back toward uniform weights when mask reliability is low.',
+    )
+    parser.add_argument(
+        '--source_structure_temporal_window_reliability_low',
+        default=5e-4,
+        type=float,
+        help='Mask reliability score below which source-target temporal mask falls back to uniform weights.',
+    )
+    parser.add_argument(
+        '--source_structure_temporal_window_reliability_high',
+        default=4e-2,
+        type=float,
+        help='Mask reliability score above which source-target temporal mask is fully trusted.',
+    )
+    parser.add_argument(
+        '--source_structure_temporal_support_smooth_kernel_size',
+        default=5,
+        type=int,
+        help='Odd smoothing kernel size for v2.6.2e time-point soft temporal support mask.',
+    )
+    parser.add_argument(
         '--source_structure_adaptive_weights',
         default=False,
         type=bool_flag,
@@ -694,7 +766,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_adaptivity_mode',
         default='none',
-        choices=['none', 'svd_reliability'],
+        choices=['none', 'svd_reliability', 'target_margin'],
         help='Source-side structure weight adaptation mode.',
     )
     parser.add_argument(
@@ -717,7 +789,7 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         '--source_structure_reliability_max_factor',
-        default=1.20,
+        default=1.00,
         type=float,
         help='Maximum multiplier for adaptive source structure weights.',
     )

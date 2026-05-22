@@ -10,6 +10,10 @@ from ideas.temporal_structure.taxonomy import (
     is_supported_structure_view,
     normalize_structure_view,
 )
+from ideas.source_temporal_window import (
+    apply_temporal_window_to_phase_weights,
+    build_temporal_window_weights,
+)
 
 
 UNIFORM_PHASE_COUNT = 5
@@ -28,6 +32,10 @@ SOURCE_STRUCTURE_WARP_INVARIANT_TRADE_OFF = 0.35
 SOURCE_STRUCTURE_PROTOTYPE_DYNAMICS_TRADE_OFF = 0.05
 SOURCE_STRUCTURE_TRAJECTORY_POOLING = "meanmax"
 SOURCE_STRUCTURE_PROTOTYPE_DYNAMICS_MODE = "cosine"
+SOURCE_STRUCTURE_TEMPORAL_WINDOW_MODE = "none"
+SOURCE_STRUCTURE_TEMPORAL_WINDOW_CENTER = 0.5
+SOURCE_STRUCTURE_TEMPORAL_WINDOW_WIDTH = 0.35
+SOURCE_STRUCTURE_TEMPORAL_WINDOW_MIN_WEIGHT = 0.15
 SHAPE_REG_DIRECTION_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_MARGIN = 0.35
@@ -1164,6 +1172,12 @@ def compute_source_structure_loss(
     prototype_dynamics_trade_off=SOURCE_STRUCTURE_PROTOTYPE_DYNAMICS_TRADE_OFF,
     trajectory_pooling=SOURCE_STRUCTURE_TRAJECTORY_POOLING,
     prototype_dynamics_mode=SOURCE_STRUCTURE_PROTOTYPE_DYNAMICS_MODE,
+    temporal_window_mode=SOURCE_STRUCTURE_TEMPORAL_WINDOW_MODE,
+    temporal_window_center=SOURCE_STRUCTURE_TEMPORAL_WINDOW_CENTER,
+    temporal_window_width=SOURCE_STRUCTURE_TEMPORAL_WINDOW_WIDTH,
+    temporal_window_min_weight=SOURCE_STRUCTURE_TEMPORAL_WINDOW_MIN_WEIGHT,
+    temporal_window_weights=None,
+    temporal_support_weights=None,
     anchor_spatial_feats=None,
     anchor_positions=None,
 ):
@@ -1267,6 +1281,26 @@ def compute_source_structure_loss(
     phase_logs["source_structure_view_family_segment"] = 1.0 if view_metadata.family == "segment" else 0.0
     phase_logs["source_structure_view_family_trajectory"] = 1.0 if view_metadata.family == "trajectory" else 0.0
     phase_structures = []
+    if temporal_support_weights is not None:
+        temporal_support_weights = temporal_support_weights.to(device=ordered_feats.device, dtype=ordered_feats.dtype)
+        if temporal_support_weights.numel() != sequence_length:
+            raise ValueError(
+                "Temporal support length must match ordered sequence length: "
+                f"{temporal_support_weights.numel()} vs {sequence_length}"
+            )
+        temporal_support_weights = temporal_support_weights.clamp_min(eps)
+        phase_logs["source_structure_temporal_support_active"] = 1.0
+        phase_logs["source_structure_temporal_support_mean"] = float(
+            temporal_support_weights.mean().detach().item()
+        )
+        phase_logs["source_structure_temporal_support_min"] = float(
+            temporal_support_weights.min().detach().item()
+        )
+        phase_logs["source_structure_temporal_support_max"] = float(
+            temporal_support_weights.max().detach().item()
+        )
+    else:
+        phase_logs["source_structure_temporal_support_active"] = 0.0
 
     for phase_idx, phase_mask in enumerate(phase_masks):
         phase_counts = phase_mask.sum(dim=1)
@@ -1285,7 +1319,13 @@ def compute_source_structure_loss(
             continue
 
         phase_mask_float = phase_mask.unsqueeze(-1).to(dtype=ordered_feats.dtype)
-        phase_feats = (ordered_feats * phase_mask_float).sum(dim=1) / phase_counts.clamp_min(1).unsqueeze(-1)
+        if temporal_support_weights is not None:
+            support = temporal_support_weights.view(1, sequence_length, 1)
+            pooled_weights = phase_mask_float * support
+            pooled_denom = pooled_weights.sum(dim=1).clamp_min(eps)
+            phase_feats = (ordered_feats * pooled_weights).sum(dim=1) / pooled_denom
+        else:
+            phase_feats = (ordered_feats * phase_mask_float).sum(dim=1) / phase_counts.clamp_min(1).unsqueeze(-1)
         phase_loss = zero
         valid_class_count = 0
         class_centers = {}
@@ -1342,11 +1382,29 @@ def compute_source_structure_loss(
     else:
         weight_tracker.update(phase_structures)
         weights = weight_tracker.get_weights(spatial_feats, eps)
+    raw_weights = weights
+    if temporal_window_weights is None:
+        temporal_window_weights = build_temporal_window_weights(
+            len(phase_structures),
+            mode=temporal_window_mode,
+            center=temporal_window_center,
+            width=temporal_window_width,
+            min_weight=temporal_window_min_weight,
+            device=weights.device,
+            dtype=weights.dtype,
+        )
+    else:
+        temporal_window_weights = temporal_window_weights.to(device=weights.device, dtype=weights.dtype)
+    weights = apply_temporal_window_to_phase_weights(weights, temporal_window_weights, eps=eps)
 
     intra_loss = zero
     for phase_idx, stats in enumerate(phase_structures):
         if stats["valid_class_count"] > 0:
             intra_loss = intra_loss + weights[phase_idx] * stats["phase_loss"]
+        phase_logs[f"phase_base_weight_p{phase_idx + 1}"] = float(raw_weights[phase_idx].detach().item())
+        phase_logs[f"phase_window_weight_p{phase_idx + 1}"] = float(
+            temporal_window_weights[phase_idx].detach().item()
+        )
         phase_logs[f"phase_weight_p{phase_idx + 1}"] = float(weights[phase_idx].detach().item())
 
     class_ids = sorted({
@@ -1837,6 +1895,12 @@ def compute_source_structure_loss(
     phase_logs["source_structure_boundary_window_classes"] = float(boundary_window_class_count)
     phase_logs["source_structure_warp_invariant_classes"] = float(warp_invariant_class_count)
     phase_logs["source_structure_segment_count"] = float(len(phase_structures))
+    phase_logs["source_structure_temporal_window_active"] = (
+        0.0 if str(temporal_window_mode or "none").lower() in {"none", "full", "uniform"} else 1.0
+    )
+    phase_logs["source_structure_temporal_window_center"] = float(temporal_window_center)
+    phase_logs["source_structure_temporal_window_width"] = float(temporal_window_width)
+    phase_logs["source_structure_temporal_window_min_weight"] = float(temporal_window_min_weight)
     phase_logs["structure_loss"] = float(total_loss.detach().item())
     phase_logs["compactness_loss"] = phase_logs["structure_loss"]
     return total_loss, phase_logs
