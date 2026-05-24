@@ -2,6 +2,8 @@ from torch.utils.data.sampler import WeightedRandomSampler
 import sklearn.metrics
 from collections import Counter
 from copy import deepcopy
+import json
+import os
 
 import numpy as np
 import torch
@@ -26,6 +28,13 @@ from ideas.source_feature_reshaper import (
 from ideas.v271_adaptive_structure import (
     compute_v271_adaptive_support_loss,
     load_v271_adaptive_supports,
+)
+from ideas.v271_adaptive_support_discovery import (
+    build_atomic_partition_spec,
+    compute_source_segment_prototypes,
+    construct_pair_adaptive_supports,
+    describe_atomic_partition_spec,
+    discover_target_pair_segments,
 )
 from transforms import (
     Normalize,
@@ -55,6 +64,129 @@ def _check_temporal_index_range(model, positions, applied_shift, tag):
             "This usually means an extra temporal shift was applied on top of TimeMatch "
             "alignment or the positional encoding range is inconsistent with the dataset dates."
         )
+
+
+def _discover_v271_da_support_bank(
+    model,
+    source_feature_reshaper,
+    source_loader,
+    target_loader_no_aug,
+    config,
+    device,
+    target_to_source_shift,
+    epoch,
+):
+    model_was_training = model.training
+    reshaper_was_training = source_feature_reshaper.training if source_feature_reshaper is not None else False
+    model.eval()
+    if source_feature_reshaper is not None:
+        source_feature_reshaper.eval()
+
+    try:
+        partition_spec = build_atomic_partition_spec(
+            source_loader.dataset.date_positions,
+            getattr(config, "timematch_v271_adaptive_atomic_bins", 12),
+        )
+        print("v2.7 full-core adaptive atomic partition:", describe_atomic_partition_spec(partition_spec))
+        apply_source_reshaper = bool(getattr(config, "timematch_v271_adaptive_discovery_apply_source_reshaper", False))
+        prototypes, variances, counts = compute_source_segment_prototypes(
+            model,
+            source_feature_reshaper,
+            source_loader,
+            partition_spec,
+            config.num_classes,
+            device,
+            max_batches=getattr(config, "timematch_v271_adaptive_source_max_batches", 64),
+            apply_reshaper=apply_source_reshaper,
+        )
+        discovery = discover_target_pair_segments(
+            model,
+            None,
+            target_loader_no_aug,
+            prototypes,
+            variances,
+            counts,
+            partition_spec,
+            device,
+            target_to_source_shift=target_to_source_shift,
+            max_batches=getattr(config, "timematch_v271_adaptive_target_max_batches", 64),
+            max_margin=getattr(config, "timematch_v271_adaptive_max_margin", 0.20),
+            min_top2_mass=getattr(config, "timematch_v271_adaptive_min_top2_mass", 0.35),
+            prototype_temperature=getattr(config, "timematch_v271_adaptive_prototype_temperature", 1.0),
+            shift_jitter=getattr(config, "timematch_v271_adaptive_shift_jitter", 3),
+            soft_evidence=getattr(config, "timematch_v271_adaptive_soft_evidence", False),
+            shuffle_pair_baseline=getattr(config, "timematch_v271_adaptive_shuffle_pair_baseline", True),
+            baseline_pairs_per_sample=getattr(config, "timematch_v271_adaptive_baseline_pairs_per_sample", 4),
+            baseline_mode=getattr(config, "timematch_v271_adaptive_baseline_mode", "mean"),
+        )
+        threshold, supports = construct_pair_adaptive_supports(
+            discovery["pair_segment_rows"],
+            score_quantile=getattr(config, "timematch_v271_adaptive_score_quantile", 0.85),
+            min_score=getattr(config, "timematch_v271_adaptive_min_discovery_score", 0.0),
+            min_ratio=getattr(config, "timematch_v271_adaptive_min_discovery_ratio", 1.2),
+            top_m_per_pair=getattr(config, "timematch_v271_adaptive_top_m_per_pair", 1),
+            max_supports=getattr(config, "timematch_v271_adaptive_max_supports", 4),
+            min_support_count=getattr(config, "timematch_v271_adaptive_min_support_count", 16),
+            min_shift_stability=getattr(config, "timematch_v271_adaptive_min_shift_stability", 0.66),
+            max_support_atoms=getattr(config, "timematch_v271_adaptive_max_support_atoms", 2),
+            max_interval_span=getattr(config, "timematch_v271_adaptive_max_interval_span", 90),
+            gate_score_high=getattr(config, "timematch_v271_adaptive_gate_score_high", 0.5),
+        )
+        logs = {
+            "timematch_v271_adaptive_da_discovered": 1.0,
+            "timematch_v271_adaptive_da_discover_epoch": float(epoch + 1),
+            "timematch_v271_adaptive_da_support_count": float(len(supports)),
+            "timematch_v271_adaptive_da_pair_threshold": float(threshold),
+            "timematch_v271_adaptive_da_seen_target": float(discovery.get("seen_target_samples", 0)),
+            "timematch_v271_adaptive_da_accepted_fraction": float(discovery.get("accepted_fraction", 0.0)),
+            "timematch_v271_adaptive_da_evidence_weight": float(discovery.get("accepted_evidence_weight", 0.0)),
+            "timematch_v271_adaptive_da_shift": float(target_to_source_shift),
+        }
+        for idx, support in enumerate(supports[:4]):
+            logs[f"timematch_v271_adaptive_da_support{idx + 1}_score"] = float(support.get("score", 0.0))
+            logs[f"timematch_v271_adaptive_da_support{idx + 1}_gate"] = float(support.get("gate", 0.0))
+            logs[f"timematch_v271_adaptive_da_support{idx + 1}_count"] = float(support.get("support_count", 0.0))
+            logs[f"timematch_v271_adaptive_da_support{idx + 1}_span"] = float(
+                int(support["end"]) - int(support["start"]) + 1
+            )
+
+        payload = {
+            "source": config.source,
+            "target": config.target,
+            "epoch": int(epoch + 1),
+            "target_to_source_shift": int(target_to_source_shift),
+            "partition": partition_spec,
+            "pair_score_threshold": threshold,
+            "discovery": {
+                "seen_target_samples": discovery.get("seen_target_samples", 0),
+                "accepted_fraction": discovery.get("accepted_fraction", 0.0),
+                "accepted_evidence_weight": discovery.get("accepted_evidence_weight", 0.0),
+                "pair_rows": discovery.get("pair_rows", []),
+            },
+            "adaptive_supports": supports,
+        }
+        path = os.path.join(config.output_dir, f"v271_da_support_epoch_{epoch + 1}.json")
+        with open(path, "w", encoding="utf-8") as fp:
+            json.dump(payload, fp, indent=2)
+        logs["timematch_v271_adaptive_da_support_file_written"] = 1.0
+        print(
+            "v2.7 full-core adaptive supports: "
+            f"count={len(supports)}, threshold={threshold:.6f}, file={path}"
+        )
+        for support in supports:
+            print(
+                f"  pair={support['class_pair']} interval=[{support['start']},{support['end']}] "
+                f"score={support['score']:.6f} gate={support['gate']:.3f} "
+                f"count={support['support_count']} atoms={support['atomic_segments']}"
+            )
+        if not supports:
+            print("v2.7 full-core adaptive supports: no reliable support; adaptive loss stays disabled.")
+        return supports, logs
+    finally:
+        if model_was_training:
+            model.train()
+        if source_feature_reshaper is not None and reshaper_was_training:
+            source_feature_reshaper.train()
 
 
 def train_timematch(student, config, writer, val_loader, device, best_model_path, fold_num, splits):
@@ -133,6 +265,11 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
     v271_adaptive_trade_off = float(getattr(config, "timematch_v271_adaptive_trade_off", 0.0))
     v271_adaptive_warmup_epochs = max(0, int(getattr(config, "timematch_v271_adaptive_warmup_epochs", 0)))
     v271_adaptive_ramp_epochs = max(1, int(getattr(config, "timematch_v271_adaptive_ramp_epochs", 1)))
+    v271_discover_in_da = bool(getattr(config, "timematch_v271_adaptive_discover_in_da", False))
+    v271_discover_epoch = int(getattr(config, "timematch_v271_adaptive_discover_epoch", -1))
+    if v271_discover_epoch < 0:
+        v271_discover_epoch = v271_adaptive_warmup_epochs
+    v271_da_discovery_done = bool(v271_adaptive_supports)
 
     source_iter = iter(cycle(source_loader))
     target_iter = iter(cycle(target_loader))
@@ -174,6 +311,27 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     source_to_target_shift = 0
                 min_shift, max_shift = min(target_to_source_shift, 0), max(0, target_to_source_shift)
             writer.add_scalar("train/temporal_shift", target_to_source_shift, epoch)
+
+        if (
+            v271_discover_in_da
+            and not v271_da_discovery_done
+            and v271_adaptive_trade_off > 0.0
+            and epoch >= v271_discover_epoch
+        ):
+            v271_adaptive_supports, v271_support_logs = _discover_v271_da_support_bank(
+                teacher,
+                source_feature_reshaper,
+                source_loader,
+                target_loader_no_aug,
+                config,
+                device,
+                target_to_source_shift,
+                epoch,
+            )
+            v271_da_discovery_done = True
+            for name, value in v271_support_logs.items():
+                if isinstance(value, (int, float)):
+                    writer.add_scalar(f"train/{name}", value, epoch)
 
         student.train()
         teacher.eval()  # don't update BN or use dropout for teacher

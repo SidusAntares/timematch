@@ -807,6 +807,44 @@ if __name__ == '__main__':
         type=float,
         help="bounded residual energy weight inside v2.7.1 adaptive segment loss",
     )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_discover_in_da",
+        default=False,
+        type=bool_flag,
+        help="discover v2.7 adaptive class-pair supports inside DA after warmup instead of loading an offline bank",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_discover_epoch",
+        default=-1,
+        type=int,
+        help="0-based DA epoch for in-DA support discovery; -1 uses timematch_v271_adaptive_warmup_epochs",
+    )
+    timematch.add_argument("--timematch_v271_adaptive_source_max_batches", default=64, type=int)
+    timematch.add_argument("--timematch_v271_adaptive_target_max_batches", default=64, type=int)
+    timematch.add_argument("--timematch_v271_adaptive_atomic_bins", default=12, type=int)
+    timematch.add_argument("--timematch_v271_adaptive_shift_jitter", default=3, type=int)
+    timematch.add_argument("--timematch_v271_adaptive_soft_evidence", default=False, type=bool_flag)
+    timematch.add_argument("--timematch_v271_adaptive_max_margin", default=0.20, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_min_top2_mass", default=0.35, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_prototype_temperature", default=1.0, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_baseline_pairs_per_sample", default=4, type=int)
+    timematch.add_argument("--timematch_v271_adaptive_baseline_mode", default="mean", choices=["mean", "max"])
+    timematch.add_argument("--timematch_v271_adaptive_shuffle_pair_baseline", default=True, type=bool_flag)
+    timematch.add_argument("--timematch_v271_adaptive_score_quantile", default=0.85, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_min_discovery_score", default=0.0, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_min_discovery_ratio", default=1.2, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_top_m_per_pair", default=1, type=int)
+    timematch.add_argument("--timematch_v271_adaptive_max_supports", default=4, type=int)
+    timematch.add_argument("--timematch_v271_adaptive_min_support_count", default=16, type=int)
+    timematch.add_argument("--timematch_v271_adaptive_min_shift_stability", default=0.66, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_max_support_atoms", default=2, type=int)
+    timematch.add_argument("--timematch_v271_adaptive_max_interval_span", default=90, type=int)
+    timematch.add_argument("--timematch_v271_adaptive_gate_score_high", default=0.5, type=float)
+    timematch.add_argument(
+        "--timematch_v271_adaptive_discovery_apply_source_reshaper",
+        default=False,
+        type=bool_flag,
+    )
 
     # Source-only + source phase compactness regularization
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')

@@ -194,3 +194,70 @@ def test_construct_pair_adaptive_supports_merges_by_class_pair():
     assert support["end"] == 19
     assert support["atomic_segments"] == [1, 2]
     assert 0.0 <= support["gate"] <= 1.0
+
+
+def test_construct_pair_adaptive_supports_applies_strict_reliability_filters():
+    pair_segment_rows = [
+        {
+            "pair": "0:1",
+            "segment": 1,
+            "start": 0,
+            "end": 9,
+            "score": 0.60,
+            "support_count": 2,
+            "source_separability": 1.2,
+            "target_explainability": 0.7,
+            "ambiguity": 0.8,
+            "shift_stability": 1.0,
+            "actual_raw_score": 0.70,
+            "baseline_raw_score": 0.10,
+            "relative_score": 0.60,
+            "ratio_score": 7.0,
+        },
+        {
+            "pair": "0:1",
+            "segment": 2,
+            "start": 10,
+            "end": 19,
+            "score": 0.50,
+            "support_count": 20,
+            "source_separability": 1.1,
+            "target_explainability": 0.6,
+            "ambiguity": 0.7,
+            "shift_stability": 0.33,
+            "actual_raw_score": 0.55,
+            "baseline_raw_score": 0.05,
+            "relative_score": 0.50,
+            "ratio_score": 11.0,
+        },
+        {
+            "pair": "1:2",
+            "segment": 3,
+            "start": 20,
+            "end": 29,
+            "score": 0.40,
+            "support_count": 20,
+            "source_separability": 1.0,
+            "target_explainability": 0.6,
+            "ambiguity": 0.7,
+            "shift_stability": 1.0,
+            "actual_raw_score": 0.45,
+            "baseline_raw_score": 0.05,
+            "relative_score": 0.40,
+            "ratio_score": 9.0,
+        },
+    ]
+
+    _, supports = construct_pair_adaptive_supports(
+        pair_segment_rows,
+        score_quantile=0.0,
+        min_score=0.10,
+        min_ratio=1.0,
+        min_support_count=10,
+        min_shift_stability=0.66,
+        gate_score_high=0.80,
+    )
+
+    assert len(supports) == 1
+    assert supports[0]["classes"] == [1, 2]
+    assert supports[0]["gate"] == 0.5

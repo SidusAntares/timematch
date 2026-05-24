@@ -673,6 +673,72 @@ def _finalize_pair_support(group, pair):
     }
 
 
+def _start_pair_group(row):
+    return {
+        "start": row["start"],
+        "end": row["end"],
+        "last_segment": row["segment"],
+        "atomic_segments": [row["segment"]],
+        "score_sum": row["score"],
+        "support_count": row["support_count"],
+        "source_separability_sum": row["source_separability"],
+        "target_explainability_sum": row["target_explainability"],
+        "ambiguity_sum": row["ambiguity"],
+        "shift_stability_sum": row.get("shift_stability", 1.0),
+        "actual_raw_score_sum": row["actual_raw_score"],
+        "baseline_raw_score_sum": row["baseline_raw_score"],
+        "relative_score_sum": row["relative_score"],
+        "ratio_score_sum": row["ratio_score"],
+    }
+
+
+def _candidate_group_after_append(group, row):
+    candidate = dict(group)
+    candidate["end"] = row["end"]
+    candidate["last_segment"] = row["segment"]
+    candidate["atomic_segments"] = list(group["atomic_segments"]) + [row["segment"]]
+    candidate["score_sum"] = group["score_sum"] + row["score"]
+    candidate["support_count"] = group["support_count"] + row["support_count"]
+    candidate["source_separability_sum"] = group["source_separability_sum"] + row["source_separability"]
+    candidate["target_explainability_sum"] = group["target_explainability_sum"] + row["target_explainability"]
+    candidate["ambiguity_sum"] = group["ambiguity_sum"] + row["ambiguity"]
+    candidate["shift_stability_sum"] = group["shift_stability_sum"] + row.get("shift_stability", 1.0)
+    candidate["actual_raw_score_sum"] = group["actual_raw_score_sum"] + row["actual_raw_score"]
+    candidate["baseline_raw_score_sum"] = group["baseline_raw_score_sum"] + row["baseline_raw_score"]
+    candidate["relative_score_sum"] = group["relative_score_sum"] + row["relative_score"]
+    candidate["ratio_score_sum"] = group["ratio_score_sum"] + row["ratio_score"]
+    return candidate
+
+
+def _support_span(start, end):
+    return int(end) - int(start) + 1
+
+
+def _row_passes_pair_filter(row, threshold, min_ratio, min_support_count, min_shift_stability):
+    return (
+        row["score"] >= threshold
+        and row.get("ratio_score", 0.0) >= float(min_ratio)
+        and row.get("support_count", 0) >= int(min_support_count)
+        and row.get("shift_stability", 0.0) >= float(min_shift_stability)
+    )
+
+
+def _group_passes_shape_constraints(group, max_support_atoms, max_interval_span):
+    if int(max_support_atoms) > 0 and len(group["atomic_segments"]) > int(max_support_atoms):
+        return False
+    if int(max_interval_span) > 0 and _support_span(group["start"], group["end"]) > int(max_interval_span):
+        return False
+    return True
+
+
+def _support_passes_reliability(support, min_support_count, min_shift_stability, max_support_atoms, max_interval_span):
+    return (
+        support.get("support_count", 0) >= int(min_support_count)
+        and support.get("shift_stability", 0.0) >= float(min_shift_stability)
+        and _group_passes_shape_constraints(support, max_support_atoms, max_interval_span)
+    )
+
+
 def construct_pair_adaptive_supports(
     pair_segment_rows,
     score_quantile,
@@ -680,11 +746,19 @@ def construct_pair_adaptive_supports(
     min_ratio,
     top_m_per_pair=2,
     max_supports=12,
+    min_support_count=1,
+    min_shift_stability=0.0,
+    max_support_atoms=0,
+    max_interval_span=0,
+    gate_score_high=0.0,
 ):
     positive_scores = [
         row["score"]
         for row in pair_segment_rows
-        if row["score"] > 0.0 and row.get("ratio_score", 0.0) >= float(min_ratio) and row.get("support_count", 0) > 0
+        if row["score"] > 0.0
+        and row.get("ratio_score", 0.0) >= float(min_ratio)
+        and row.get("support_count", 0) >= int(min_support_count)
+        and row.get("shift_stability", 0.0) >= float(min_shift_stability)
     ]
     if positive_scores:
         threshold = float(np.quantile(np.asarray(positive_scores), float(score_quantile)))
@@ -702,10 +776,12 @@ def construct_pair_adaptive_supports(
         pair_supports = []
         current = None
         for row in rows:
-            keep = (
-                row["score"] >= threshold
-                and row.get("ratio_score", 0.0) >= float(min_ratio)
-                and row.get("support_count", 0) > 0
+            keep = _row_passes_pair_filter(
+                row,
+                threshold,
+                min_ratio,
+                min_support_count,
+                min_shift_stability,
             )
             if not keep:
                 if current is not None:
@@ -713,43 +789,32 @@ def construct_pair_adaptive_supports(
                     current = None
                 continue
             if current is None:
-                current = {
-                    "start": row["start"],
-                    "end": row["end"],
-                    "last_segment": row["segment"],
-                    "atomic_segments": [row["segment"]],
-                    "score_sum": row["score"],
-                    "support_count": row["support_count"],
-                    "source_separability_sum": row["source_separability"],
-                    "target_explainability_sum": row["target_explainability"],
-                    "ambiguity_sum": row["ambiguity"],
-                    "shift_stability_sum": row.get("shift_stability", 1.0),
-                    "actual_raw_score_sum": row["actual_raw_score"],
-                    "baseline_raw_score_sum": row["baseline_raw_score"],
-                    "relative_score_sum": row["relative_score"],
-                    "ratio_score_sum": row["ratio_score"],
-                }
+                current = _start_pair_group(row)
                 continue
             if int(row["segment"]) == int(current["last_segment"]) + 1:
-                current["end"] = row["end"]
-                current["last_segment"] = row["segment"]
-                current["atomic_segments"].append(row["segment"])
-                current["score_sum"] += row["score"]
-                current["support_count"] += row["support_count"]
-                current["source_separability_sum"] += row["source_separability"]
-                current["target_explainability_sum"] += row["target_explainability"]
-                current["ambiguity_sum"] += row["ambiguity"]
-                current["shift_stability_sum"] += row.get("shift_stability", 1.0)
-                current["actual_raw_score_sum"] += row["actual_raw_score"]
-                current["baseline_raw_score_sum"] += row["baseline_raw_score"]
-                current["relative_score_sum"] += row["relative_score"]
-                current["ratio_score_sum"] += row["ratio_score"]
+                candidate = _candidate_group_after_append(current, row)
+                if _group_passes_shape_constraints(candidate, max_support_atoms, max_interval_span):
+                    current = candidate
+                else:
+                    pair_supports.append(_finalize_pair_support(current, pair))
+                    current = _start_pair_group(row)
             else:
                 pair_supports.append(_finalize_pair_support(current, pair))
-                current = None
+                current = _start_pair_group(row)
         if current is not None:
             pair_supports.append(_finalize_pair_support(current, pair))
 
+        pair_supports = [
+            support
+            for support in pair_supports
+            if _support_passes_reliability(
+                support,
+                min_support_count,
+                min_shift_stability,
+                max_support_atoms,
+                max_interval_span,
+            )
+        ]
         pair_supports.sort(key=lambda item: item["score"], reverse=True)
         supports.extend(pair_supports[: max(1, int(top_m_per_pair))])
 
@@ -757,5 +822,8 @@ def construct_pair_adaptive_supports(
     supports = supports[: max(0, int(max_supports))]
     max_score = max([support["score"] for support in supports], default=0.0)
     for support in supports:
-        support["gate"] = 0.0 if max_score <= 0.0 else max(0.0, min(1.0, support["score"] / max_score))
+        if float(gate_score_high) > 0.0:
+            support["gate"] = max(0.0, min(1.0, support["score"] / float(gate_score_high)))
+        else:
+            support["gate"] = 0.0 if max_score <= 0.0 else max(0.0, min(1.0, support["score"] / max_score))
     return threshold, supports
