@@ -1,15 +1,16 @@
+from torch.utils.data.sampler import WeightedRandomSampler
 import sklearn.metrics
+from collections import Counter
 from copy import deepcopy
-import json
-import os
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.utils import data
+from torchvision import transforms
 from tqdm import tqdm
 
-from data_adapters.factory import create_timematch_data_loaders
+from dataset import PixelSetData
 from evaluation import validation
 from ideas.source_phase_compactness import (
     SourceSegmentWeightTracker,
@@ -21,6 +22,18 @@ from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
     compute_dual_path_relation_regularization,
     compute_source_feature_reshaper_regularization,
+)
+from ideas.v271_adaptive_structure import (
+    compute_v271_adaptive_support_loss,
+    load_v271_adaptive_supports,
+)
+from transforms import (
+    Normalize,
+    RandomSamplePixels,
+    RandomSampleTimeSteps,
+    ToTensor,
+    RandomTemporalShift,
+    Identity,
 )
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda, cycle
@@ -53,17 +66,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
     # Setup model
     pretrained_path = f"{config.weights}/fold_{fold_num}"
-    weights_checkpoint = getattr(config, "weights_checkpoint", "model.pt")
-    if not weights_checkpoint:
-        weights_checkpoint = "model.pt"
-    if not weights_checkpoint.endswith(".pt"):
-        weights_checkpoint = f"{weights_checkpoint}.pt"
-    if os.path.isabs(weights_checkpoint):
-        checkpoint_path = weights_checkpoint
-    else:
-        checkpoint_path = os.path.join(pretrained_path, weights_checkpoint)
-    print(f"Loading source weights from {checkpoint_path}")
-    pretrained_checkpoint = torch.load(checkpoint_path, weights_only=False)
+    pretrained_checkpoint = torch.load(f"{pretrained_path}/model.pt", weights_only=False)
     pretrained_weights = pretrained_checkpoint["state_dict"]
     student.load_state_dict(pretrained_weights)
     teacher = deepcopy(student)
@@ -89,9 +92,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         criterion = torch.nn.CrossEntropyLoss()
 
     steps_per_epoch = config.steps_per_epoch
-    if steps_per_epoch <= 0:
-        steps_per_epoch = max(len(source_loader), len(target_loader))
-        print(f"Using loader-sized TimeMatch epoch: steps_per_epoch={steps_per_epoch}")
 
     params = list(student.parameters())
     if source_feature_reshaper is not None:
@@ -125,6 +125,14 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         phase_partition_spec=source_phase_partition_spec,
         min_sample_points_per_phase=getattr(config, "source_phase_min_sample_points", 2),
     )
+    v271_adaptive_supports, v271_support_logs = load_v271_adaptive_supports(
+        getattr(config, "timematch_v271_adaptive_support_file", ""),
+        min_score=getattr(config, "timematch_v271_adaptive_min_score", 0.0),
+        min_gate=getattr(config, "timematch_v271_adaptive_min_gate", 0.0),
+    )
+    v271_adaptive_trade_off = float(getattr(config, "timematch_v271_adaptive_trade_off", 0.0))
+    v271_adaptive_warmup_epochs = max(0, int(getattr(config, "timematch_v271_adaptive_warmup_epochs", 0)))
+    v271_adaptive_ramp_epochs = max(1, int(getattr(config, "timematch_v271_adaptive_ramp_epochs", 1)))
 
     source_iter = iter(cycle(source_loader))
     target_iter = iter(cycle(target_loader))
@@ -133,7 +141,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
     # To evaluate how well we estimate class distribution
     target_labels = target_loader_no_aug.dataset.get_labels()
     actual_class_distr = estimate_class_distribution(target_labels, config.num_classes)
-    source_class_distr = estimate_class_distribution(source_loader.dataset.get_labels(), config.num_classes)
 
     # estimate an initial guess for shift using Inception Score
     if config.estimate_shift:
@@ -149,8 +156,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         all_pseudo_labels = torch.max(pseudo_softmaxes, dim=1)[1]
 
     source_to_target_shift = 0
-    shift_history = []
-    selection_metric_history = []
     for epoch in range(config.epochs):
         progress_bar = tqdm(range(steps_per_epoch), desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}")
         loss_meter = AverageMeter()
@@ -169,7 +174,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     source_to_target_shift = 0
                 min_shift, max_shift = min(target_to_source_shift, 0), max(0, target_to_source_shift)
             writer.add_scalar("train/temporal_shift", target_to_source_shift, epoch)
-            shift_history.append(int(target_to_source_shift))
 
         student.train()
         teacher.eval()  # don't update BN or use dropout for teacher
@@ -198,12 +202,15 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             reshaper_logs = {}
             compact_loss = pixels_s.sum() * 0.0
             compact_logs = {}
+            v271_adaptive_loss = pixels_s.sum() * 0.0
+            v271_adaptive_logs = {}
             dual_relation_loss = pixels_s.sum() * 0.0
             dual_relation_logs = {}
             loss_source_reshaped = pixels_s.sum() * 0.0
             if config.domain_specific_bn:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
                 spatial_feats_source_raw = student.spatial_encoder(pixels_s, mask_s, extra_s)
+                spatial_feats_source = spatial_feats_source_raw
                 temporal_feats_source_raw = student.temporal_encoder(
                     spatial_feats_source_raw,
                     position_s + source_to_target_shift,
@@ -235,10 +242,34 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
                         boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
                         boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
-                        warp_invariant_trade_off=getattr(config, "source_structure_warp_invariant_trade_off", 0.35),
-                        prototype_dynamics_trade_off=getattr(config, "source_structure_prototype_dynamics_trade_off", 0.05),
-                        trajectory_pooling=getattr(config, "source_structure_trajectory_pooling", "meanmax"),
-                        prototype_dynamics_mode=getattr(config, "source_structure_prototype_dynamics_mode", "cosine"),
+                        v271_trend_kernel_size=getattr(config, "source_structure_v271_trend_kernel_size", 5),
+                        v271_trend_smoothing_mode=getattr(
+                            config,
+                            "source_structure_v271_trend_smoothing_mode",
+                            "time",
+                        ),
+                        v271_trend_bandwidth=getattr(config, "source_structure_v271_trend_bandwidth", 0.0),
+                        v271_trend_kernel=getattr(config, "source_structure_v271_trend_kernel", "gaussian"),
+                        v271_trend_dynamics_trade_off=getattr(
+                            config,
+                            "source_structure_v271_trend_dynamics_trade_off",
+                            0.05,
+                        ),
+                        v271_residual_variance_trade_off=getattr(
+                            config,
+                            "source_structure_v271_residual_variance_trade_off",
+                            0.10,
+                        ),
+                        v271_residual_energy_trade_off=getattr(
+                            config,
+                            "source_structure_v271_residual_energy_trade_off",
+                            0.05,
+                        ),
+                        v271_residual_energy_margin=getattr(
+                            config,
+                            "source_structure_v271_residual_energy_margin",
+                            1.0,
+                        ),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
@@ -294,10 +325,34 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
                         boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
                         boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
-                        warp_invariant_trade_off=getattr(config, "source_structure_warp_invariant_trade_off", 0.35),
-                        prototype_dynamics_trade_off=getattr(config, "source_structure_prototype_dynamics_trade_off", 0.05),
-                        trajectory_pooling=getattr(config, "source_structure_trajectory_pooling", "meanmax"),
-                        prototype_dynamics_mode=getattr(config, "source_structure_prototype_dynamics_mode", "cosine"),
+                        v271_trend_kernel_size=getattr(config, "source_structure_v271_trend_kernel_size", 5),
+                        v271_trend_smoothing_mode=getattr(
+                            config,
+                            "source_structure_v271_trend_smoothing_mode",
+                            "time",
+                        ),
+                        v271_trend_bandwidth=getattr(config, "source_structure_v271_trend_bandwidth", 0.0),
+                        v271_trend_kernel=getattr(config, "source_structure_v271_trend_kernel", "gaussian"),
+                        v271_trend_dynamics_trade_off=getattr(
+                            config,
+                            "source_structure_v271_trend_dynamics_trade_off",
+                            0.05,
+                        ),
+                        v271_residual_variance_trade_off=getattr(
+                            config,
+                            "source_structure_v271_residual_variance_trade_off",
+                            0.10,
+                        ),
+                        v271_residual_energy_trade_off=getattr(
+                            config,
+                            "source_structure_v271_residual_energy_trade_off",
+                            0.05,
+                        ),
+                        v271_residual_energy_margin=getattr(
+                            config,
+                            "source_structure_v271_residual_energy_margin",
+                            1.0,
+                        ),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
@@ -335,9 +390,72 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
+            if v271_adaptive_supports and v271_adaptive_trade_off > 0.0:
+                if epoch >= v271_adaptive_warmup_epochs:
+                    ramp = min(1.0, (epoch - v271_adaptive_warmup_epochs + 1) / v271_adaptive_ramp_epochs)
+                else:
+                    ramp = 0.0
+                if ramp > 0.0:
+                    raw_v271_adaptive_loss, v271_adaptive_logs = compute_v271_adaptive_support_loss(
+                        spatial_feats_source,
+                        position_s,
+                        source_labels,
+                        v271_adaptive_supports,
+                        trend_kernel_size=getattr(config, "source_structure_v271_trend_kernel_size", 5),
+                        trend_smoothing_mode=getattr(
+                            config,
+                            "source_structure_v271_trend_smoothing_mode",
+                            "time",
+                        ),
+                        trend_bandwidth=getattr(config, "source_structure_v271_trend_bandwidth", 0.0),
+                        trend_kernel=getattr(config, "source_structure_v271_trend_kernel", "gaussian"),
+                        trend_cohesion_trade_off=getattr(
+                            config,
+                            "timematch_v271_adaptive_trend_trade_off",
+                            1.0,
+                        ),
+                        trend_dynamics_trade_off=getattr(
+                            config,
+                            "timematch_v271_adaptive_trend_dynamics_trade_off",
+                            0.05,
+                        ),
+                        residual_variance_trade_off=getattr(
+                            config,
+                            "timematch_v271_adaptive_residual_variance_trade_off",
+                            0.10,
+                        ),
+                        residual_energy_trade_off=getattr(
+                            config,
+                            "timematch_v271_adaptive_residual_energy_trade_off",
+                            0.05,
+                        ),
+                        residual_energy_margin=getattr(
+                            config,
+                            "source_structure_v271_residual_energy_margin",
+                            1.0,
+                        ),
+                        min_points=getattr(config, "timematch_v271_adaptive_min_points", 2),
+                    )
+                    effective_v271_weight = v271_adaptive_trade_off * ramp
+                    v271_adaptive_loss = effective_v271_weight * raw_v271_adaptive_loss
+                    v271_adaptive_logs.update(v271_support_logs)
+                    v271_adaptive_logs["timematch_v271_adaptive_ramp"] = float(ramp)
+                    v271_adaptive_logs["timematch_v271_adaptive_trade_off"] = float(v271_adaptive_trade_off)
+                    v271_adaptive_logs["timematch_v271_adaptive_effective_weight"] = float(effective_v271_weight)
+                    v271_adaptive_logs["timematch_v271_adaptive_raw_loss"] = float(
+                        raw_v271_adaptive_loss.detach().item()
+                    )
+                    v271_adaptive_logs["timematch_v271_adaptive_weighted_loss"] = float(
+                        v271_adaptive_loss.detach().item()
+                    )
             loss = loss_source + config.trade_off * loss_target
             if source_feature_reshaper is not None:
-                loss = loss + compact_loss + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
+                loss = (
+                    loss
+                    + getattr(config, "timematch_source_structure_trade_off", 1.0) * compact_loss
+                    + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
+                )
+            loss = loss + v271_adaptive_loss
 
             # compute loss and backprop
             optimizer.zero_grad()
@@ -397,6 +515,11 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         writer.add_scalar(f"train/{name}", value, global_step)
                 for name, value in dual_relation_logs.items():
                     writer.add_scalar(f"train/{name}", value, global_step)
+                for name, value in v271_adaptive_logs.items():
+                    if isinstance(value, torch.Tensor) and value.numel() == 1:
+                        value = float(value.detach().item())
+                    if isinstance(value, (int, float)):
+                        writer.add_scalar(f"train/{name}", value, global_step)
 
             global_step += 1
 
@@ -413,7 +536,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
         writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
 
-        if config.run_validation and not getattr(config, "disable_validation_in_timematch", False):
+        if config.run_validation:
             if config.output_student:
                 student.eval()
                 if source_feature_reshaper is not None:
@@ -447,76 +570,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     apply_source_feature_reshaper=False,
                 )
 
-        if (
-            getattr(config, "selection_metrics_out", None)
-            and getattr(config, "selection_score_mode", "temporal_perturbation")
-            in (
-                "temporal_perturbation_trajectory",
-                "temporal_perturbation_late_filter",
-                "pure_perturbation_late_reject",
-                "pure_perturbation_margin_tiebreak",
-            )
-        ):
-            epoch_metrics = compute_selection_metrics(
-                teacher=teacher,
-                student=student,
-                target_loader=target_loader_no_aug,
-                device=device,
-                target_to_source_shift=target_to_source_shift,
-                num_classes=config.num_classes,
-                pseudo_threshold=config.pseudo_threshold,
-                source_class_distr=source_class_distr,
-                shift_history=shift_history,
-                max_temporal_shift=config.max_temporal_shift,
-                config=config,
-            )
-            epoch_metrics["selection_epoch"] = int(epoch + 1)
-            selection_metric_history.append(epoch_metrics)
-            writer.add_scalar("selection/temporal_perturbation_score", epoch_metrics["selection_temporal_perturbation_score"], epoch)
-            writer.add_scalar("selection/perturbation_score", epoch_metrics["selection_perturbation_score"], epoch)
-
-    if getattr(config, "selection_metrics_out", None):
-        if (
-            getattr(config, "selection_score_mode", "temporal_perturbation")
-            in (
-                "temporal_perturbation_trajectory",
-                "temporal_perturbation_late_filter",
-                "pure_perturbation_late_reject",
-                "pure_perturbation_margin_tiebreak",
-            )
-            and selection_metric_history
-        ):
-            metrics = dict(selection_metric_history[-1])
-            metrics["selection_score_history"] = selection_metric_history
-            _apply_trajectory_selection_score(metrics, selection_metric_history, config)
-        else:
-            metrics = compute_selection_metrics(
-                teacher=teacher,
-                student=student,
-                target_loader=target_loader_no_aug,
-                device=device,
-                target_to_source_shift=target_to_source_shift,
-                num_classes=config.num_classes,
-                pseudo_threshold=config.pseudo_threshold,
-                source_class_distr=source_class_distr,
-                shift_history=shift_history,
-                max_temporal_shift=config.max_temporal_shift,
-                config=config,
-            )
-        metrics["selected_weights_checkpoint"] = getattr(config, "weights_checkpoint", "model.pt")
-        metrics["target_to_source_shift"] = int(target_to_source_shift)
-        metrics["epochs_ran"] = int(config.epochs)
-        out_dir = os.path.dirname(config.selection_metrics_out)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-        with open(config.selection_metrics_out, "w", encoding="utf-8") as f:
-            json.dump(metrics, f, indent=2)
-        print(
-            "Target selection metrics:",
-            ", ".join(f"{key}={value}" for key, value in metrics.items() if key != "selected_weights_checkpoint"),
-        )
-
-    # Save model final model
+    # Save model final model 
     if config.output_student:
         checkpoint = {'state_dict': student.state_dict()}
         if source_feature_reshaper is not None:
@@ -527,348 +581,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         if source_feature_reshaper is not None:
             checkpoint['source_feature_reshaper_state_dict'] = source_feature_reshaper.state_dict()
         torch.save(checkpoint, best_model_path)
-
-
-@torch.no_grad()
-def compute_selection_metrics(
-    teacher,
-    student,
-    target_loader,
-    device,
-    target_to_source_shift,
-    num_classes,
-    pseudo_threshold,
-    source_class_distr,
-    shift_history,
-    max_temporal_shift,
-    config,
-):
-    teacher.eval()
-    student.eval()
-    teacher_probs, student_probs = [], []
-    time_mask_probs, temporal_jitter_probs, value_noise_probs, monotonic_warp_probs = [], [], [], []
-    indices = []
-    max_batches = getattr(config, "selection_metric_batches", 200)
-
-    for batch_idx, sample in enumerate(tqdm(target_loader, desc="computing selection metrics")):
-        if max_batches is not None and batch_idx >= max_batches:
-            break
-        indices.extend(sample["index"].tolist())
-        pixels, valid_pixels, positions, extra = to_cuda(sample, device)
-        shifted_positions = _clamp_positions_for_model(teacher, positions + target_to_source_shift)
-        teacher_logits = teacher.forward(pixels, valid_pixels, shifted_positions, extra)
-        student_logits = student.forward(pixels, valid_pixels, positions, extra)
-        teacher_probs.append(F.softmax(teacher_logits, dim=1).cpu())
-        student_probs.append(F.softmax(student_logits, dim=1).cpu())
-
-        perturbed_pixels = _apply_time_mean_mask(
-            pixels,
-            mask_p=getattr(config, "selection_time_mask_p", 0.15),
-        )
-        perturbed_logits = teacher.forward(perturbed_pixels, valid_pixels, shifted_positions, extra)
-        time_mask_probs.append(F.softmax(perturbed_logits, dim=1).cpu())
-
-        jittered_positions = _apply_temporal_jitter(
-            teacher,
-            shifted_positions,
-            max_jitter=getattr(config, "selection_temporal_jitter", 3),
-        )
-        perturbed_logits = teacher.forward(pixels, valid_pixels, jittered_positions, extra)
-        temporal_jitter_probs.append(F.softmax(perturbed_logits, dim=1).cpu())
-
-        warped_positions = _apply_monotonic_warp_positions(
-            teacher,
-            shifted_positions,
-            max_warp=getattr(config, "selection_temporal_jitter", 3),
-        )
-        perturbed_logits = teacher.forward(pixels, valid_pixels, warped_positions, extra)
-        monotonic_warp_probs.append(F.softmax(perturbed_logits, dim=1).cpu())
-
-        noisy_pixels = _apply_value_noise(
-            pixels,
-            noise_std=getattr(config, "selection_value_noise_std", 0.03),
-        )
-        perturbed_logits = teacher.forward(noisy_pixels, valid_pixels, shifted_positions, extra)
-        value_noise_probs.append(F.softmax(perturbed_logits, dim=1).cpu())
-
-    if not teacher_probs:
-        raise RuntimeError("No target batches were available for selection metrics")
-
-    indices = torch.as_tensor(indices)
-    order = torch.argsort(indices)
-    teacher_probs = torch.cat(teacher_probs, dim=0)[order]
-    student_probs = torch.cat(student_probs, dim=0)[order]
-    time_mask_probs = torch.cat(time_mask_probs, dim=0)[order]
-    temporal_jitter_probs = torch.cat(temporal_jitter_probs, dim=0)[order]
-    value_noise_probs = torch.cat(value_noise_probs, dim=0)[order]
-    monotonic_warp_probs = torch.cat(monotonic_warp_probs, dim=0)[order]
-
-    teacher_conf, pseudo_labels = teacher_probs.max(dim=1)
-    student_labels = student_probs.argmax(dim=1)
-    high_conf_mask = teacher_conf >= pseudo_threshold
-
-    pred_entropy = -(teacher_probs * torch.log(teacher_probs.clamp_min(1e-8))).sum(dim=1)
-    normalized_entropy = pred_entropy.mean().item() / max(np.log(num_classes), 1e-8)
-    coverage = high_conf_mask.float().mean().item()
-    mean_confidence = teacher_conf.mean().item()
-    agreement = (pseudo_labels == student_labels).float().mean().item()
-
-    pseudo_counts = torch.bincount(pseudo_labels, minlength=num_classes).float()
-    pseudo_dist = (pseudo_counts / pseudo_counts.sum().clamp_min(1.0)).numpy()
-    class_entropy = float(-(pseudo_dist * np.log(pseudo_dist + 1e-8)).sum() / max(np.log(num_classes), 1e-8))
-    max_class_fraction = float(pseudo_dist.max()) if len(pseudo_dist) else 1.0
-    effective_class_fraction = float(np.exp(-(pseudo_dist * np.log(pseudo_dist + 1e-8)).sum()) / max(num_classes, 1))
-
-    if high_conf_mask.any():
-        high_conf_counts = torch.bincount(pseudo_labels[high_conf_mask], minlength=num_classes).float()
-        high_conf_dist = (high_conf_counts / high_conf_counts.sum().clamp_min(1.0)).numpy()
-        high_conf_class_entropy = float(
-            -(high_conf_dist * np.log(high_conf_dist + 1e-8)).sum() / max(np.log(num_classes), 1e-8)
-        )
-        high_conf_max_class_fraction = float(high_conf_dist.max())
-        high_conf_effective_class_fraction = float(
-            np.exp(-(high_conf_dist * np.log(high_conf_dist + 1e-8)).sum()) / max(num_classes, 1)
-        )
-    else:
-        high_conf_class_entropy = 0.0
-        high_conf_max_class_fraction = 1.0
-        high_conf_effective_class_fraction = 0.0
-
-    source_dist = np.asarray(source_class_distr, dtype=np.float64)
-    source_dist = source_dist / max(source_dist.sum(), 1e-8)
-    pseudo_dist = np.asarray(pseudo_dist, dtype=np.float64)
-    mixture = 0.5 * (source_dist + pseudo_dist)
-    js_div = 0.5 * np.sum(source_dist * (np.log(source_dist + 1e-8) - np.log(mixture + 1e-8)))
-    js_div += 0.5 * np.sum(pseudo_dist * (np.log(pseudo_dist + 1e-8) - np.log(mixture + 1e-8)))
-    js_div = float(js_div / max(np.log(2.0), 1e-8))
-
-    if shift_history:
-        shifts = np.asarray(shift_history, dtype=np.float64)
-        denom = max(float(max_temporal_shift), 1.0)
-        shift_std_norm = float(np.std(shifts) / denom)
-        shift_last_delta_norm = float(abs(shifts[-1] - shifts[-2]) / denom) if len(shifts) >= 2 else 0.0
-        shift_stability = float(max(0.0, 1.0 - min(1.0, 0.5 * shift_std_norm + 0.5 * shift_last_delta_norm)))
-    else:
-        shift_std_norm = 0.0
-        shift_last_delta_norm = 0.0
-        shift_stability = 0.5
-
-    class_balance_score = 0.60 * high_conf_class_entropy + 0.40 * class_entropy
-    collapse_penalty = 0.50 * max_class_fraction + 0.50 * high_conf_max_class_fraction
-
-    legacy_score = (
-        getattr(config, "selection_score_coverage_weight", 0.25) * coverage
-        + getattr(config, "selection_score_confidence_weight", 0.15) * mean_confidence
-        + getattr(config, "selection_score_agreement_weight", 0.15) * agreement
-        + getattr(config, "selection_score_class_balance_weight", 0.45) * class_balance_score
-        + getattr(config, "selection_score_shift_stability_weight", 0.20) * shift_stability
-        - getattr(config, "selection_score_entropy_weight", 0.10) * normalized_entropy
-        - getattr(config, "selection_score_source_prior_weight", 0.25) * js_div
-        - 0.20 * collapse_penalty
-    )
-    perturbation_metrics = _compute_perturbation_consistency(
-        teacher_probs,
-        {
-            "time_mask": time_mask_probs,
-            "temporal_jitter": temporal_jitter_probs,
-            "value_noise": value_noise_probs,
-            "monotonic_warp": monotonic_warp_probs,
-        },
-        num_classes,
-    )
-    perturbation_score = (
-        0.50 * perturbation_metrics["selection_perturbation_prob_consistency"]
-        + 0.50 * perturbation_metrics["selection_perturbation_label_agreement"]
-    )
-    robust_score = (
-        getattr(config, "selection_perturbation_weight", 1.0) * perturbation_score
-        + 0.15 * class_balance_score
-        + 0.10 * shift_stability
-        - getattr(config, "selection_collapse_penalty_weight", 0.35) * collapse_penalty
-        - 0.10 * js_div
-    )
-    monotonic_warp_score = perturbation_metrics["selection_monotonic_warp_prob_consistency"]
-    gtw_weight = float(getattr(config, "selection_monotonic_warp_weight", 0.55))
-    gtw_weight = min(1.0, max(0.0, gtw_weight))
-    gtw_score = (
-        gtw_weight * monotonic_warp_score
-        + (1.0 - gtw_weight) * perturbation_score
-        + 0.10 * shift_stability
-        + 0.10 * class_balance_score
-        - 0.25 * collapse_penalty
-        - 0.10 * js_div
-    )
-    score_mode = getattr(config, "selection_score_mode", "temporal_perturbation")
-    if score_mode.startswith("pure_perturbation"):
-        score = perturbation_score
-    elif score_mode == "gtw_monotonic_warp":
-        score = gtw_score
-    elif score_mode == "robust_perturbation_blend":
-        robust_weight = float(getattr(config, "selection_blend_robust_weight", 0.70))
-        robust_weight = min(1.0, max(0.0, robust_weight))
-        score = robust_weight * robust_score + (1.0 - robust_weight) * perturbation_score
-    elif score_mode == "legacy":
-        score = legacy_score
-    else:
-        score = robust_score
-
-    metrics = {
-        "selection_score": float(score),
-        "selection_score_mode": score_mode,
-        "selection_legacy_score": float(legacy_score),
-        "selection_temporal_perturbation_score": float(robust_score),
-        "selection_perturbation_score": float(perturbation_score),
-        "selection_gtw_monotonic_warp_score": float(gtw_score),
-        "selection_monotonic_warp_weight": float(gtw_weight),
-        "selection_blend_robust_weight": float(getattr(config, "selection_blend_robust_weight", 0.70)),
-        "selection_coverage": float(coverage),
-        "selection_mean_confidence": float(mean_confidence),
-        "selection_teacher_student_agreement": float(agreement),
-        "selection_prediction_entropy": float(normalized_entropy),
-        "selection_class_entropy": float(class_entropy),
-        "selection_high_conf_class_entropy": float(high_conf_class_entropy),
-        "selection_effective_class_fraction": float(effective_class_fraction),
-        "selection_high_conf_effective_class_fraction": float(high_conf_effective_class_fraction),
-        "selection_max_class_fraction": float(max_class_fraction),
-        "selection_high_conf_max_class_fraction": float(high_conf_max_class_fraction),
-        "selection_source_prior_js": float(js_div),
-        "selection_shift_stability": float(shift_stability),
-        "selection_shift_std_norm": float(shift_std_norm),
-        "selection_shift_last_delta_norm": float(shift_last_delta_norm),
-    }
-    metrics.update({key: float(value) for key, value in perturbation_metrics.items()})
-    return metrics
-
-
-def _clamp_positions_for_model(model, positions):
-    temporal_encoder = model.temporal_encoder
-    min_position = -temporal_encoder.max_temporal_shift
-    max_position = temporal_encoder.positional_enc.num_embeddings - temporal_encoder.max_temporal_shift - 1
-    return positions.clamp(min=min_position, max=max_position)
-
-
-def _apply_time_mean_mask(pixels, mask_p):
-    if mask_p <= 0:
-        return pixels
-    time_mean = pixels.mean(dim=1, keepdim=True)
-    mask_shape = [pixels.shape[0], pixels.shape[1]] + [1] * (pixels.dim() - 2)
-    time_mask = torch.rand(mask_shape, device=pixels.device) < mask_p
-    return torch.where(time_mask, time_mean, pixels)
-
-
-def _apply_temporal_jitter(model, positions, max_jitter):
-    if max_jitter <= 0:
-        return positions
-    jitter = torch.randint(
-        low=-int(max_jitter),
-        high=int(max_jitter) + 1,
-        size=positions.shape,
-        device=positions.device,
-        dtype=positions.dtype,
-    )
-    return _clamp_positions_for_model(model, positions + jitter)
-
-
-def _apply_monotonic_warp_positions(model, positions, max_warp):
-    if max_warp <= 0 or positions.shape[1] < 3:
-        return positions
-    steps = torch.linspace(
-        -1.0,
-        1.0,
-        positions.shape[1],
-        device=positions.device,
-        dtype=torch.float32,
-    ).view(1, -1)
-    warp = torch.round(steps * float(max_warp)).to(dtype=positions.dtype)
-    warped = positions + warp
-    return _clamp_positions_for_model(model, warped)
-
-
-def _apply_value_noise(pixels, noise_std):
-    if noise_std <= 0:
-        return pixels
-    reduce_dims = tuple(range(1, pixels.dim()))
-    scale = pixels.float().std(dim=reduce_dims, keepdim=True, unbiased=False).clamp_min(1e-6)
-    return pixels + torch.randn_like(pixels) * scale * float(noise_std)
-
-
-def _normalized_js_divergence(probs_a, probs_b, num_classes):
-    mixture = 0.5 * (probs_a + probs_b)
-    kl_a = (probs_a * (torch.log(probs_a.clamp_min(1e-8)) - torch.log(mixture.clamp_min(1e-8)))).sum(dim=1)
-    kl_b = (probs_b * (torch.log(probs_b.clamp_min(1e-8)) - torch.log(mixture.clamp_min(1e-8)))).sum(dim=1)
-    return (0.5 * (kl_a + kl_b)).mean().item() / max(np.log(2.0), 1e-8)
-
-
-def _compute_perturbation_consistency(clean_probs, perturbed_probs_by_name, num_classes):
-    clean_labels = clean_probs.argmax(dim=1)
-    label_agreements = []
-    prob_consistencies = []
-    metrics = {}
-    for name, perturbed_probs in perturbed_probs_by_name.items():
-        perturbed_labels = perturbed_probs.argmax(dim=1)
-        label_agreement = (clean_labels == perturbed_labels).float().mean().item()
-        prob_consistency = 1.0 - min(1.0, _normalized_js_divergence(clean_probs, perturbed_probs, num_classes))
-        label_agreements.append(label_agreement)
-        prob_consistencies.append(prob_consistency)
-        metrics[f"selection_{name}_label_agreement"] = label_agreement
-        metrics[f"selection_{name}_prob_consistency"] = prob_consistency
-    metrics["selection_perturbation_label_agreement"] = float(np.mean(label_agreements))
-    metrics["selection_perturbation_prob_consistency"] = float(np.mean(prob_consistencies))
-    return metrics
-
-
-def _apply_trajectory_selection_score(metrics, history, config):
-    score_mode = getattr(config, "selection_score_mode", "temporal_perturbation_trajectory")
-    if score_mode.startswith("pure_perturbation"):
-        base_key = "selection_perturbation_score"
-    else:
-        base_key = "selection_temporal_perturbation_score"
-    first_score = float(history[0].get(base_key, metrics.get(base_key, 0.0)))
-    final_score = float(metrics.get(base_key, 0.0))
-    penultimate_score = float(history[-2].get(base_key, final_score)) if len(history) >= 2 else first_score
-    total_gain = max(final_score - first_score, 0.0)
-    late_gain = max(final_score - penultimate_score, 0.0)
-    if total_gain <= 1e-8:
-        late_gain_ratio = 0.0
-    else:
-        late_gain_ratio = min(1.0, late_gain / (total_gain + 1e-8))
-    alpha = float(getattr(config, "selection_trajectory_alpha", 0.30))
-    late_gain_threshold = float(getattr(config, "selection_late_gain_threshold", 0.20))
-    if score_mode == "pure_perturbation_late_reject":
-        late_reject_threshold = float(getattr(config, "selection_late_reject_threshold", 0.80))
-        is_rejected = late_gain_ratio > late_reject_threshold
-        trajectory_score = final_score - (1.0 if is_rejected else 0.0)
-        trajectory_multiplier = 1.0
-        excess_late_gain = max(0.0, late_gain_ratio - late_reject_threshold)
-        metrics["selection_late_reject_threshold"] = float(late_reject_threshold)
-        metrics["selection_late_reject_applied"] = bool(is_rejected)
-    elif score_mode == "pure_perturbation_margin_tiebreak":
-        margin = float(getattr(config, "selection_margin_tiebreak", 0.01))
-        trajectory_score = final_score + margin * float(metrics.get("selection_legacy_score", 0.0))
-        trajectory_multiplier = 1.0
-        excess_late_gain = 0.0
-        metrics["selection_margin_tiebreak"] = float(margin)
-    elif score_mode == "temporal_perturbation_late_filter":
-        excess_late_gain = max(0.0, late_gain_ratio - late_gain_threshold)
-        trajectory_multiplier = max(0.0, 1.0 - alpha * excess_late_gain)
-        trajectory_score = final_score * trajectory_multiplier
-    else:
-        excess_late_gain = late_gain_ratio
-        trajectory_multiplier = max(0.0, 1.0 - alpha * late_gain_ratio)
-        trajectory_score = final_score * trajectory_multiplier
-    metrics["selection_score_mode"] = score_mode
-    metrics["selection_score"] = float(trajectory_score)
-    metrics["selection_trajectory_base_score"] = float(final_score)
-    metrics["selection_trajectory_first_score"] = float(first_score)
-    metrics["selection_trajectory_penultimate_score"] = float(penultimate_score)
-    metrics["selection_trajectory_total_gain"] = float(total_gain)
-    metrics["selection_trajectory_late_gain"] = float(late_gain)
-    metrics["selection_trajectory_late_gain_ratio"] = float(late_gain_ratio)
-    metrics["selection_trajectory_late_gain_threshold"] = float(late_gain_threshold)
-    metrics["selection_trajectory_excess_late_gain"] = float(excess_late_gain)
-    metrics["selection_trajectory_multiplier"] = float(trajectory_multiplier)
-    metrics["selection_trajectory_alpha"] = float(alpha)
-
 
 def estimate_class_distribution(labels, num_classes):
     return np.bincount(labels, minlength=num_classes) / len(labels)
@@ -883,12 +595,84 @@ def update_ema_variables(model, ema, decay=0.99):
 
 
 def get_data_loaders(splits, config, balance_source=True):
-    return create_timematch_data_loaders(
-        splits,
-        config,
-        TupleDataset,
-        balance_source=balance_source,
+    weak_aug = transforms.Compose([
+        RandomSamplePixels(config.num_pixels),
+        Normalize(),
+        ToTensor(),
+    ])
+
+    strong_aug = transforms.Compose([
+            RandomSamplePixels(config.num_pixels),
+            RandomSampleTimeSteps(config.seq_length),
+            Normalize(),
+            ToTensor(),
+    ])
+
+    source_dataset = PixelSetData(config.data_root, config.source,
+            config.classes, strong_aug,
+            indices=splits[config.source]['train'],
+            closed_set=getattr(config, 'closed_set', False),)
+
+    if balance_source:
+        source_labels = source_dataset.get_labels()
+        freq = Counter(source_labels)
+        class_weight = {x: 1.0 / freq[x] for x in freq}
+        source_weights = [class_weight[x] for x in source_labels]
+        sampler = WeightedRandomSampler(source_weights, len(source_labels))
+        print("using balanced loader for source")
+        source_loader = data.DataLoader(
+            source_dataset,
+            num_workers=config.num_workers,
+            pin_memory=True,
+            sampler=sampler,
+            batch_size=config.batch_size,
+            drop_last=True,
+        )
+    else:
+        source_loader = data.DataLoader(
+            source_dataset,
+            num_workers=config.num_workers,
+            pin_memory=True,
+            batch_size=config.batch_size,
+            shuffle=True,
+            drop_last=True,
+        )
+
+    target_dataset = PixelSetData(config.data_root, config.target,
+            config.classes, None,
+            indices=splits[config.target]['train'],
+            closed_set=getattr(config, 'closed_set', False))
+
+    strong_dataset = deepcopy(target_dataset)
+    strong_dataset.transform = strong_aug
+    weak_dataset = deepcopy(target_dataset)
+    weak_dataset.transform = weak_aug
+    target_dataset_weak_strong = TupleDataset(weak_dataset, strong_dataset)
+
+    no_aug_dataset = deepcopy(target_dataset)
+    no_aug_dataset.transform = weak_aug
+    # For shift estimation
+    target_loader_no_aug = data.DataLoader(
+        no_aug_dataset,
+        num_workers=config.num_workers,
+        batch_size=config.batch_size,
+        shuffle=True,
     )
+
+    # For mean teacher training
+    target_loader_weak_strong = data.DataLoader(
+        target_dataset_weak_strong,
+        num_workers=config.num_workers,
+        batch_size=config.batch_size,
+        shuffle=True,
+        pin_memory=True,
+        drop_last=True,
+    )
+
+    print(f'size of source dataset: {len(source_dataset)} ({len(source_loader)} batches)')
+    print(f'size of target dataset: {len(target_dataset)} ({len(target_loader_weak_strong)} batches)')
+
+    return source_loader, target_loader_no_aug, target_loader_weak_strong
 
 
 class TupleDataset(data.Dataset):
@@ -910,13 +694,8 @@ class TupleDataset(data.Dataset):
 def estimate_temporal_shift(model, target_loader, device, class_distribution=None, min_shift=-60, max_shift=60, sample_size=100, shift_estimator='IS'):
     shifts = list(range(min_shift, max_shift + 1))
     model.eval()
-    available_batches = len(target_loader)
-    if available_batches == 0:
-        raise ValueError("Cannot estimate temporal shift with an empty target loader.")
     if sample_size is None:
-        sample_size = available_batches
-    else:
-        sample_size = min(int(sample_size), available_batches)
+        sample_size = len(target_loader)
 
     target_iter = iter(target_loader)
     shift_softmaxes, labels = [], []

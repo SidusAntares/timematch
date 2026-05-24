@@ -70,6 +70,14 @@ STRUCTURE_VIEW_REGISTRY = {
         intra_granularity="meanmax pooled",
         aliases=("trajectory_prototype_dynamics_v244b", "trajectory_global_prototype_dynamics", "v244b"),
     ),
+    "basis_view": StructureView(
+        name="basis_view",
+        family="basis",
+        description="Composable basis-view bank: global, segment, transition, dynamics, and trajectory terms.",
+        segmented=True,
+        intra_granularity="basis composition",
+        aliases=("basis_structure", "basis_temporal_structure", "v271"),
+    ),
     # Deprecated legacy views retained only so old configs fail less abruptly.
     "compactness": StructureView(
         name="compactness",

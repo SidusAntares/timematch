@@ -10,6 +10,9 @@ import random
 import numpy as np
 import torch
 import torch.backends.cudnn
+from torchvision.transforms import transforms
+from tqdm import tqdm
+
 try:
     from torch.utils.tensorboard import SummaryWriter
 except ModuleNotFoundError:
@@ -32,23 +35,24 @@ from competitors.dann.dann import train_dann
 from competitors.jumbot.jumbot import train_jumbot
 from competitors.mmd.train_mmd import train_mmd
 from competitors.alda.train_alda import train_alda
-from data_adapters.factory import (
-    create_evaluation_loaders_for_config,
-    create_train_dataset,
-    create_training_loader,
-    get_classes_for_config,
-    get_dataset_length,
-)
-from data_adapters.har_dataset import get_adatime_input_dim
+from dataset import PixelSetData, create_evaluation_loaders, create_train_loader
 from evaluation import evaluation, validation
 from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
     forward_with_optional_source_reshaper,
 )
 from ideas.train_source_phase_compactness import train_supervised_source_phase_compactness
-from ideas.temporal_structure.taxonomy import STRUCTURE_VIEW_CHOICES
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
 from timematch import train_timematch
+from transforms import (
+    Normalize,
+    RandomSamplePixels,
+    RandomSampleTimeSteps,
+    ToTensor,
+    RandomTemporalShift,
+    Identity,
+)
+from utils import label_utils
 from utils.focal_loss import FocalLoss
 from utils.metrics import overall_classification_report
 from utils.train_utils import AverageMeter, bool_flag, to_cuda
@@ -61,15 +65,21 @@ def main(config):
     torch.manual_seed(config.seed)
     device = torch.device(config.device)
 
-    source_classes = get_classes_for_config(config)
+    # Select classes that appear at least 200 times source
+    source_classes = label_utils.get_classes(cfg.source.split('/')[0], combine_spring_and_winter=cfg.combine_spring_and_winter)
+    if config.closed_set:
+        source_classes = [cls for cls in source_classes if cls != 'unknown']
+    source_data = PixelSetData(cfg.data_root, cfg.source, source_classes, closed_set=config.closed_set)
+    labels, counts = np.unique(source_data.get_labels(), return_counts=True)
+    source_classes = [source_classes[i] for i in labels[counts >= 200]]
     print('Using classes:', source_classes)
-    config.classes = source_classes
-    config.num_classes = len(source_classes)
+    cfg.classes = source_classes
+    cfg.num_classes = len(source_classes)
 
     # Randomly assign parcels to train/val/test
     indices = {
-        config.source: get_dataset_length(config, config.source, split="train"),
-        config.target: get_dataset_length(config, config.target, split="train"),
+        config.source: len(source_data),
+        config.target: len(PixelSetData(config.data_root, config.target, source_classes, closed_set=config.closed_set))
     }
     folds = create_train_val_test_folds([config.source, config.target], config.num_folds, indices, config.val_ratio, config.test_ratio)
 
@@ -83,15 +93,8 @@ def main(config):
         config.fold_dir = os.path.join(config.output_dir, f'fold_{fold_num}')
         config.fold_num = fold_num
 
-        sample_pixels_val = config.sample_pixels_val or (
-            config.eval and bool(getattr(config, "temporal_shift", False))
-        )
-        val_loader, test_loader = create_evaluation_loaders_for_config(
-            config.target,
-            splits,
-            config,
-            sample_pixels_val,
-        )
+        sample_pixels_val = config.sample_pixels_val or (config.eval and config.temporal_shift)
+        val_loader, test_loader = create_evaluation_loaders(config.target, splits, config, sample_pixels_val)
 
         if config.model == 'pseltae':
             model = PseLTae(input_dim=config.input_dim, num_classes=config.num_classes, with_extra=config.with_extra)
@@ -135,10 +138,6 @@ def main(config):
             else:
                 train_supervised(model, config, writer, splits, val_loader, device, best_model_path)
 
-        if config.skip_final_test:
-            print('Skipping final labeled test/eval because --skip_final_test=True')
-            continue
-
         print('Restoring best model weights for testing...')
 
         checkpoint = torch.load(best_model_path, weights_only=False)
@@ -164,10 +163,6 @@ def main(config):
         print(test_metrics['classification_report'])
 
         save_results(test_metrics, config)
-
-    if config.skip_final_test:
-        print('Skipping overall_performance aggregation because --skip_final_test=True')
-        return
 
     overall_performance(config)
 
@@ -203,12 +198,23 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
         params += list(source_feature_reshaper.parameters())
     optimizer = torch.optim.Adam(params, lr=config.lr, weight_decay=config.weight_decay)
 
-    dataset = create_train_dataset(
-        config,
+    train_transform = transforms.Compose([
+        RandomSamplePixels(config.num_pixels),
+        RandomSampleTimeSteps(config.seq_length),
+        RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
+        Normalize(),
+        ToTensor(),
+    ])
+
+    dataset = PixelSetData(
+        config.data_root,
         dataset_name,
-        splits,
+        config.classes,
+        train_transform,
+        splits[dataset_name]['train'],
+        closed_set=config.closed_set,
     )
-    data_loader = create_training_loader(dataset, config)
+    data_loader = create_train_loader(dataset, config.batch_size, config.num_workers)
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
 
     criterion = FocalLoss(gamma=config.focal_loss_gamma)
@@ -217,12 +223,12 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
 
     best_f1 = 0
     for epoch in range(config.epochs):
-        print(f"====================Epoch {epoch + 1}/{config.epochs}====================")
         model.train()
         loss_meter = AverageMeter()
 
+        progress_bar = tqdm(enumerate(data_loader), total=len(data_loader), desc=f'Epoch {epoch + 1}/{config.epochs}')
         global_step = epoch * len(data_loader)
-        for step, sample in enumerate(data_loader):
+        for step, sample in progress_bar:
             targets = sample['label'].cuda(device=device, non_blocking=True)
 
             pixels, mask, positions, extra = to_cuda(sample, device)
@@ -247,14 +253,11 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
 
             if step % config.log_step == 0:
                 lr = optimizer.param_groups[0]["lr"]
+                progress_bar.set_postfix(lr=f'{lr:.1E}', loss=f"{loss_meter.avg:.3f}")
                 writer.add_scalar("train/loss", loss_meter.val, global_step + step)
                 writer.add_scalar("train/lr", lr, global_step + step)
 
-        lr = optimizer.param_groups[0]["lr"]
-        print(
-            f"Epoch train summary: "
-            f"loss={loss_meter.avg:.4f}, lr={lr:.6g}, batches={len(data_loader)}"
-        )
+        progress_bar.close()
 
         model.eval()
         best_f1 = validation(
@@ -290,7 +293,7 @@ def create_train_val_test_folds(datasets, num_folds, num_indices, val_ratio=0.1,
 
             train_indices = set(indices[:n_train])
             val_indices = set(indices[n_train:n_train + n_val])
-            test_indices = set(indices[-n_test:]) if n_test > 0 else set()
+            test_indices = set(indices[-n_test:])
             assert set.intersection(train_indices, val_indices, test_indices) == set()
             assert len(train_indices) + len(val_indices) + len(test_indices) == n
 
@@ -349,16 +352,12 @@ if __name__ == '__main__':
     # Setup parameters
     parser.add_argument('--data_root', default='/data/user/DBL/timematch_data', type=str,
                         help='Path to datasets root directory')
-    parser.add_argument(
-        '--dataset_type',
-        default='remote_sensing',
-        choices=['remote_sensing', 'har'],
-        help='Dataset adapter to use. remote_sensing keeps the original parcel loader; har reads TFDA-style .pt files.',
-    )
     parser.add_argument('--num_blocks', default=100, type=int, help='Number of geographical blocks in dataset for splitting. Default 100.')
 
-    parser.add_argument('--source', default='denmark/32VNH/2017', help='source dataset/domain')
-    parser.add_argument('--target', default='france/30TXT/2017', help='target dataset/domain')
+    available_tiles = ['denmark/32VNH/2017', 'france/30TXT/2017', 'france/31TCJ/2017', 'austria/33UVP/2017']
+
+    parser.add_argument('--source', default='denmark/32VNH/2017', help='source dataset', choices=available_tiles)
+    parser.add_argument('--target', default='france/30TXT/2017', help='target dataset', choices=available_tiles)
     parser.add_argument('--num_folds', default=1, type=int, help='Number of train/test folds for cross validation')
     parser.add_argument("--val_ratio", default=0.1, type=float,
                         help='Ratio of training data to use for validation. Default 10%.')
@@ -373,20 +372,8 @@ if __name__ == '__main__':
     parser.add_argument('--log_step', default=10, type=int, help='Interval in batches between display of training metrics')
     parser.add_argument('--eval', action='store_true', help='run only evaluation')
     parser.add_argument('--overall', action='store_true', help='print overall results, if exists')
-    parser.add_argument('--skip_final_test', default=False, type=bool_flag, help='skip final labeled test/eval stage after training; useful for warmup-only checkpoint-selection runs')
     parser.add_argument('--combine_spring_and_winter', default=False, type=bool_flag)
     parser.add_argument('--closed_set', default=False, type=bool_flag, help='exclude unknown / out-of-class parcels')
-    parser.add_argument(
-        '--har_label_offset',
-        default='auto',
-        help='HAR label offset. auto subtracts 1 when labels are 1..6; use 0 when labels are already 0..5.',
-    )
-    parser.add_argument(
-        '--har_dataset_name',
-        default='HAR',
-        choices=['HAR', 'HHAR', 'HHAR_SA'],
-        help='AdaTime-style HAR dataset spec used for class names and default input channels.',
-    )
 
     # Training configuration
     parser.add_argument('--epochs', default=50, type=int, help='Number of epochs per fold')
@@ -401,8 +388,6 @@ if __name__ == '__main__':
     parser.add_argument('--with_extra', default=False, type=bool_flag, help='whether to input extra geometric features to the PSE')
     parser.add_argument('--tensorboard_log_dir', default='runs')
     parser.add_argument('--train_on_target', default=False, action='store_true', help='supervised training on target for upper bound comparison')
-    parser.add_argument('--source_checkpoint_epochs', default='', type=str, help='comma-separated source-only epochs to save extra checkpoints for later adaptation sweeps')
-    parser.add_argument('--source_checkpoint_dirname', default='checkpoints', type=str, help='subdirectory name under each fold for extra source-only checkpoints')
 
     parser.add_argument('--with_shift_aug', default=False, type=bool_flag, help='whether to apply random temporal shift augmentation')
     parser.add_argument('--shift_aug_p', default=1.0, type=float, help='probability to apply temporal shift augmentation')
@@ -410,7 +395,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_feature_reshaper',
         default='none',
-        choices=['none', 'residual_temporal_conv', 'monotonic_warp_residual_temporal_conv'],
+        choices=['none', 'residual_temporal_conv'],
         help='source-only lightweight feature reshaper inserted between PSE and LTAE',
     )
     parser.add_argument(
@@ -506,36 +491,6 @@ if __name__ == '__main__':
         help='minimum sampled time points required for one sample to contribute to a phase loss',
     )
     parser.add_argument(
-        '--source_phase_grid_count',
-        default=5,
-        type=int,
-        help='number of fixed latent phase slots for optional source phase-grid structure view',
-    )
-    parser.add_argument(
-        '--source_phase_grid_trade_off',
-        default=0.0,
-        type=float,
-        help='auxiliary weight for source phase-grid structure loss; 0 disables the view',
-    )
-    parser.add_argument(
-        '--source_phase_grid_kernel',
-        default='linear',
-        choices=['linear', 'triangular', 'gaussian'],
-        help='kernel used to project irregular source observations to fixed phase slots',
-    )
-    parser.add_argument(
-        '--source_phase_grid_bandwidth',
-        default=0.0,
-        type=float,
-        help='normalized phase-grid projection bandwidth; <=0 uses one grid-step',
-    )
-    parser.add_argument(
-        '--source_phase_grid_min_support',
-        default=0.20,
-        type=float,
-        help='support threshold for phase-grid diagnostics and nearest-fill fallback',
-    )
-    parser.add_argument(
         '--source_segment_semantic_quantile',
         default=0.75,
         type=float,
@@ -604,8 +559,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=STRUCTURE_VIEW_CHOICES,
-        help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, v2.4.1 segment-transition-residual, v2.4.2 semantic-segment transition residual, v2.4.3 boundary-window segment transition residual, or v2.4.4 trajectory prototype dynamics',
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v271_global'],
+        help='source-side structural loss version: legacy compactness variants, v2.4.3 boundary-window segment transition residual, or v2.7.1 clean global trend/residual structure',
     )
     parser.add_argument(
         '--source_structure_intra_trade_off',
@@ -662,136 +617,52 @@ if __name__ == '__main__':
         help='half-window size per side used for v2.4.3 boundary-centered local segment transition windows',
     )
     parser.add_argument(
-        '--source_structure_warp_invariant_trade_off',
-        default=0.35,
-        type=float,
-        help='weak GTW-inspired relaxed transition consistency weight for segment_boundary_window_warp_residual',
-    )
-    parser.add_argument(
-        '--source_structure_prototype_dynamics_trade_off',
-        default=0.05,
-        type=float,
-        help='weight for v2.4.4 whole-trajectory first-difference consistency against class prototypes',
-    )
-    parser.add_argument(
-        '--source_structure_trajectory_pooling',
-        default='meanmax',
-        choices=['mean', 'max', 'meanmax'],
-        help='temporal pooling used by v2.4.4b global trajectory intra compactness',
-    )
-    parser.add_argument(
-        '--source_structure_prototype_dynamics_mode',
-        default='cosine',
-        choices=['cosine', 'direction', 'mse'],
-        help='prototype dynamics consistency mode for v2.4.4/v2.4.4b',
-    )
-    parser.add_argument(
-        '--source_structure_temporal_window_mode',
-        default='none',
-        choices=[
-            'none',
-            'full',
-            'uniform',
-            'early',
-            'middle',
-            'mid',
-            'late',
-            'gaussian',
-            'source_target_mask',
-            'source_target_static_mask',
-            'source_target_soft_support',
-        ],
-        help='v2.6.2 soft temporal window for phase/segment-level structure loss.',
-    )
-    parser.add_argument(
-        '--source_structure_temporal_window_center',
-        default=0.5,
-        type=float,
-        help='center in [0, 1] for gaussian temporal structure window.',
-    )
-    parser.add_argument(
-        '--source_structure_temporal_window_width',
-        default=0.35,
-        type=float,
-        help='width for gaussian/early/middle/late temporal structure window.',
-    )
-    parser.add_argument(
-        '--source_structure_temporal_window_min_weight',
-        default=0.15,
-        type=float,
-        help='minimum relative weight outside the v2.6.2 soft temporal window.',
-    )
-    parser.add_argument(
-        '--source_structure_static_mask_warmup_epochs',
-        default=0,
-        type=int,
-        help='Number of source epochs to run before computing a dataset-level source-target temporal mask.',
-    )
-    parser.add_argument(
-        '--source_structure_static_mask_max_batches',
-        default=64,
-        type=int,
-        help='Maximum source/target batches used to compute the dataset-level temporal mask; <=0 uses all batches.',
-    )
-    parser.add_argument(
-        '--source_structure_temporal_window_reliability_gate',
-        default=True,
-        type=bool_flag,
-        help='Mix source-target temporal mask back toward uniform weights when mask reliability is low.',
-    )
-    parser.add_argument(
-        '--source_structure_temporal_window_reliability_low',
-        default=5e-4,
-        type=float,
-        help='Mask reliability score below which source-target temporal mask falls back to uniform weights.',
-    )
-    parser.add_argument(
-        '--source_structure_temporal_window_reliability_high',
-        default=4e-2,
-        type=float,
-        help='Mask reliability score above which source-target temporal mask is fully trusted.',
-    )
-    parser.add_argument(
-        '--source_structure_temporal_support_smooth_kernel_size',
+        '--source_structure_v271_trend_kernel_size',
         default=5,
         type=int,
-        help='Odd smoothing kernel size for v2.6.2e time-point soft temporal support mask.',
+        help='neighborhood scale used to infer default v2.7.1 trend smoothing bandwidth',
     )
     parser.add_argument(
-        '--source_structure_adaptive_weights',
-        default=False,
-        type=bool_flag,
-        help='Enable source-side adaptive structure-loss weights.',
+        '--source_structure_v271_trend_smoothing_mode',
+        default='time',
+        choices=['time', 'time_aware', 'kernel', 'index', 'moving_average', 'ma'],
+        help='trend smoothing mode; time uses temporal coordinates and index keeps the old moving average fallback',
     )
     parser.add_argument(
-        '--source_structure_adaptivity_mode',
-        default='none',
-        choices=['none', 'svd_reliability', 'target_margin'],
-        help='Source-side structure weight adaptation mode.',
-    )
-    parser.add_argument(
-        '--source_structure_reliability_zeta',
-        default=0.90,
+        '--source_structure_v271_trend_bandwidth',
+        default=0.0,
         type=float,
-        help='SVD cumulative energy threshold for source structure reliability.',
+        help='time-aware trend smoothing bandwidth; <=0 infers it from median temporal gaps',
     )
     parser.add_argument(
-        '--source_structure_reliability_strength',
-        default=0.35,
-        type=float,
-        help='Strength for mapping source structure reliability to conservative weight factors.',
+        '--source_structure_v271_trend_kernel',
+        default='gaussian',
+        choices=['gaussian', 'rbf', 'boxcar', 'uniform', 'triangular', 'linear'],
+        help='kernel used by v2.7.1 time-aware trend smoothing',
     )
     parser.add_argument(
-        '--source_structure_reliability_min_factor',
-        default=0.70,
+        '--source_structure_v271_trend_dynamics_trade_off',
+        default=0.05,
         type=float,
-        help='Minimum multiplier for adaptive source structure weights.',
+        help='trend dynamics consistency weight for v2.7.1 global trend structure',
     )
     parser.add_argument(
-        '--source_structure_reliability_max_factor',
-        default=1.00,
+        '--source_structure_v271_residual_variance_trade_off',
+        default=0.10,
         type=float,
-        help='Maximum multiplier for adaptive source structure weights.',
+        help='class-wise residual variance weight for v2.7.1 residual noise control',
+    )
+    parser.add_argument(
+        '--source_structure_v271_residual_energy_trade_off',
+        default=0.05,
+        type=float,
+        help='bounded residual energy weight for v2.7.1 residual noise control',
+    )
+    parser.add_argument(
+        '--source_structure_v271_residual_energy_margin',
+        default=1.0,
+        type=float,
+        help='residual energy margin for v2.7.1 bounded residual energy',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')
@@ -840,7 +711,6 @@ if __name__ == '__main__':
     # TimeMatch
     timematch = subparsers.add_parser('timematch')
     timematch.add_argument('--weights', type=str, help='path to source trained model weights')
-    timematch.add_argument('--weights_checkpoint', type=str, default='model.pt', help='checkpoint filename under weights/fold_k or absolute checkpoint path')
     timematch.add_argument('--lr', default=0.0001, type=float, help='Learning rate')
     timematch.add_argument("--pseudo_threshold", default=0.9, type=float, help='confidence threshold for assigning pseudo labels')
     timematch.add_argument("--ema_decay", default=0.9999, type=float, help='decay rate for mean teacher')
@@ -856,42 +726,85 @@ if __name__ == '__main__':
     timematch.add_argument("--domain_specific_bn", type=bool_flag, default=True, help='whether to use domain specific batch normalization')
     timematch.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT'])
     timematch.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
-    timematch.add_argument('--disable_validation_in_timematch', default=False, type=bool_flag, help='disable labeled validation during TimeMatch; useful for warmup-only checkpoint-selection runs')
     timematch.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
-    timematch.add_argument('--selection_metrics_out', type=str, default=None, help='optional JSON path for saving target-side unsupervised checkpoint-selection metrics after training')
-    timematch.add_argument('--selection_score_coverage_weight', type=float, default=0.25, help='weight for high-confidence pseudo-label coverage in target-aware checkpoint selection score')
-    timematch.add_argument('--selection_score_confidence_weight', type=float, default=0.15, help='weight for mean teacher confidence in target-aware checkpoint selection score')
-    timematch.add_argument('--selection_score_agreement_weight', type=float, default=0.15, help='weight for teacher-student agreement in target-aware checkpoint selection score')
-    timematch.add_argument('--selection_score_entropy_weight', type=float, default=0.10, help='penalty weight for normalized target prediction entropy in target-aware checkpoint selection score')
-    timematch.add_argument('--selection_score_class_balance_weight', type=float, default=0.45, help='weight for pseudo-label class-distribution health in v2.5.3 checkpoint selection')
-    timematch.add_argument('--selection_score_source_prior_weight', type=float, default=0.25, help='penalty weight for pseudo-label/source-prior JS divergence in v2.5.3 checkpoint selection')
-    timematch.add_argument('--selection_score_shift_stability_weight', type=float, default=0.20, help='weight for shift trajectory stability in v2.5.3 checkpoint selection')
-    timematch.add_argument('--selection_metric_batches', type=int, default=200, help='number of target batches used to compute final unsupervised selection metrics')
-    timematch.add_argument('--selection_score_mode', type=str, default='temporal_perturbation', choices=['legacy', 'temporal_perturbation', 'temporal_perturbation_trajectory', 'temporal_perturbation_late_filter', 'pure_perturbation', 'pure_perturbation_late_reject', 'pure_perturbation_margin_tiebreak', 'robust_perturbation_blend', 'gtw_monotonic_warp'], help='checkpoint selection score mode')
-    timematch.add_argument('--selection_time_mask_p', type=float, default=0.15, help='probability of replacing a time step by the sequence mean when computing perturbation consistency')
-    timematch.add_argument('--selection_temporal_jitter', type=int, default=3, help='maximum absolute temporal position jitter for perturbation consistency')
-    timematch.add_argument('--selection_value_noise_std', type=float, default=0.03, help='relative Gaussian value noise level for perturbation consistency')
-    timematch.add_argument('--selection_perturbation_weight', type=float, default=1.0, help='weight for perturbation consistency in temporal_perturbation selection score')
-    timematch.add_argument('--selection_collapse_penalty_weight', type=float, default=0.35, help='penalty weight for pseudo-label class collapse in temporal_perturbation selection score')
-    timematch.add_argument('--selection_trajectory_alpha', type=float, default=0.30, help='penalty strength for late warmup perturbation-consistency gains in temporal_perturbation_trajectory mode')
-    timematch.add_argument('--selection_late_gain_threshold', type=float, default=0.20, help='late-gain ratio threshold before applying v2.5.3d trajectory soft filter')
-    timematch.add_argument('--selection_late_reject_threshold', type=float, default=0.80, help='late-gain ratio threshold used by pure_perturbation_late_reject')
-    timematch.add_argument('--selection_margin_tiebreak', type=float, default=0.01, help='perturbation-score margin for pure_perturbation_margin_tiebreak')
-    timematch.add_argument('--selection_blend_robust_weight', type=float, default=0.70, help='robust-score weight in v2.5.3h robust_perturbation_blend mode')
-    timematch.add_argument('--selection_monotonic_warp_weight', type=float, default=0.55, help='monotonic-warp consistency weight in GTW-inspired checkpoint selection mode')
+    timematch.add_argument(
+        "--timematch_source_structure_trade_off",
+        default=1.0,
+        type=float,
+        help="DA-stage weight for the inherited source structure loss; set to 0 for v2.7.1 clean stage separation",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_support_file",
+        default="",
+        type=str,
+        help="JSON file containing v2.7.1 DA-stage class-conditioned adaptive temporal supports",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_trade_off",
+        default=0.0,
+        type=float,
+        help="overall weight for v2.7.1 DA-stage adaptive segment structure loss",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_warmup_epochs",
+        default=0,
+        type=int,
+        help="number of DA epochs before enabling v2.7.1 adaptive segment structure loss",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_ramp_epochs",
+        default=1,
+        type=int,
+        help="linear ramp length after warmup for v2.7.1 adaptive segment structure loss",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_min_score",
+        default=0.0,
+        type=float,
+        help="minimum support score required when loading v2.7.1 adaptive supports",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_min_gate",
+        default=0.0,
+        type=float,
+        help="minimum support gate required when loading v2.7.1 adaptive supports",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_min_points",
+        default=2,
+        type=int,
+        help="minimum sampled time points required inside an adaptive support interval",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_trend_trade_off",
+        default=1.0,
+        type=float,
+        help="trend prototype cohesion weight inside v2.7.1 adaptive segment loss",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_trend_dynamics_trade_off",
+        default=0.05,
+        type=float,
+        help="trend dynamics consistency weight inside v2.7.1 adaptive segment loss",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_residual_variance_trade_off",
+        default=0.10,
+        type=float,
+        help="class-wise residual variance weight inside v2.7.1 adaptive segment loss",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_residual_energy_trade_off",
+        default=0.05,
+        type=float,
+        help="bounded residual energy weight inside v2.7.1 adaptive segment loss",
+    )
 
     # Source-only + source phase compactness regularization
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')
 
     cfg = parser.parse_args()
 
-    if cfg.dataset_type == 'har' and cfg.input_dim == 10:
-        cfg.input_dim = get_adatime_input_dim(cfg.har_dataset_name)
-
-    if cfg.source_segment_partition_mode is None:
-        cfg.source_segment_partition_mode = cfg.source_phase_partition_mode
-    if cfg.source_segment_count is None:
-        cfg.source_segment_count = cfg.source_phase_count
 
     # Setup folders based on name
     if cfg.experiment_name is not None:
