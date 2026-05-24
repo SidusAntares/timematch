@@ -30,6 +30,26 @@ ADAPTIVE_MIN_SCORE="${ADAPTIVE_MIN_SCORE:-0.0}"
 ADAPTIVE_MIN_GATE="${ADAPTIVE_MIN_GATE:-0.0}"
 ADAPTIVE_MIN_POINTS="${ADAPTIVE_MIN_POINTS:-2}"
 
+DISCOVER_ADAPTIVE_SUPPORTS="${DISCOVER_ADAPTIVE_SUPPORTS:-0}"
+DISCOVERY_SOURCE_MAX_BATCHES="${DISCOVERY_SOURCE_MAX_BATCHES:-64}"
+DISCOVERY_TARGET_MAX_BATCHES="${DISCOVERY_TARGET_MAX_BATCHES:-64}"
+DISCOVERY_SHIFT_SAMPLE_SIZE="${DISCOVERY_SHIFT_SAMPLE_SIZE:-40}"
+DISCOVERY_SHIFT_JITTER="${DISCOVERY_SHIFT_JITTER:-3}"
+DISCOVERY_ATOMIC_BINS="${DISCOVERY_ATOMIC_BINS:-12}"
+DISCOVERY_TOP_K_SEGMENTS="${DISCOVERY_TOP_K_SEGMENTS:-8}"
+DISCOVERY_TOP_M_PER_PAIR="${DISCOVERY_TOP_M_PER_PAIR:-2}"
+DISCOVERY_MAX_SUPPORTS="${DISCOVERY_MAX_SUPPORTS:-12}"
+DISCOVERY_SCORE_QUANTILE="${DISCOVERY_SCORE_QUANTILE:-0.75}"
+DISCOVERY_MIN_SCORE="${DISCOVERY_MIN_SCORE:-0.0}"
+DISCOVERY_MIN_RATIO="${DISCOVERY_MIN_RATIO:-1.0}"
+DISCOVERY_SOFT_EVIDENCE="${DISCOVERY_SOFT_EVIDENCE:-True}"
+DISCOVERY_MAX_MARGIN="${DISCOVERY_MAX_MARGIN:-0.20}"
+DISCOVERY_MIN_TOP2_MASS="${DISCOVERY_MIN_TOP2_MASS:-0.35}"
+DISCOVERY_PROTOTYPE_TEMPERATURE="${DISCOVERY_PROTOTYPE_TEMPERATURE:-1.0}"
+DISCOVERY_BASELINE_PAIRS_PER_SAMPLE="${DISCOVERY_BASELINE_PAIRS_PER_SAMPLE:-4}"
+DISCOVERY_BASELINE_MODE="${DISCOVERY_BASELINE_MODE:-mean}"
+DISCOVERY_APPLY_SOURCE_RESHAPER="${DISCOVERY_APPLY_SOURCE_RESHAPER:-False}"
+
 TREND_KERNEL_SIZE="${TREND_KERNEL_SIZE:-5}"
 TREND_SMOOTHING_MODE="${TREND_SMOOTHING_MODE:-time}"
 TREND_BANDWIDTH="${TREND_BANDWIDTH:-0.0}"
@@ -137,6 +157,8 @@ run_task() {
   local source_log="${LOG_ROOT}/${source_exp}.log"
   local da_log="${LOG_ROOT}/${da_exp}.log"
   local source_weights="${OUT_ROOT}/${source_exp}"
+  local support_dir="${OUT_ROOT}/${task_key}_adaptive_support_${STAMP}"
+  local support_log=""
 
   echo "[v2.7.1-clean] ${src_alias}->${tgt_alias} source GPU=${gpu}"
   CUDA_VISIBLE_DEVICES="${gpu}" python train.py \
@@ -158,7 +180,42 @@ run_task() {
 
   local adaptive_args=(--timematch_source_structure_trade_off 0.0)
   local support_file=""
-  if support_file="$(support_file_for_task "${src_alias}" "${tgt_alias}")"; then
+  if [ "${DISCOVER_ADAPTIVE_SUPPORTS}" = "1" ] || [ "${DISCOVER_ADAPTIVE_SUPPORTS}" = "True" ] || [ "${DISCOVER_ADAPTIVE_SUPPORTS}" = "true" ]; then
+    mkdir -p "${support_dir}"
+    support_log="${LOG_ROOT}/${task_key}_adaptive_support_${STAMP}.log"
+    echo "[v2.7.1-clean] ${src_alias}->${tgt_alias} discover adaptive supports GPU=${gpu}"
+    CUDA_VISIBLE_DEVICES="${gpu}" python analysis/v272_adaptive_segment_discovery.py \
+      --run_dir "${source_weights}" \
+      --output_dir "${support_dir}" \
+      --device cuda \
+      --data_root "${DATA_ROOT}" \
+      --source_max_batches "${DISCOVERY_SOURCE_MAX_BATCHES}" \
+      --target_max_batches "${DISCOVERY_TARGET_MAX_BATCHES}" \
+      --shift_sample_size "${DISCOVERY_SHIFT_SAMPLE_SIZE}" \
+      --shift_jitter "${DISCOVERY_SHIFT_JITTER}" \
+      --atomic_bins "${DISCOVERY_ATOMIC_BINS}" \
+      --top_k_segments "${DISCOVERY_TOP_K_SEGMENTS}" \
+      --top_m_per_pair "${DISCOVERY_TOP_M_PER_PAIR}" \
+      --max_adaptive_supports "${DISCOVERY_MAX_SUPPORTS}" \
+      --segment_score_quantile "${DISCOVERY_SCORE_QUANTILE}" \
+      --min_segment_score "${DISCOVERY_MIN_SCORE}" \
+      --min_segment_ratio "${DISCOVERY_MIN_RATIO}" \
+      --soft_evidence "${DISCOVERY_SOFT_EVIDENCE}" \
+      --max_margin "${DISCOVERY_MAX_MARGIN}" \
+      --min_top2_mass "${DISCOVERY_MIN_TOP2_MASS}" \
+      --prototype_temperature "${DISCOVERY_PROTOTYPE_TEMPERATURE}" \
+      --baseline_pairs_per_sample "${DISCOVERY_BASELINE_PAIRS_PER_SAMPLE}" \
+      --baseline_mode "${DISCOVERY_BASELINE_MODE}" \
+      --apply_source_reshaper "${DISCOVERY_APPLY_SOURCE_RESHAPER}" \
+      > "${support_log}" 2>&1
+    if [ -f "${support_dir}/adaptive_supports.json" ]; then
+      support_file="${support_dir}/adaptive_supports.json"
+    fi
+  elif support_file="$(support_file_for_task "${src_alias}" "${tgt_alias}")"; then
+    :
+  fi
+
+  if [ -n "${support_file}" ]; then
     adaptive_args+=(
       --timematch_v271_adaptive_support_file "${support_file}"
       --timematch_v271_adaptive_trade_off "${ADAPTIVE_TRADE_OFF}"
@@ -198,7 +255,7 @@ run_task() {
     "${adaptive_args[@]}" \
     > "${da_log}" 2>&1
 
-  echo -e "${task_key}\t${source_log}\t${da_log}\t${support_file:-none}" >> "${LOG_ROOT}/task_logs.tsv"
+  echo -e "${task_key}\t${source_log}\t${da_log}\t${support_file:-none}\t${support_log:-none}" >> "${LOG_ROOT}/task_logs.tsv"
 }
 
 gpu_idx=0

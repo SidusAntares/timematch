@@ -117,9 +117,9 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         dual_cls_loss_meter = AverageMeter()
         dual_relation_loss_meter = AverageMeter()
 
-        progress_bar = tqdm(enumerate(data_loader), total=len(data_loader), desc=f'Epoch {epoch + 1}/{config.epochs}')
+        print(f"Epoch {epoch + 1}/{config.epochs} source training start: steps={len(data_loader)}")
         global_step = epoch * len(data_loader)
-        for step, sample in progress_bar:
+        for step, sample in enumerate(data_loader):
             targets = sample['label'].cuda(device=device, non_blocking=True)
             pixels, mask, positions, extra = to_cuda(sample, device)
 
@@ -229,14 +229,17 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
 
             if step % config.log_step == 0:
                 lr = optimizer.param_groups[0]["lr"]
-                progress_bar.set_postfix(
-                    lr=f'{lr:.1E}',
-                    loss=f"{loss_meter.avg:.3f}",
-                    cls=f"{cls_loss_meter.avg:.3f}",
-                    compact=f"{compact_loss_meter.avg:.3f}",
-                    reshaper=f"{reshaper_loss_meter.avg:.3f}",
-                    dualcls=f"{dual_cls_loss_meter.avg:.3f}",
-                    dualrel=f"{dual_relation_loss_meter.avg:.3f}",
+                print(
+                    f"Epoch {epoch + 1}/{config.epochs} "
+                    f"step {step + 1}/{len(data_loader)} "
+                    f"lr={lr:.1E} "
+                    f"loss={loss_meter.avg:.4f} "
+                    f"cls={cls_loss_meter.avg:.4f} "
+                    f"structure={compact_loss_meter.avg:.4f} "
+                    f"reshaper={reshaper_loss_meter.avg:.4f} "
+                    f"dualcls={dual_cls_loss_meter.avg:.4f} "
+                    f"dualrel={dual_relation_loss_meter.avg:.4f}",
+                    flush=True,
                 )
                 writer.add_scalar("train/loss", loss_meter.val, global_step + step)
                 writer.add_scalar("train/lr", lr, global_step + step)
@@ -256,7 +259,12 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                 for key, value in dual_relation_logs.items():
                     writer.add_scalar(f"train/{key}", value, global_step + step)
 
-        progress_bar.close()
+        print(
+            f"Epoch {epoch + 1}/{config.epochs} source training done: "
+            f"loss={loss_meter.avg:.4f} cls={cls_loss_meter.avg:.4f} "
+            f"structure={compact_loss_meter.avg:.4f}",
+            flush=True,
+        )
 
         model.eval()
         best_f1 = validation(

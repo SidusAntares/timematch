@@ -8,6 +8,7 @@ from ideas.v271_adaptive_structure import (
     compute_v271_adaptive_support_loss,
     load_v271_adaptive_supports,
 )
+from ideas.v271_adaptive_support_discovery import construct_pair_adaptive_supports
 
 
 def _toy_batch(batch_size=6, sequence_length=7, feature_dim=4):
@@ -121,3 +122,75 @@ def test_v271_adaptive_support_loader_filters_low_reliability(tmp_path):
     assert len(supports) == 1
     assert supports[0]["classes"] == [0, 1]
     assert logs["timematch_v271_adaptive_support_count"] == 1.0
+
+
+def test_construct_pair_adaptive_supports_merges_by_class_pair():
+    pair_segment_rows = [
+        {
+            "pair": "0:1",
+            "segment": 1,
+            "start": 0,
+            "end": 9,
+            "score": 0.60,
+            "support_count": 4,
+            "source_separability": 1.2,
+            "target_explainability": 0.7,
+            "ambiguity": 0.8,
+            "shift_stability": 1.0,
+            "actual_raw_score": 0.70,
+            "baseline_raw_score": 0.10,
+            "relative_score": 0.60,
+            "ratio_score": 7.0,
+        },
+        {
+            "pair": "0:1",
+            "segment": 2,
+            "start": 10,
+            "end": 19,
+            "score": 0.50,
+            "support_count": 3,
+            "source_separability": 1.1,
+            "target_explainability": 0.6,
+            "ambiguity": 0.7,
+            "shift_stability": 1.0,
+            "actual_raw_score": 0.55,
+            "baseline_raw_score": 0.05,
+            "relative_score": 0.50,
+            "ratio_score": 11.0,
+        },
+        {
+            "pair": "1:2",
+            "segment": 1,
+            "start": 0,
+            "end": 9,
+            "score": 0.02,
+            "support_count": 3,
+            "source_separability": 0.2,
+            "target_explainability": 0.3,
+            "ambiguity": 0.4,
+            "shift_stability": 0.5,
+            "actual_raw_score": 0.03,
+            "baseline_raw_score": 0.01,
+            "relative_score": 0.02,
+            "ratio_score": 3.0,
+        },
+    ]
+
+    threshold, supports = construct_pair_adaptive_supports(
+        pair_segment_rows,
+        score_quantile=0.0,
+        min_score=0.10,
+        min_ratio=1.0,
+        top_m_per_pair=2,
+        max_supports=8,
+    )
+
+    assert threshold == 0.10
+    assert len(supports) == 1
+    support = supports[0]
+    assert support["classes"] == [0, 1]
+    assert support["class_pair"] == [0, 1]
+    assert support["start"] == 0
+    assert support["end"] == 19
+    assert support["atomic_segments"] == [1, 2]
+    assert 0.0 <= support["gate"] <= 1.0

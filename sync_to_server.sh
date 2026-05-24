@@ -19,6 +19,10 @@ cd "$(dirname "$PROJECT_DIR")"
 tar \
     --exclude="${PROJECT_NAME}/.git" \
     --exclude="${PROJECT_NAME}/.idea" \
+    --exclude="${PROJECT_NAME}/.pytest_cache" \
+    --exclude="${PROJECT_NAME}/**/.pytest_cache" \
+    --exclude="${PROJECT_NAME}/.ruff_cache" \
+    --exclude="${PROJECT_NAME}/**/.ruff_cache" \
     --exclude="${PROJECT_NAME}/__pycache__" \
     --exclude="${PROJECT_NAME}/**/__pycache__" \
     --exclude="${PROJECT_NAME}/outputs" \
