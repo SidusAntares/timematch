@@ -476,6 +476,21 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                             "source_structure_v271_event_support_mode",
                             "event",
                         ),
+                        v271_gtw_shift_radius_steps=getattr(
+                            config,
+                            "source_structure_v271_gtw_shift_radius_steps",
+                            2.0,
+                        ),
+                        v271_gtw_shift_count=getattr(
+                            config,
+                            "source_structure_v271_gtw_shift_count",
+                            5,
+                        ),
+                        v271_gtw_temperature=getattr(
+                            config,
+                            "source_structure_v271_gtw_temperature",
+                            0.05,
+                        ),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
@@ -583,6 +598,21 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                             config,
                             "source_structure_v271_event_support_mode",
                             "event",
+                        ),
+                        v271_gtw_shift_radius_steps=getattr(
+                            config,
+                            "source_structure_v271_gtw_shift_radius_steps",
+                            2.0,
+                        ),
+                        v271_gtw_shift_count=getattr(
+                            config,
+                            "source_structure_v271_gtw_shift_count",
+                            5,
+                        ),
+                        v271_gtw_temperature=getattr(
+                            config,
+                            "source_structure_v271_gtw_temperature",
+                            0.05,
                         ),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,

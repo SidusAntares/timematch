@@ -582,7 +582,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v271_global', 'v271_global_segment_basis', 'v271_global_event_support'],
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v271_global', 'v271_global_segment_basis', 'v271_global_event_support', 'v271_global_gtw'],
         help='source-side structural loss version: legacy compactness variants, v2.4.3 boundary-window segment transition residual, v2.7.1 clean global trend/residual structure, or the v2.7 diagnostic global+segment-basis composition',
     )
     parser.add_argument(
@@ -716,6 +716,24 @@ if __name__ == '__main__':
         default='event',
         choices=['event', 'random', 'matched_random'],
         help='event uses source prototype trend-difference centers; random is a matched continuous-time control',
+    )
+    parser.add_argument(
+        '--source_structure_v271_gtw_shift_radius_steps',
+        default=2.0,
+        type=float,
+        help='GTW-inspired soft shift radius measured in median temporal gaps',
+    )
+    parser.add_argument(
+        '--source_structure_v271_gtw_shift_count',
+        default=5,
+        type=int,
+        help='number of shifts in the GTW-inspired soft shift bank',
+    )
+    parser.add_argument(
+        '--source_structure_v271_gtw_temperature',
+        default=0.05,
+        type=float,
+        help='soft assignment temperature for GTW-inspired shift-bank distance',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')

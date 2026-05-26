@@ -7,6 +7,7 @@ import zarr
 
 from ideas.v271_global_structure import (
     compute_v271_event_support_structure_loss,
+    compute_v271_global_gtw_structure_loss,
     compute_v271_global_structure_loss,
 )
 
@@ -37,6 +38,9 @@ SOURCE_STRUCTURE_V271_EVENT_SUPPORT_TRADE_OFF = 1.0
 SOURCE_STRUCTURE_V271_EVENT_SUPPORT_COUNT = 2
 SOURCE_STRUCTURE_V271_EVENT_SUPPORT_SIGMA_RATIO = 0.20
 SOURCE_STRUCTURE_V271_EVENT_SUPPORT_MODE = "event"
+SOURCE_STRUCTURE_V271_GTW_SHIFT_RADIUS_STEPS = 2.0
+SOURCE_STRUCTURE_V271_GTW_SHIFT_COUNT = 5
+SOURCE_STRUCTURE_V271_GTW_TEMPERATURE = 0.05
 SHAPE_REG_DIRECTION_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_MARGIN = 0.35
@@ -1141,6 +1145,9 @@ def compute_source_structure_loss(
     v271_event_support_count=SOURCE_STRUCTURE_V271_EVENT_SUPPORT_COUNT,
     v271_event_support_sigma_ratio=SOURCE_STRUCTURE_V271_EVENT_SUPPORT_SIGMA_RATIO,
     v271_event_support_mode=SOURCE_STRUCTURE_V271_EVENT_SUPPORT_MODE,
+    v271_gtw_shift_radius_steps=SOURCE_STRUCTURE_V271_GTW_SHIFT_RADIUS_STEPS,
+    v271_gtw_shift_count=SOURCE_STRUCTURE_V271_GTW_SHIFT_COUNT,
+    v271_gtw_temperature=SOURCE_STRUCTURE_V271_GTW_TEMPERATURE,
     anchor_spatial_feats=None,
     anchor_positions=None,
 ):
@@ -1203,6 +1210,11 @@ def compute_source_structure_loss(
           * keep v2.7.1 global time-aware trend/residual structure
           * add Gaussian continuous-time support centered on source prototype
             trend-difference events, without segment pooling
+    - v271_global_gtw:
+        v2.7 GTW-inspired global structure distance:
+          * keep the global trend/residual representation
+          * replace trend cohesion and dynamics distances with soft shift-bank
+            distances on continuous temporal coordinates
     """
     version = str(version).lower()
     if version == "compactness":
@@ -1364,6 +1376,73 @@ def compute_source_structure_loss(
             key = f"v271_event_center_{idx}"
             if key in raw_logs:
                 phase_logs[f"source_structure_{key}"] = raw_logs[key]
+        phase_logs["compactness_loss"] = phase_logs["structure_loss"]
+        return total_loss, phase_logs
+
+    if version in {"v271_global_gtw", "v271_gtw", "global_gtw", "gtw_global"}:
+        if spatial_feats.ndim != 3:
+            raise ValueError(f"Expected spatial_feats to have shape [B, T, D], got {tuple(spatial_feats.shape)}")
+        batch_size, sequence_length, _ = spatial_feats.shape
+        if batch_size < 2 or sequence_length < 2:
+            zero = spatial_feats.sum() * 0.0
+            return zero, {"structure_loss": 0.0, "compactness_loss": 0.0}
+
+        ordered_feats, ordered_positions = _sorted_sequence_features(spatial_feats, positions)
+        raw_loss, raw_logs = compute_v271_global_gtw_structure_loss(
+            ordered_feats,
+            ordered_positions,
+            labels,
+            trend_kernel_size=v271_trend_kernel_size,
+            trend_smoothing_mode=v271_trend_smoothing_mode,
+            trend_bandwidth=v271_trend_bandwidth,
+            trend_kernel=v271_trend_kernel,
+            trend_cohesion_trade_off=intra_trade_off,
+            trend_dynamics_trade_off=v271_trend_dynamics_trade_off,
+            residual_variance_trade_off=v271_residual_variance_trade_off,
+            residual_energy_trade_off=v271_residual_energy_trade_off,
+            residual_energy_margin=v271_residual_energy_margin,
+            dynamics_mode=v271_dynamics_mode,
+            gtw_shift_radius_steps=v271_gtw_shift_radius_steps,
+            gtw_shift_count=v271_gtw_shift_count,
+            gtw_temperature=v271_gtw_temperature,
+        )
+        total_loss = SOURCE_PHASE_COMPACTNESS_LAMBDA * raw_loss
+        phase_logs = {
+            "source_structure_loss_version": 271.8,
+            "source_structure_v271_gtw_active": 1.0,
+            "source_structure_intra_loss": float(
+                (SOURCE_PHASE_COMPACTNESS_LAMBDA * raw_logs["v271_gtw_trend_cohesion_loss"]).detach().item()
+            ),
+            "source_structure_trend_loss": float(
+                (SOURCE_PHASE_COMPACTNESS_LAMBDA * raw_logs["v271_gtw_trend_dynamics_loss"]).detach().item()
+            ),
+            "source_structure_v271_gtw_residual_variance_loss": float(
+                (SOURCE_PHASE_COMPACTNESS_LAMBDA * raw_logs["v271_gtw_residual_variance_loss"]).detach().item()
+            ),
+            "source_structure_v271_gtw_residual_energy_loss": float(
+                (SOURCE_PHASE_COMPACTNESS_LAMBDA * raw_logs["v271_gtw_residual_energy_loss"]).detach().item()
+            ),
+            "source_structure_v271_gtw_residual_energy": float(
+                raw_logs["v271_gtw_residual_energy"].detach().item()
+            ),
+            "source_structure_v271_gtw_trend_classes": raw_logs["v271_gtw_trend_class_count"],
+            "source_structure_v271_gtw_dynamics_classes": raw_logs["v271_gtw_dynamics_class_count"],
+            "source_structure_v271_gtw_residual_classes": raw_logs["v271_gtw_residual_class_count"],
+            "source_structure_v271_gtw_trend_abs_shift": float(
+                raw_logs["v271_gtw_trend_abs_shift"].detach().item()
+            ),
+            "source_structure_v271_gtw_dynamics_abs_shift": float(
+                raw_logs["v271_gtw_dynamics_abs_shift"].detach().item()
+            ),
+            "source_structure_v271_gtw_shift_radius": raw_logs["v271_gtw_shift_radius"],
+            "source_structure_v271_gtw_shift_radius_steps": raw_logs["v271_gtw_shift_radius_steps"],
+            "source_structure_v271_gtw_shift_count": raw_logs["v271_gtw_shift_count"],
+            "source_structure_v271_gtw_temperature": raw_logs["v271_gtw_temperature"],
+            "source_structure_v271_gtw_trend_bandwidth_effective": raw_logs[
+                "v271_gtw_trend_bandwidth_effective"
+            ],
+            "structure_loss": float(total_loss.detach().item()),
+        }
         phase_logs["compactness_loss"] = phase_logs["structure_loss"]
         return total_loss, phase_logs
 
