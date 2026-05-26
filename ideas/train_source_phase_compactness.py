@@ -169,6 +169,26 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                         "source_structure_v271_segment_basis_trade_off",
                         1.0,
                     ),
+                    v271_event_support_trade_off=getattr(
+                        config,
+                        "source_structure_v271_event_support_trade_off",
+                        1.0,
+                    ),
+                    v271_event_support_count=getattr(
+                        config,
+                        "source_structure_v271_event_support_count",
+                        2,
+                    ),
+                    v271_event_support_sigma_ratio=getattr(
+                        config,
+                        "source_structure_v271_event_support_sigma_ratio",
+                        0.20,
+                    ),
+                    v271_event_support_mode=getattr(
+                        config,
+                        "source_structure_v271_event_support_mode",
+                        "event",
+                    ),
                     anchor_spatial_feats=spatial_feats_anchor,
                     anchor_positions=positions,
                 )

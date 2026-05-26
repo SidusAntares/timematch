@@ -5,7 +5,10 @@ import numpy as np
 import torch
 import zarr
 
-from ideas.v271_global_structure import compute_v271_global_structure_loss
+from ideas.v271_global_structure import (
+    compute_v271_event_support_structure_loss,
+    compute_v271_global_structure_loss,
+)
 
 
 UNIFORM_PHASE_COUNT = 5
@@ -30,6 +33,10 @@ SOURCE_STRUCTURE_V271_RESIDUAL_ENERGY_TRADE_OFF = 0.05
 SOURCE_STRUCTURE_V271_RESIDUAL_ENERGY_MARGIN = 1.0
 SOURCE_STRUCTURE_V271_DYNAMICS_MODE = "cosine"
 SOURCE_STRUCTURE_V271_SEGMENT_BASIS_TRADE_OFF = 1.0
+SOURCE_STRUCTURE_V271_EVENT_SUPPORT_TRADE_OFF = 1.0
+SOURCE_STRUCTURE_V271_EVENT_SUPPORT_COUNT = 2
+SOURCE_STRUCTURE_V271_EVENT_SUPPORT_SIGMA_RATIO = 0.20
+SOURCE_STRUCTURE_V271_EVENT_SUPPORT_MODE = "event"
 SHAPE_REG_DIRECTION_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_MARGIN = 0.35
@@ -1130,6 +1137,10 @@ def compute_source_structure_loss(
     v271_residual_energy_margin=SOURCE_STRUCTURE_V271_RESIDUAL_ENERGY_MARGIN,
     v271_dynamics_mode=SOURCE_STRUCTURE_V271_DYNAMICS_MODE,
     v271_segment_basis_trade_off=SOURCE_STRUCTURE_V271_SEGMENT_BASIS_TRADE_OFF,
+    v271_event_support_trade_off=SOURCE_STRUCTURE_V271_EVENT_SUPPORT_TRADE_OFF,
+    v271_event_support_count=SOURCE_STRUCTURE_V271_EVENT_SUPPORT_COUNT,
+    v271_event_support_sigma_ratio=SOURCE_STRUCTURE_V271_EVENT_SUPPORT_SIGMA_RATIO,
+    v271_event_support_mode=SOURCE_STRUCTURE_V271_EVENT_SUPPORT_MODE,
     anchor_spatial_feats=None,
     anchor_positions=None,
 ):
@@ -1187,6 +1198,11 @@ def compute_source_structure_loss(
           * add the v2.4.3b segment basis as a source-stage phase structure term
           * this is an experiment-facing bridge, not a claim that fixed segments are
             the final theoretical adaptive view
+    - v271_global_event_support:
+        v2.7 event-anchored continuous local support:
+          * keep v2.7.1 global time-aware trend/residual structure
+          * add Gaussian continuous-time support centered on source prototype
+            trend-difference events, without segment pooling
     """
     version = str(version).lower()
     if version == "compactness":
@@ -1280,6 +1296,75 @@ def compute_source_structure_loss(
         for key, value in segment_logs.items():
             if key not in {"structure_loss", "compactness_loss"}:
                 phase_logs[f"segment_{key}"] = value
+        return total_loss, phase_logs
+
+    if version in {
+        "v271_global_event_support",
+        "v271_event_support",
+        "global_event_support",
+    }:
+        if spatial_feats.ndim != 3:
+            raise ValueError(f"Expected spatial_feats to have shape [B, T, D], got {tuple(spatial_feats.shape)}")
+        batch_size, sequence_length, _ = spatial_feats.shape
+        if batch_size < 2 or sequence_length < 2:
+            zero = spatial_feats.sum() * 0.0
+            return zero, {"structure_loss": 0.0, "compactness_loss": 0.0}
+
+        ordered_feats, ordered_positions = _sorted_sequence_features(spatial_feats, positions)
+        support_mode = str(v271_event_support_mode or "event").lower()
+        raw_loss, raw_logs = compute_v271_event_support_structure_loss(
+            ordered_feats,
+            ordered_positions,
+            labels,
+            trend_kernel_size=v271_trend_kernel_size,
+            trend_smoothing_mode=v271_trend_smoothing_mode,
+            trend_bandwidth=v271_trend_bandwidth,
+            trend_kernel=v271_trend_kernel,
+            trend_cohesion_trade_off=intra_trade_off,
+            trend_dynamics_trade_off=v271_trend_dynamics_trade_off,
+            residual_variance_trade_off=v271_residual_variance_trade_off,
+            residual_energy_trade_off=v271_residual_energy_trade_off,
+            residual_energy_margin=v271_residual_energy_margin,
+            dynamics_mode=v271_dynamics_mode,
+            event_count=v271_event_support_count,
+            support_sigma_ratio=v271_event_support_sigma_ratio,
+            random_centers=support_mode in {"random", "matched_random", "random_event"},
+            local_trade_off=v271_event_support_trade_off,
+        )
+        total_loss = SOURCE_PHASE_COMPACTNESS_LAMBDA * raw_loss
+        phase_logs = {
+            "source_structure_loss_version": 271.7,
+            "source_structure_v271_event_support_active": 1.0,
+            "source_structure_v271_event_support_mode": 1.0
+            if support_mode in {"random", "matched_random", "random_event"}
+            else 0.0,
+            "source_structure_v271_event_total_loss": float(total_loss.detach().item()),
+            "source_structure_v271_event_local_loss": float(
+                (SOURCE_PHASE_COMPACTNESS_LAMBDA * raw_logs["v271_event_local_loss"]).detach().item()
+            ),
+            "source_structure_v271_event_trend_loss": float(
+                (SOURCE_PHASE_COMPACTNESS_LAMBDA * raw_logs["v271_event_trend_cohesion_loss"]).detach().item()
+            ),
+            "source_structure_v271_event_dynamics_loss": float(
+                (SOURCE_PHASE_COMPACTNESS_LAMBDA * raw_logs["v271_event_trend_dynamics_loss"]).detach().item()
+            ),
+            "source_structure_v271_event_residual_variance_loss": float(
+                (SOURCE_PHASE_COMPACTNESS_LAMBDA * raw_logs["v271_event_residual_variance_loss"]).detach().item()
+            ),
+            "source_structure_v271_event_residual_energy_loss": float(
+                (SOURCE_PHASE_COMPACTNESS_LAMBDA * raw_logs["v271_event_residual_energy_loss"]).detach().item()
+            ),
+            "source_structure_v271_event_count": raw_logs["v271_event_count"],
+            "source_structure_v271_event_support_sigma": raw_logs["v271_event_support_sigma"],
+            "source_structure_v271_event_support_sigma_ratio": raw_logs["v271_event_support_sigma_ratio"],
+            "source_structure_v271_event_local_trade_off": raw_logs["v271_event_local_trade_off"],
+            "structure_loss": float(total_loss.detach().item()),
+        }
+        for idx in range(1, 5):
+            key = f"v271_event_center_{idx}"
+            if key in raw_logs:
+                phase_logs[f"source_structure_{key}"] = raw_logs[key]
+        phase_logs["compactness_loss"] = phase_logs["structure_loss"]
         return total_loss, phase_logs
 
     if version in {"v271_global", "v271_global_trend_residual", "global_trend_residual"}:

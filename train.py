@@ -582,7 +582,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v271_global', 'v271_global_segment_basis'],
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v271_global', 'v271_global_segment_basis', 'v271_global_event_support'],
         help='source-side structural loss version: legacy compactness variants, v2.4.3 boundary-window segment transition residual, v2.7.1 clean global trend/residual structure, or the v2.7 diagnostic global+segment-basis composition',
     )
     parser.add_argument(
@@ -692,6 +692,30 @@ if __name__ == '__main__':
         default=1.0,
         type=float,
         help='segment-basis weight when using v271_global_segment_basis',
+    )
+    parser.add_argument(
+        '--source_structure_v271_event_support_trade_off',
+        default=1.0,
+        type=float,
+        help='continuous event-support local weight when using v271_global_event_support',
+    )
+    parser.add_argument(
+        '--source_structure_v271_event_support_count',
+        default=2,
+        type=int,
+        help='number of continuous event-support centers per batch',
+    )
+    parser.add_argument(
+        '--source_structure_v271_event_support_sigma_ratio',
+        default=0.20,
+        type=float,
+        help='Gaussian event-support width as a fraction of the observed time span',
+    )
+    parser.add_argument(
+        '--source_structure_v271_event_support_mode',
+        default='event',
+        choices=['event', 'random', 'matched_random'],
+        help='event uses source prototype trend-difference centers; random is a matched continuous-time control',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')

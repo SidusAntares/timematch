@@ -456,6 +456,26 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                             "source_structure_v271_segment_basis_trade_off",
                             1.0,
                         ),
+                        v271_event_support_trade_off=getattr(
+                            config,
+                            "source_structure_v271_event_support_trade_off",
+                            1.0,
+                        ),
+                        v271_event_support_count=getattr(
+                            config,
+                            "source_structure_v271_event_support_count",
+                            2,
+                        ),
+                        v271_event_support_sigma_ratio=getattr(
+                            config,
+                            "source_structure_v271_event_support_sigma_ratio",
+                            0.20,
+                        ),
+                        v271_event_support_mode=getattr(
+                            config,
+                            "source_structure_v271_event_support_mode",
+                            "event",
+                        ),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
@@ -543,6 +563,26 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                             config,
                             "source_structure_v271_segment_basis_trade_off",
                             1.0,
+                        ),
+                        v271_event_support_trade_off=getattr(
+                            config,
+                            "source_structure_v271_event_support_trade_off",
+                            1.0,
+                        ),
+                        v271_event_support_count=getattr(
+                            config,
+                            "source_structure_v271_event_support_count",
+                            2,
+                        ),
+                        v271_event_support_sigma_ratio=getattr(
+                            config,
+                            "source_structure_v271_event_support_sigma_ratio",
+                            0.20,
+                        ),
+                        v271_event_support_mode=getattr(
+                            config,
+                            "source_structure_v271_event_support_mode",
+                            "event",
                         ),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,

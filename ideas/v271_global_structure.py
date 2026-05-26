@@ -1,10 +1,144 @@
+import torch
+import torch.nn.functional as F
+
 from ideas.v271_decomposition import (
     bounded_residual_energy,
     classwise_curve_variance,
     classwise_dynamics_consistency,
     infer_time_smoothing_bandwidth,
     split_trend_residual,
+    temporal_differences,
 )
+
+
+def _mean_time_grid(positions):
+    if positions is None:
+        return None
+    if positions.ndim == 1:
+        return positions
+    return positions.to(dtype=torch.float32).median(dim=0).values.to(device=positions.device, dtype=positions.dtype)
+
+
+def _class_prototypes(curves, labels):
+    prototypes = []
+    for class_id in labels.unique(sorted=True):
+        class_mask = labels == class_id
+        if bool(class_mask.any().item()):
+            prototypes.append(curves[class_mask].mean(dim=0))
+    if not prototypes:
+        return None
+    return torch.stack(prototypes, dim=0)
+
+
+def _event_centers_from_source_trend(trend, positions, labels, event_count=2, random_centers=False, eps=1e-6):
+    if trend.shape[1] < 2:
+        return trend.new_empty((0,))
+
+    time_grid = _mean_time_grid(positions)
+    if time_grid is None:
+        time_grid = torch.arange(trend.shape[1], device=trend.device, dtype=trend.dtype)
+    time_grid = time_grid.to(device=trend.device, dtype=trend.dtype)
+    midpoint_grid = 0.5 * (time_grid[1:] + time_grid[:-1])
+
+    count = max(0, min(int(event_count), int(midpoint_grid.numel())))
+    if count <= 0:
+        return trend.new_empty((0,))
+
+    if random_centers:
+        start = time_grid.min()
+        span = (time_grid.max() - start).clamp_min(eps)
+        # Deterministic matched-random centers: continuous in time, independent of labels/features.
+        idx = torch.arange(count, device=trend.device, dtype=trend.dtype)
+        fractions = torch.remainder(0.137 + 0.61803398875 * (idx + 1.0), 1.0)
+        return start + fractions * span
+
+    prototypes = _class_prototypes(trend.detach(), labels)
+    if prototypes is None or prototypes.shape[0] == 0:
+        return trend.new_empty((0,))
+
+    proto_diffs = prototypes[:, 1:] - prototypes[:, :-1]
+    delta_t = (time_grid[1:] - time_grid[:-1]).abs().clamp_min(1.0)
+    proto_diffs = proto_diffs / delta_t.view(1, -1, 1)
+    event_scores = proto_diffs.norm(dim=2).mean(dim=0)
+    if event_scores.numel() == 0:
+        return trend.new_empty((0,))
+    topk = torch.topk(event_scores, k=count, largest=True).indices.sort().values
+    return midpoint_grid[topk]
+
+
+def _gaussian_support_weights(positions, centers, sigma, eps=1e-6):
+    if centers.numel() == 0:
+        return None
+    sigma = positions.new_tensor(float(sigma)).clamp_min(eps)
+    distances = positions.unsqueeze(0) - centers.view(-1, 1, 1)
+    weights = torch.exp(-0.5 * (distances / sigma).pow(2))
+    return weights
+
+
+def _weighted_curve_variance(curves, labels, support_weights, eps=1e-6):
+    zero = curves.sum() * 0.0
+    if support_weights is None:
+        return zero, 0.0
+    total = zero
+    valid_terms = 0
+    for support_idx in range(support_weights.shape[0]):
+        weights = support_weights[support_idx].to(dtype=curves.dtype)
+        for class_id in labels.unique(sorted=True):
+            class_mask = labels == class_id
+            if int(class_mask.sum().item()) < 2:
+                continue
+            class_curves = curves[class_mask]
+            class_weights = weights[class_mask].unsqueeze(-1)
+            weight_sum = class_weights.sum(dim=1, keepdim=True).clamp_min(eps)
+            proto = (class_curves * class_weights).sum(dim=0) / class_weights.sum(dim=0).clamp_min(eps)
+            proto = proto.unsqueeze(0)
+            point_loss = (class_curves - proto).pow(2).sum(dim=2, keepdim=True)
+            sample_loss = (point_loss * class_weights).sum(dim=1) / weight_sum.squeeze(1)
+            total = total + sample_loss.mean()
+            valid_terms += 1
+    if valid_terms > 0:
+        total = total / (valid_terms + eps)
+    return total, float(valid_terms)
+
+
+def _weighted_dynamics_consistency(curves, labels, positions, support_centers, sigma, mode="cosine", eps=1e-6):
+    zero = curves.sum() * 0.0
+    if support_centers.numel() == 0 or curves.shape[1] < 2:
+        return zero, 0.0
+    dynamics = temporal_differences(curves, positions=positions)
+    midpoint_positions = 0.5 * (positions[:, 1:] + positions[:, :-1])
+    weights = _gaussian_support_weights(midpoint_positions, support_centers, sigma, eps=eps)
+    if weights is None:
+        return zero, 0.0
+
+    total = zero
+    valid_terms = 0
+    mode = str(mode or "cosine").lower()
+    for support_idx in range(weights.shape[0]):
+        support_weights = weights[support_idx].to(dtype=curves.dtype)
+        for class_id in labels.unique(sorted=True):
+            class_mask = labels == class_id
+            if int(class_mask.sum().item()) < 2:
+                continue
+            class_dyn = dynamics[class_mask]
+            class_weights = support_weights[class_mask].unsqueeze(-1)
+            proto_dyn = (class_dyn * class_weights).sum(dim=0) / class_weights.sum(dim=0).clamp_min(eps)
+            proto_dyn = proto_dyn.unsqueeze(0)
+            proto_expanded = proto_dyn.expand_as(class_dyn)
+            if mode == "mse":
+                point_loss = (class_dyn - proto_expanded).pow(2).sum(dim=2, keepdim=True)
+            elif mode in {"cosine", "direction"}:
+                cosine_loss = 1.0 - F.cosine_similarity(class_dyn, proto_expanded, dim=2, eps=eps)
+                point_loss = cosine_loss.unsqueeze(-1)
+            else:
+                raise ValueError(f"Unsupported dynamics mode: {mode}")
+            weight_sum = class_weights.sum(dim=1, keepdim=True).clamp_min(eps)
+            sample_loss = (point_loss * class_weights).sum(dim=1) / weight_sum.squeeze(1)
+            total = total + sample_loss.mean()
+            valid_terms += 1
+    if valid_terms > 0:
+        total = total / (valid_terms + eps)
+    return total, float(valid_terms)
 
 
 def compute_v271_global_structure_loss(
@@ -71,4 +205,110 @@ def compute_v271_global_structure_loss(
         "v271_global_residual_variance_trade_off": float(residual_variance_trade_off),
         "v271_global_residual_energy_trade_off": float(residual_energy_trade_off),
     }
+    return total, logs
+
+
+def compute_v271_event_support_structure_loss(
+    ordered_feats,
+    ordered_positions,
+    labels,
+    trend_kernel_size=5,
+    trend_smoothing_mode="time",
+    trend_bandwidth=0.0,
+    trend_kernel="gaussian",
+    trend_cohesion_trade_off=1.0,
+    trend_dynamics_trade_off=0.05,
+    residual_variance_trade_off=0.10,
+    residual_energy_trade_off=0.05,
+    residual_energy_margin=1.0,
+    dynamics_mode="cosine",
+    event_count=2,
+    support_sigma_ratio=0.20,
+    random_centers=False,
+    local_trade_off=1.0,
+    eps=1e-6,
+):
+    global_loss, global_logs = compute_v271_global_structure_loss(
+        ordered_feats,
+        ordered_positions,
+        labels,
+        trend_kernel_size=trend_kernel_size,
+        trend_smoothing_mode=trend_smoothing_mode,
+        trend_bandwidth=trend_bandwidth,
+        trend_kernel=trend_kernel,
+        trend_cohesion_trade_off=trend_cohesion_trade_off,
+        trend_dynamics_trade_off=trend_dynamics_trade_off,
+        residual_variance_trade_off=residual_variance_trade_off,
+        residual_energy_trade_off=residual_energy_trade_off,
+        residual_energy_margin=residual_energy_margin,
+        dynamics_mode=dynamics_mode,
+    )
+    trend, residual = split_trend_residual(
+        ordered_feats,
+        positions=ordered_positions,
+        kernel_size=trend_kernel_size,
+        mode=trend_smoothing_mode,
+        bandwidth=trend_bandwidth,
+        kernel=trend_kernel,
+    )
+    centers = _event_centers_from_source_trend(
+        trend,
+        ordered_positions,
+        labels,
+        event_count=event_count,
+        random_centers=random_centers,
+        eps=eps,
+    )
+    time_grid = _mean_time_grid(ordered_positions).to(device=ordered_feats.device, dtype=ordered_feats.dtype)
+    time_span = (time_grid.max() - time_grid.min()).abs().clamp_min(1.0)
+    sigma = float(support_sigma_ratio) * float(time_span.detach().item())
+    if sigma <= 0.0:
+        sigma = infer_time_smoothing_bandwidth(ordered_positions, kernel_size=trend_kernel_size, eps=eps)
+    support_weights = _gaussian_support_weights(ordered_positions, centers, sigma, eps=eps)
+
+    local_trend_cohesion, trend_terms = _weighted_curve_variance(trend, labels, support_weights, eps=eps)
+    local_trend_dynamics, dynamics_terms = _weighted_dynamics_consistency(
+        trend,
+        labels,
+        ordered_positions,
+        centers,
+        sigma,
+        mode=dynamics_mode,
+        eps=eps,
+    )
+    local_residual_variance, residual_terms = _weighted_curve_variance(residual, labels, support_weights, eps=eps)
+    local_residual_energy_loss, local_residual_energy = bounded_residual_energy(
+        residual * support_weights.mean(dim=0).unsqueeze(-1) if support_weights is not None else residual,
+        margin=residual_energy_margin,
+    )
+
+    local_loss = (
+        float(trend_cohesion_trade_off) * local_trend_cohesion
+        + float(trend_dynamics_trade_off) * local_trend_dynamics
+        + float(residual_variance_trade_off) * local_residual_variance
+        + float(residual_energy_trade_off) * local_residual_energy_loss
+    )
+    total = global_loss + float(local_trade_off) * local_loss
+    logs = dict(global_logs)
+    logs.update(
+        {
+            "v271_event_local_loss": local_loss,
+            "v271_event_total_loss": total,
+            "v271_event_trend_cohesion_loss": local_trend_cohesion,
+            "v271_event_trend_dynamics_loss": local_trend_dynamics,
+            "v271_event_residual_variance_loss": local_residual_variance,
+            "v271_event_residual_energy_loss": local_residual_energy_loss,
+            "v271_event_residual_energy": local_residual_energy,
+            "v271_event_count": float(centers.numel()),
+            "v271_event_support_sigma": float(sigma),
+            "v271_event_support_sigma_ratio": float(support_sigma_ratio),
+            "v271_event_local_trade_off": float(local_trade_off),
+            "v271_event_random_centers": 1.0 if random_centers else 0.0,
+            "v271_event_trend_terms": float(trend_terms),
+            "v271_event_dynamics_terms": float(dynamics_terms),
+            "v271_event_residual_terms": float(residual_terms),
+        }
+    )
+    for idx in range(min(int(centers.numel()), 4)):
+        logs[f"v271_event_center_{idx + 1}"] = float(centers[idx].detach().item())
     return total, logs
