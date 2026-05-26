@@ -103,6 +103,70 @@ def test_v271_adaptive_support_loss_is_class_conditioned_and_finite():
     assert logs["timematch_v271_adaptive_class_count"] >= 2.0
 
 
+def test_v271_adaptive_support_loss_accepts_boundary_taper():
+    feats, positions, labels = _toy_batch()
+    supports = [
+        {
+            "classes": [0, 1],
+            "start": 2,
+            "end": 4,
+            "score": 0.8,
+            "gate": 1.0,
+        }
+    ]
+
+    loss, logs = compute_v271_adaptive_support_loss(
+        feats,
+        positions,
+        labels,
+        supports,
+        trend_kernel_size=3,
+        trend_smoothing_mode="time",
+        trend_bandwidth=0.0,
+        trend_kernel="gaussian",
+        min_points=2,
+        taper_mode="triangular",
+        taper_ratio=1.0,
+    )
+
+    assert torch.isfinite(loss)
+    assert loss.item() >= 0.0
+    assert logs["timematch_v271_adaptive_taper_active"] == 1.0
+    assert logs["timematch_v271_adaptive_taper_radius"] > 0.0
+    assert logs["timematch_v271_adaptive_support_weight_mean"] > 0.0
+
+
+def test_v271_adaptive_support_loss_skips_all_off_gates_without_nan():
+    feats, positions, labels = _toy_batch()
+    supports = [
+        {
+            "classes": [0, 1],
+            "start": 1,
+            "end": 5,
+            "score": 0.8,
+            "gate": 0.0,
+        }
+    ]
+
+    loss, logs = compute_v271_adaptive_support_loss(
+        feats,
+        positions,
+        labels,
+        supports,
+        trend_kernel_size=3,
+        trend_smoothing_mode="time",
+        trend_bandwidth=0.0,
+        trend_kernel="gaussian",
+        min_points=2,
+    )
+
+    assert torch.isfinite(loss)
+    assert loss.item() == 0.0
+    assert logs["timematch_v271_adaptive_candidate_support_count"] == 1.0
+    assert logs["timematch_v271_adaptive_gate_off_count"] == 1.0
+    assert logs["timematch_v271_adaptive_active"] == 0.0
+
+
 def test_v271_adaptive_support_loader_filters_low_reliability(tmp_path):
     support_file = tmp_path / "supports.json"
     support_file.write_text(
@@ -261,3 +325,68 @@ def test_construct_pair_adaptive_supports_applies_strict_reliability_filters():
     assert len(supports) == 1
     assert supports[0]["classes"] == [1, 2]
     assert supports[0]["gate"] == 0.5
+
+
+def test_construct_pair_adaptive_supports_can_use_conservative_discrete_gate():
+    pair_segment_rows = [
+        {
+            "pair": "0:1",
+            "segment": 1,
+            "start": 0,
+            "end": 9,
+            "score": 1.00,
+            "support_count": 40,
+            "source_separability": 3.0,
+            "target_explainability": 0.90,
+            "ambiguity": 0.9,
+            "shift_stability": 1.0,
+            "actual_raw_score": 1.10,
+            "baseline_raw_score": 0.10,
+            "relative_score": 1.00,
+            "ratio_score": 11.0,
+        },
+        {
+            "pair": "1:2",
+            "segment": 2,
+            "start": 10,
+            "end": 19,
+            "score": 0.55,
+            "support_count": 20,
+            "source_separability": 1.0,
+            "target_explainability": 0.60,
+            "ambiguity": 0.7,
+            "shift_stability": 0.83,
+            "actual_raw_score": 0.60,
+            "baseline_raw_score": 0.15,
+            "relative_score": 0.45,
+            "ratio_score": 4.0,
+        },
+    ]
+
+    _, supports = construct_pair_adaptive_supports(
+        pair_segment_rows,
+        score_quantile=0.0,
+        min_score=0.10,
+        min_ratio=1.2,
+        min_support_count=10,
+        min_shift_stability=0.66,
+        max_supports=8,
+        gate_mode="conservative",
+        gate_low=0.30,
+        gate_high=0.70,
+        gate_light=0.30,
+        gate_full=0.80,
+        gate_ratio_high=4.0,
+        gate_source_sep_high=2.0,
+        gate_target_explain_high=0.70,
+    )
+
+    assert len(supports) == 2
+    assert supports[0]["classes"] == [0, 1]
+    assert supports[0]["gate"] == 0.80
+    assert supports[0]["gate_level"] == "full"
+    assert supports[0]["reliability"] >= 0.70
+    assert supports[1]["classes"] == [1, 2]
+    assert supports[1]["gate"] == 0.30
+    assert supports[1]["gate_level"] == "light"
+    assert 0.30 <= supports[1]["reliability"] < 0.70

@@ -1,8 +1,7 @@
 import torch
-from torchvision import transforms
 from tqdm import tqdm
 
-from dataset import PixelSetData, create_train_loader
+from data_adapters.factory import create_train_dataset, create_training_loader, make_train_transform
 from evaluation import validation
 from ideas.source_phase_compactness import (
     SourceSegmentWeightTracker,
@@ -14,14 +13,6 @@ from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
     compute_dual_path_relation_regularization,
     compute_source_feature_reshaper_regularization,
-)
-from transforms import (
-    Identity,
-    Normalize,
-    RandomSamplePixels,
-    RandomSampleTimeSteps,
-    RandomTemporalShift,
-    ToTensor,
 )
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda
@@ -43,26 +34,17 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
     )
     model.to(device)
 
-    train_transform = transforms.Compose([
-        RandomSamplePixels(config.num_pixels),
-        RandomSampleTimeSteps(config.seq_length),
-        RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
-        Normalize(),
-        ToTensor(),
-    ])
     dataset_name = config.source
     if config.train_on_target:
         dataset_name = config.target
 
-    dataset = PixelSetData(
-        config.data_root,
+    dataset = create_train_dataset(
+        config,
         dataset_name,
-        config.classes,
-        train_transform,
-        splits[dataset_name]['train'],
-        closed_set=config.closed_set,
+        splits,
+        transform=make_train_transform(config),
     )
-    data_loader = create_train_loader(dataset, config.batch_size, config.num_workers)
+    data_loader = create_training_loader(dataset, config)
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
     phase_partition_spec = build_source_segment_partition_spec(
         dataset.date_positions,
@@ -180,6 +162,11 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     v271_residual_energy_margin=getattr(
                         config,
                         "source_structure_v271_residual_energy_margin",
+                        1.0,
+                    ),
+                    v271_segment_basis_trade_off=getattr(
+                        config,
+                        "source_structure_v271_segment_basis_trade_off",
                         1.0,
                     ),
                     anchor_spatial_feats=spatial_feats_anchor,

@@ -29,6 +29,7 @@ SOURCE_STRUCTURE_V271_RESIDUAL_VARIANCE_TRADE_OFF = 0.10
 SOURCE_STRUCTURE_V271_RESIDUAL_ENERGY_TRADE_OFF = 0.05
 SOURCE_STRUCTURE_V271_RESIDUAL_ENERGY_MARGIN = 1.0
 SOURCE_STRUCTURE_V271_DYNAMICS_MODE = "cosine"
+SOURCE_STRUCTURE_V271_SEGMENT_BASIS_TRADE_OFF = 1.0
 SHAPE_REG_DIRECTION_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_MARGIN = 0.35
@@ -535,6 +536,36 @@ def _merge_small_segments(segments, min_points):
     return segments
 
 
+def _build_random_local_segments(sorted_positions, phase_count, min_points):
+    target_count = int(max(1, min(int(phase_count), int(sorted_positions.size))))
+    min_points = int(max(1, min(int(min_points), int(sorted_positions.size))))
+    if target_count <= 1 or sorted_positions.size < 2 * min_points:
+        return [sorted_positions]
+
+    max_count = max(1, int(sorted_positions.size) // min_points)
+    target_count = min(target_count, max_count)
+    if target_count <= 1:
+        return [sorted_positions]
+
+    seed = int((sorted_positions.sum() + 7919 * target_count + 104729 * sorted_positions.size) % (2**32 - 1))
+    rng = np.random.default_rng(seed)
+    candidate_cuts = np.arange(min_points, sorted_positions.size - min_points + 1, dtype=np.int64)
+    rng.shuffle(candidate_cuts)
+
+    cuts = []
+    for cut in candidate_cuts.tolist():
+        proposed = sorted(cuts + [int(cut)])
+        bounds = [0] + proposed + [int(sorted_positions.size)]
+        if all((bounds[idx + 1] - bounds[idx]) >= min_points for idx in range(len(bounds) - 1)):
+            cuts.append(int(cut))
+            if len(cuts) == target_count - 1:
+                break
+
+    if len(cuts) < target_count - 1:
+        cuts = np.linspace(0, sorted_positions.size, target_count + 1, dtype=np.int64)[1:-1].tolist()
+    return _segments_from_cut_indices(sorted_positions, sorted(set(cuts)))
+
+
 def build_source_phase_partition_spec(
     date_positions,
     mode=SOURCE_PHASE_PARTITION_MODE,
@@ -567,6 +598,22 @@ def build_source_phase_partition_spec(
             "phase_count": int(max(1, min(int(phase_count), int(sorted_positions.size)))),
             "intervals": None,
             "date_positions": sorted_positions.tolist(),
+        }
+
+    if mode == "random_local":
+        random_segments = _build_random_local_segments(sorted_positions, phase_count, min_points)
+        intervals = [(int(segment[0]), int(segment[-1])) for segment in random_segments]
+        return {
+            "mode": "random_local",
+            "phase_count": len(intervals),
+            "segment_count": len(intervals),
+            "intervals": intervals,
+            "date_positions": sorted_positions.tolist(),
+            "gap_threshold": int(gap_threshold),
+            "min_points": int(min_points),
+            "max_points": int(max_points),
+            "max_span": int(max_span),
+            "semantic_mode": False,
         }
 
     if mode not in {"doy_gap", "semantic_doy_gap", "semantic_doy", "semantic_gap", "semantic_agglomerative"}:
@@ -1082,6 +1129,7 @@ def compute_source_structure_loss(
     v271_residual_energy_trade_off=SOURCE_STRUCTURE_V271_RESIDUAL_ENERGY_TRADE_OFF,
     v271_residual_energy_margin=SOURCE_STRUCTURE_V271_RESIDUAL_ENERGY_MARGIN,
     v271_dynamics_mode=SOURCE_STRUCTURE_V271_DYNAMICS_MODE,
+    v271_segment_basis_trade_off=SOURCE_STRUCTURE_V271_SEGMENT_BASIS_TRADE_OFF,
     anchor_spatial_feats=None,
     anchor_positions=None,
 ):
@@ -1133,6 +1181,12 @@ def compute_source_structure_loss(
           * keep the v2.4.1 segment-aware residual + trend + weak inter-segment loss
           * use local boundary windows only to modulate the strength of adjacent
             inter-segment regularization
+    - v271_global_segment_basis:
+        v2.7 diagnostic composition:
+          * keep v2.7.1 global time-aware trend/residual structure
+          * add the v2.4.3b segment basis as a source-stage phase structure term
+          * this is an experiment-facing bridge, not a claim that fixed segments are
+            the final theoretical adaptive view
     """
     version = str(version).lower()
     if version == "compactness":
@@ -1143,6 +1197,91 @@ def compute_source_structure_loss(
             weight_tracker=weight_tracker,
             eps=eps,
         )
+    if version in {
+        "v271_global_segment_basis",
+        "v271_global_plus_segment",
+        "global_segment_basis",
+        "global_plus_segment",
+    }:
+        global_loss, global_logs = compute_source_structure_loss(
+            spatial_feats,
+            positions,
+            labels,
+            weight_tracker=None,
+            eps=eps,
+            version="v271_global",
+            intra_trade_off=intra_trade_off,
+            amplitude_trade_off=amplitude_trade_off,
+            interphase_trade_off=interphase_trade_off,
+            shape_trade_off=shape_trade_off,
+            trend_trade_off=trend_trade_off,
+            season_trade_off=season_trade_off,
+            segment_inter_trade_off=segment_inter_trade_off,
+            boundary_window_trade_off=boundary_window_trade_off,
+            boundary_window_size=boundary_window_size,
+            v271_trend_kernel_size=v271_trend_kernel_size,
+            v271_trend_smoothing_mode=v271_trend_smoothing_mode,
+            v271_trend_bandwidth=v271_trend_bandwidth,
+            v271_trend_kernel=v271_trend_kernel,
+            v271_trend_dynamics_trade_off=v271_trend_dynamics_trade_off,
+            v271_residual_variance_trade_off=v271_residual_variance_trade_off,
+            v271_residual_energy_trade_off=v271_residual_energy_trade_off,
+            v271_residual_energy_margin=v271_residual_energy_margin,
+            v271_dynamics_mode=v271_dynamics_mode,
+            v271_segment_basis_trade_off=v271_segment_basis_trade_off,
+            anchor_spatial_feats=anchor_spatial_feats,
+            anchor_positions=anchor_positions,
+        )
+        segment_loss, segment_logs = compute_source_structure_loss(
+            spatial_feats,
+            positions,
+            labels,
+            weight_tracker=weight_tracker,
+            eps=eps,
+            version="segment_boundary_window_residual",
+            intra_trade_off=intra_trade_off,
+            amplitude_trade_off=amplitude_trade_off,
+            interphase_trade_off=interphase_trade_off,
+            shape_trade_off=shape_trade_off,
+            trend_trade_off=trend_trade_off,
+            season_trade_off=season_trade_off,
+            segment_inter_trade_off=segment_inter_trade_off,
+            boundary_window_trade_off=boundary_window_trade_off,
+            boundary_window_size=boundary_window_size,
+            v271_trend_kernel_size=v271_trend_kernel_size,
+            v271_trend_smoothing_mode=v271_trend_smoothing_mode,
+            v271_trend_bandwidth=v271_trend_bandwidth,
+            v271_trend_kernel=v271_trend_kernel,
+            v271_trend_dynamics_trade_off=v271_trend_dynamics_trade_off,
+            v271_residual_variance_trade_off=v271_residual_variance_trade_off,
+            v271_residual_energy_trade_off=v271_residual_energy_trade_off,
+            v271_residual_energy_margin=v271_residual_energy_margin,
+            v271_dynamics_mode=v271_dynamics_mode,
+            v271_segment_basis_trade_off=v271_segment_basis_trade_off,
+            anchor_spatial_feats=anchor_spatial_feats,
+            anchor_positions=anchor_positions,
+        )
+        segment_weight = float(v271_segment_basis_trade_off)
+        total_loss = global_loss + segment_weight * segment_loss
+        phase_logs = {
+            "source_structure_loss_version": 271.5,
+            "source_structure_v271_global_active": 1.0,
+            "source_structure_v271_segment_basis_active": 1.0,
+            "source_structure_v271_global_loss": float(global_loss.detach().item()),
+            "source_structure_v271_segment_basis_loss": float((segment_weight * segment_loss).detach().item()),
+            "source_structure_v271_segment_basis_raw_loss": float(segment_loss.detach().item()),
+            "source_structure_v271_segment_basis_trade_off": segment_weight,
+            "structure_loss": float(total_loss.detach().item()),
+        }
+        phase_logs["compactness_loss"] = phase_logs["structure_loss"]
+        for key, value in global_logs.items():
+            if key not in {"structure_loss", "compactness_loss"}:
+                phase_logs[f"global_{key}"] = value
+        for key, value in segment_logs.items():
+            if key not in {"structure_loss", "compactness_loss"}:
+                phase_logs[f"segment_{key}"] = value
+        return total_loss, phase_logs
+
     if version in {"v271_global", "v271_global_trend_residual", "global_trend_residual"}:
         if spatial_feats.ndim != 3:
             raise ValueError(f"Expected spatial_feats to have shape [B, T, D], got {tuple(spatial_feats.shape)}")

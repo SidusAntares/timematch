@@ -12,7 +12,7 @@ from torch.utils import data
 from torchvision import transforms
 from tqdm import tqdm
 
-from dataset import PixelSetData
+from data_adapters.factory import create_timematch_data_loaders
 from evaluation import validation
 from ideas.source_phase_compactness import (
     SourceSegmentWeightTracker,
@@ -131,7 +131,19 @@ def _discover_v271_da_support_bank(
             max_support_atoms=getattr(config, "timematch_v271_adaptive_max_support_atoms", 2),
             max_interval_span=getattr(config, "timematch_v271_adaptive_max_interval_span", 90),
             gate_score_high=getattr(config, "timematch_v271_adaptive_gate_score_high", 0.5),
+            gate_mode=getattr(config, "timematch_v271_adaptive_gate_mode", "score"),
+            gate_low=getattr(config, "timematch_v271_adaptive_gate_low", 0.30),
+            gate_high=getattr(config, "timematch_v271_adaptive_gate_high", 0.70),
+            gate_light=getattr(config, "timematch_v271_adaptive_gate_light", 0.30),
+            gate_full=getattr(config, "timematch_v271_adaptive_gate_full", 1.0),
+            gate_ratio_high=getattr(config, "timematch_v271_adaptive_gate_ratio_high", 4.0),
+            gate_count_high=getattr(config, "timematch_v271_adaptive_gate_count_high", 0),
+            gate_source_sep_high=getattr(config, "timematch_v271_adaptive_gate_source_sep_high", 2.0),
+            gate_target_explain_high=getattr(config, "timematch_v271_adaptive_gate_target_explain_high", 0.70),
         )
+        gate_values = [float(support.get("gate", 0.0)) for support in supports]
+        reliability_values = [float(support.get("reliability", 0.0)) for support in supports]
+        gate_levels = [str(support.get("gate_level", "")) for support in supports]
         logs = {
             "timematch_v271_adaptive_da_discovered": 1.0,
             "timematch_v271_adaptive_da_discover_epoch": float(epoch + 1),
@@ -141,10 +153,20 @@ def _discover_v271_da_support_bank(
             "timematch_v271_adaptive_da_accepted_fraction": float(discovery.get("accepted_fraction", 0.0)),
             "timematch_v271_adaptive_da_evidence_weight": float(discovery.get("accepted_evidence_weight", 0.0)),
             "timematch_v271_adaptive_da_shift": float(target_to_source_shift),
+            "timematch_v271_adaptive_da_gate_mean": float(np.mean(gate_values)) if gate_values else 0.0,
+            "timematch_v271_adaptive_da_reliability_mean": float(np.mean(reliability_values))
+            if reliability_values
+            else 0.0,
+            "timematch_v271_adaptive_da_gate_off_count": float(sum(level == "off" for level in gate_levels)),
+            "timematch_v271_adaptive_da_gate_light_count": float(sum(level == "light" for level in gate_levels)),
+            "timematch_v271_adaptive_da_gate_full_count": float(sum(level == "full" for level in gate_levels)),
         }
         for idx, support in enumerate(supports[:4]):
             logs[f"timematch_v271_adaptive_da_support{idx + 1}_score"] = float(support.get("score", 0.0))
             logs[f"timematch_v271_adaptive_da_support{idx + 1}_gate"] = float(support.get("gate", 0.0))
+            logs[f"timematch_v271_adaptive_da_support{idx + 1}_reliability"] = float(
+                support.get("reliability", 0.0)
+            )
             logs[f"timematch_v271_adaptive_da_support{idx + 1}_count"] = float(support.get("support_count", 0.0))
             logs[f"timematch_v271_adaptive_da_support{idx + 1}_span"] = float(
                 int(support["end"]) - int(support["start"]) + 1
@@ -177,6 +199,7 @@ def _discover_v271_da_support_bank(
             print(
                 f"  pair={support['class_pair']} interval=[{support['start']},{support['end']}] "
                 f"score={support['score']:.6f} gate={support['gate']:.3f} "
+                f"reliability={support.get('reliability', 0.0):.3f} level={support.get('gate_level', 'score')} "
                 f"count={support['support_count']} atoms={support['atomic_segments']}"
             )
         if not supports:
@@ -428,6 +451,11 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                             "source_structure_v271_residual_energy_margin",
                             1.0,
                         ),
+                        v271_segment_basis_trade_off=getattr(
+                            config,
+                            "source_structure_v271_segment_basis_trade_off",
+                            1.0,
+                        ),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
@@ -509,6 +537,11 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         v271_residual_energy_margin=getattr(
                             config,
                             "source_structure_v271_residual_energy_margin",
+                            1.0,
+                        ),
+                        v271_segment_basis_trade_off=getattr(
+                            config,
+                            "source_structure_v271_segment_basis_trade_off",
                             1.0,
                         ),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
@@ -593,6 +626,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                             1.0,
                         ),
                         min_points=getattr(config, "timematch_v271_adaptive_min_points", 2),
+                        taper_mode=getattr(config, "timematch_v271_adaptive_taper_mode", "none"),
+                        taper_ratio=getattr(config, "timematch_v271_adaptive_taper_ratio", 0.0),
                     )
                     effective_v271_weight = v271_adaptive_trade_off * ramp
                     v271_adaptive_loss = effective_v271_weight * raw_v271_adaptive_loss
@@ -753,84 +788,7 @@ def update_ema_variables(model, ema, decay=0.99):
 
 
 def get_data_loaders(splits, config, balance_source=True):
-    weak_aug = transforms.Compose([
-        RandomSamplePixels(config.num_pixels),
-        Normalize(),
-        ToTensor(),
-    ])
-
-    strong_aug = transforms.Compose([
-            RandomSamplePixels(config.num_pixels),
-            RandomSampleTimeSteps(config.seq_length),
-            Normalize(),
-            ToTensor(),
-    ])
-
-    source_dataset = PixelSetData(config.data_root, config.source,
-            config.classes, strong_aug,
-            indices=splits[config.source]['train'],
-            closed_set=getattr(config, 'closed_set', False),)
-
-    if balance_source:
-        source_labels = source_dataset.get_labels()
-        freq = Counter(source_labels)
-        class_weight = {x: 1.0 / freq[x] for x in freq}
-        source_weights = [class_weight[x] for x in source_labels]
-        sampler = WeightedRandomSampler(source_weights, len(source_labels))
-        print("using balanced loader for source")
-        source_loader = data.DataLoader(
-            source_dataset,
-            num_workers=config.num_workers,
-            pin_memory=True,
-            sampler=sampler,
-            batch_size=config.batch_size,
-            drop_last=True,
-        )
-    else:
-        source_loader = data.DataLoader(
-            source_dataset,
-            num_workers=config.num_workers,
-            pin_memory=True,
-            batch_size=config.batch_size,
-            shuffle=True,
-            drop_last=True,
-        )
-
-    target_dataset = PixelSetData(config.data_root, config.target,
-            config.classes, None,
-            indices=splits[config.target]['train'],
-            closed_set=getattr(config, 'closed_set', False))
-
-    strong_dataset = deepcopy(target_dataset)
-    strong_dataset.transform = strong_aug
-    weak_dataset = deepcopy(target_dataset)
-    weak_dataset.transform = weak_aug
-    target_dataset_weak_strong = TupleDataset(weak_dataset, strong_dataset)
-
-    no_aug_dataset = deepcopy(target_dataset)
-    no_aug_dataset.transform = weak_aug
-    # For shift estimation
-    target_loader_no_aug = data.DataLoader(
-        no_aug_dataset,
-        num_workers=config.num_workers,
-        batch_size=config.batch_size,
-        shuffle=True,
-    )
-
-    # For mean teacher training
-    target_loader_weak_strong = data.DataLoader(
-        target_dataset_weak_strong,
-        num_workers=config.num_workers,
-        batch_size=config.batch_size,
-        shuffle=True,
-        pin_memory=True,
-        drop_last=True,
-    )
-
-    print(f'size of source dataset: {len(source_dataset)} ({len(source_loader)} batches)')
-    print(f'size of target dataset: {len(target_dataset)} ({len(target_loader_weak_strong)} batches)')
-
-    return source_loader, target_loader_no_aug, target_loader_weak_strong
+    return create_timematch_data_loaders(splits, config, TupleDataset, balance_source=balance_source)
 
 
 class TupleDataset(data.Dataset):

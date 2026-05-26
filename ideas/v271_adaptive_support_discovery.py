@@ -739,6 +739,108 @@ def _support_passes_reliability(support, min_support_count, min_shift_stability,
     )
 
 
+def _clip01(value):
+    return max(0.0, min(1.0, float(value)))
+
+
+def _ramp01(value, low, high):
+    low = float(low)
+    high = float(high)
+    value = float(value)
+    if high <= low:
+        return 1.0 if value >= low else 0.0
+    return _clip01((value - low) / (high - low))
+
+
+def _conservative_support_reliability(
+    support,
+    max_score,
+    min_ratio,
+    min_support_count,
+    min_shift_stability,
+    gate_score_high=0.0,
+    gate_ratio_high=4.0,
+    gate_count_high=0,
+    gate_source_sep_high=2.0,
+    gate_target_explain_high=0.70,
+):
+    score_high = float(gate_score_high) if float(gate_score_high) > 0.0 else max(float(max_score), 1e-6)
+    score_component = _clip01(float(support.get("score", 0.0)) / score_high)
+    ratio_component = _ramp01(support.get("ratio_score", 0.0), min_ratio, gate_ratio_high)
+    count_high = int(gate_count_high) if int(gate_count_high) > 0 else max(int(min_support_count) * 2, 1)
+    count_component = _clip01(float(support.get("support_count", 0.0)) / float(count_high))
+    shift_component = _ramp01(support.get("shift_stability", 0.0), min_shift_stability, 1.0)
+    source_component = _clip01(float(support.get("source_separability", 0.0)) / max(float(gate_source_sep_high), 1e-6))
+    explain_component = _clip01(
+        float(support.get("target_explainability", 0.0)) / max(float(gate_target_explain_high), 1e-6)
+    )
+
+    primary = min(ratio_component, count_component, shift_component)
+    secondary = 0.5 * (source_component + explain_component)
+    reliability = score_component * (0.6 * primary + 0.4 * secondary)
+    return _clip01(reliability)
+
+
+def _apply_support_gate(
+    support,
+    gate_mode,
+    max_score,
+    min_ratio,
+    min_support_count,
+    min_shift_stability,
+    gate_score_high,
+    gate_low,
+    gate_high,
+    gate_light,
+    gate_full,
+    gate_ratio_high,
+    gate_count_high,
+    gate_source_sep_high,
+    gate_target_explain_high,
+):
+    mode = str(gate_mode or "score").lower()
+    if mode == "score":
+        if float(gate_score_high) > 0.0:
+            gate = _clip01(support["score"] / float(gate_score_high))
+        else:
+            gate = 0.0 if max_score <= 0.0 else _clip01(support["score"] / max_score)
+        support["gate"] = gate
+        support["reliability"] = gate
+        support["gate_level"] = "score"
+        return support
+    if mode == "constant":
+        support["gate"] = _clip01(gate_full)
+        support["reliability"] = 1.0
+        support["gate_level"] = "full"
+        return support
+    if mode != "conservative":
+        raise ValueError(f"Unsupported adaptive support gate mode: {gate_mode}")
+
+    reliability = _conservative_support_reliability(
+        support,
+        max_score=max_score,
+        min_ratio=min_ratio,
+        min_support_count=min_support_count,
+        min_shift_stability=min_shift_stability,
+        gate_score_high=gate_score_high,
+        gate_ratio_high=gate_ratio_high,
+        gate_count_high=gate_count_high,
+        gate_source_sep_high=gate_source_sep_high,
+        gate_target_explain_high=gate_target_explain_high,
+    )
+    support["reliability"] = reliability
+    if reliability < float(gate_low):
+        support["gate"] = 0.0
+        support["gate_level"] = "off"
+    elif reliability < float(gate_high):
+        support["gate"] = _clip01(gate_light)
+        support["gate_level"] = "light"
+    else:
+        support["gate"] = _clip01(gate_full)
+        support["gate_level"] = "full"
+    return support
+
+
 def construct_pair_adaptive_supports(
     pair_segment_rows,
     score_quantile,
@@ -751,6 +853,15 @@ def construct_pair_adaptive_supports(
     max_support_atoms=0,
     max_interval_span=0,
     gate_score_high=0.0,
+    gate_mode="score",
+    gate_low=0.30,
+    gate_high=0.70,
+    gate_light=0.30,
+    gate_full=1.0,
+    gate_ratio_high=4.0,
+    gate_count_high=0,
+    gate_source_sep_high=2.0,
+    gate_target_explain_high=0.70,
 ):
     positive_scores = [
         row["score"]
@@ -822,8 +933,21 @@ def construct_pair_adaptive_supports(
     supports = supports[: max(0, int(max_supports))]
     max_score = max([support["score"] for support in supports], default=0.0)
     for support in supports:
-        if float(gate_score_high) > 0.0:
-            support["gate"] = max(0.0, min(1.0, support["score"] / float(gate_score_high)))
-        else:
-            support["gate"] = 0.0 if max_score <= 0.0 else max(0.0, min(1.0, support["score"] / max_score))
+        _apply_support_gate(
+            support,
+            gate_mode=gate_mode,
+            max_score=max_score,
+            min_ratio=min_ratio,
+            min_support_count=min_support_count,
+            min_shift_stability=min_shift_stability,
+            gate_score_high=gate_score_high,
+            gate_low=gate_low,
+            gate_high=gate_high,
+            gate_light=gate_light,
+            gate_full=gate_full,
+            gate_ratio_high=gate_ratio_high,
+            gate_count_high=gate_count_high,
+            gate_source_sep_high=gate_source_sep_high,
+            gate_target_explain_high=gate_target_explain_high,
+        )
     return threshold, supports

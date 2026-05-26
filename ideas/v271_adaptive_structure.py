@@ -73,8 +73,36 @@ def _interval_mask(positions, start, end):
     return (positions >= int(start)) & (positions <= int(end))
 
 
-def _pooled_interval(curves, mask, eps=1e-6):
-    weights = mask.to(dtype=curves.dtype).unsqueeze(-1)
+def _interval_support_weights(positions, start, end, taper_mode="none", taper_ratio=0.0, eps=1e-6):
+    hard_mask = _interval_mask(positions, start, end)
+    mode = str(taper_mode or "none").lower()
+    ratio = float(taper_ratio or 0.0)
+    if mode == "none" or ratio <= 0.0:
+        return hard_mask.to(dtype=torch.float32), hard_mask, 0.0
+
+    pos = positions.to(dtype=torch.float32)
+    start_value = pos.new_tensor(float(start))
+    end_value = pos.new_tensor(float(end))
+    span = max(float(end) - float(start), 1.0)
+    radius = max(span * ratio, eps)
+    radius_value = pos.new_tensor(radius)
+    zero = pos.new_zeros(())
+    outside_distance = torch.maximum(torch.maximum(start_value - pos, pos - end_value), zero)
+
+    if mode in {"triangular", "linear"}:
+        weights = torch.clamp(1.0 - outside_distance / radius_value, min=0.0, max=1.0)
+    elif mode == "gaussian":
+        weights = torch.exp(-0.5 * (outside_distance / radius_value).pow(2))
+        weights = torch.where(outside_distance <= radius_value, weights, torch.zeros_like(weights))
+    else:
+        raise ValueError(f"Unsupported adaptive support taper mode: {taper_mode}")
+
+    weights = torch.where(hard_mask, torch.ones_like(weights), weights)
+    return weights.to(dtype=torch.float32), hard_mask, radius
+
+
+def _pooled_interval(curves, weights, eps=1e-6):
+    weights = weights.to(dtype=curves.dtype).unsqueeze(-1)
     denom = weights.sum(dim=1).clamp_min(eps)
     return (curves * weights).sum(dim=1) / denom
 
@@ -139,15 +167,18 @@ def _masked_residual_energy(residual, mask, margin):
     return loss, energy
 
 
-def _interval_dynamics_curves(trend, positions, mask):
+def _interval_dynamics_curves(trend, positions, weights, eps=1e-6):
     if trend.shape[1] < 2:
-        return trend.new_zeros((trend.shape[0], trend.shape[-1])), mask.new_zeros((trend.shape[0],), dtype=torch.bool)
+        return trend.new_zeros((trend.shape[0], trend.shape[-1])), weights.new_zeros(
+            (trend.shape[0],),
+            dtype=torch.bool,
+        )
     diffs = temporal_differences(trend, positions=positions)
-    pair_mask = mask[:, 1:] & mask[:, :-1]
-    weights = pair_mask.to(dtype=trend.dtype).unsqueeze(-1)
-    denom = weights.sum(dim=1).clamp_min(1.0)
-    pooled = (diffs * weights).sum(dim=1) / denom
-    return pooled, pair_mask.sum(dim=1) > 0
+    pair_weights = torch.minimum(weights[:, 1:], weights[:, :-1]).to(dtype=trend.dtype)
+    pair_weights_3d = pair_weights.unsqueeze(-1)
+    denom = pair_weights_3d.sum(dim=1).clamp_min(eps)
+    pooled = (diffs * pair_weights_3d).sum(dim=1) / denom
+    return pooled, pair_weights.sum(dim=1) > eps
 
 
 def compute_v271_adaptive_support_loss(
@@ -165,6 +196,8 @@ def compute_v271_adaptive_support_loss(
     residual_energy_trade_off=0.05,
     residual_energy_margin=1.0,
     min_points=2,
+    taper_mode="none",
+    taper_ratio=0.0,
     dynamics_mode="cosine",
     eps=1e-6,
 ):
@@ -172,7 +205,10 @@ def compute_v271_adaptive_support_loss(
     if not supports:
         return zero, {
             "timematch_v271_adaptive_active": 0.0,
+            "timematch_v271_adaptive_candidate_support_count": 0.0,
             "timematch_v271_adaptive_support_count": 0.0,
+            "timematch_v271_adaptive_gate_off_count": 0.0,
+            "timematch_v271_adaptive_gate_mean": 0.0,
         }
 
     ordered_feats, ordered_positions = _sort_by_positions(feats, positions)
@@ -192,21 +228,35 @@ def compute_v271_adaptive_support_loss(
     residual_energy_total = zero
     active_supports = 0
     active_classes = 0
+    taper_radius_total = 0.0
+    taper_weight_total = 0.0
+    support_gates = [float(support.get("gate", 1.0)) for support in supports]
+    gate_off_count = sum(gate <= 0.0 for gate in support_gates)
+    gate_sum = sum(support_gates)
 
     for support in supports:
-        mask = _interval_mask(ordered_positions, support["start"], support["end"])
-        counts = mask.sum(dim=1)
+        weights, hard_mask, taper_radius = _interval_support_weights(
+            ordered_positions,
+            support["start"],
+            support["end"],
+            taper_mode=taper_mode,
+            taper_ratio=taper_ratio,
+            eps=eps,
+        )
+        counts = hard_mask.sum(dim=1)
         valid = counts >= int(min_points)
         if not bool(valid.any().item()):
             continue
 
         class_ids = support["classes"]
         gate = float(support.get("gate", 1.0))
+        if gate <= 0.0:
+            continue
         class_valid = valid & _labels_in_classes(labels, class_ids)
         if not bool(class_valid.any().item()):
             continue
 
-        trend_pooled = _pooled_interval(trend, mask, eps=eps)
+        trend_pooled = _pooled_interval(trend, weights, eps=eps)
         trend_loss, trend_classes = _classwise_pooled_cohesion(
             trend_pooled,
             labels,
@@ -214,7 +264,7 @@ def compute_v271_adaptive_support_loss(
             class_ids,
             eps=eps,
         )
-        dyn_pooled, dyn_valid = _interval_dynamics_curves(trend, ordered_positions, mask)
+        dyn_pooled, dyn_valid = _interval_dynamics_curves(trend, ordered_positions, weights, eps=eps)
         dyn_loss, dyn_classes = _classwise_pooled_dynamics_consistency(
             dyn_pooled,
             labels,
@@ -224,7 +274,7 @@ def compute_v271_adaptive_support_loss(
             eps=eps,
         )
         dyn_loss = dyn_loss if bool(dyn_valid.any().item()) else zero
-        residual_pooled = _pooled_interval(residual, mask, eps=eps)
+        residual_pooled = _pooled_interval(residual, weights, eps=eps)
         residual_var, residual_classes = _classwise_pooled_cohesion(
             residual_pooled,
             labels,
@@ -234,7 +284,7 @@ def compute_v271_adaptive_support_loss(
         )
         residual_energy_loss, residual_energy = _masked_residual_energy(
             residual[class_valid],
-            mask[class_valid],
+            weights[class_valid],
             residual_energy_margin,
         )
 
@@ -250,6 +300,8 @@ def compute_v271_adaptive_support_loss(
         residual_variance_total = residual_variance_total + gate * residual_var
         residual_energy_loss_total = residual_energy_loss_total + gate * residual_energy_loss
         residual_energy_total = residual_energy_total + residual_energy
+        taper_radius_total += float(taper_radius)
+        taper_weight_total += float(weights[class_valid].detach().mean().item())
         active_supports += 1
         active_classes += max(trend_classes, dyn_classes, residual_classes)
 
@@ -261,12 +313,23 @@ def compute_v271_adaptive_support_loss(
         residual_variance_total = residual_variance_total / scale
         residual_energy_loss_total = residual_energy_loss_total / scale
         residual_energy_total = residual_energy_total / scale
+        taper_radius_total = taper_radius_total / scale
+        taper_weight_total = taper_weight_total / scale
 
     logs = {
         "timematch_v271_adaptive_active": 1.0 if active_supports > 0 else 0.0,
+        "timematch_v271_adaptive_candidate_support_count": float(len(supports)),
         "timematch_v271_adaptive_support_count": float(active_supports),
         "timematch_v271_adaptive_class_count": float(active_classes),
+        "timematch_v271_adaptive_gate_off_count": float(gate_off_count),
+        "timematch_v271_adaptive_gate_mean": float(gate_sum / max(len(supports), 1)),
         "timematch_v271_adaptive_trend_bandwidth": float(trend_bandwidth),
+        "timematch_v271_adaptive_taper_active": 1.0
+        if str(taper_mode or "none").lower() != "none" and float(taper_ratio or 0.0) > 0.0
+        else 0.0,
+        "timematch_v271_adaptive_taper_ratio": float(taper_ratio or 0.0),
+        "timematch_v271_adaptive_taper_radius": float(taper_radius_total),
+        "timematch_v271_adaptive_support_weight_mean": float(taper_weight_total),
         "timematch_v271_adaptive_trend_loss": trend_loss_total,
         "timematch_v271_adaptive_dynamics_loss": dynamics_loss_total,
         "timematch_v271_adaptive_residual_variance_loss": residual_variance_total,

@@ -35,7 +35,15 @@ from competitors.dann.dann import train_dann
 from competitors.jumbot.jumbot import train_jumbot
 from competitors.mmd.train_mmd import train_mmd
 from competitors.alda.train_alda import train_alda
-from dataset import PixelSetData, create_evaluation_loaders, create_train_loader
+from data_adapters.factory import (
+    create_evaluation_loaders_for_config,
+    create_train_dataset,
+    create_training_loader,
+    get_classes_for_config,
+    get_dataset_length,
+    make_train_transform,
+)
+from dataset import PixelSetData, create_train_loader
 from evaluation import evaluation, validation
 from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
@@ -65,21 +73,17 @@ def main(config):
     torch.manual_seed(config.seed)
     device = torch.device(config.device)
 
-    # Select classes that appear at least 200 times source
-    source_classes = label_utils.get_classes(cfg.source.split('/')[0], combine_spring_and_winter=cfg.combine_spring_and_winter)
-    if config.closed_set:
-        source_classes = [cls for cls in source_classes if cls != 'unknown']
-    source_data = PixelSetData(cfg.data_root, cfg.source, source_classes, closed_set=config.closed_set)
-    labels, counts = np.unique(source_data.get_labels(), return_counts=True)
-    source_classes = [source_classes[i] for i in labels[counts >= 200]]
+    # Select classes for the active dataset adapter. Remote sensing keeps the
+    # original frequency filter; HAR/HHAR use the fixed AdaTime class list.
+    source_classes = get_classes_for_config(config)
     print('Using classes:', source_classes)
-    cfg.classes = source_classes
-    cfg.num_classes = len(source_classes)
+    config.classes = source_classes
+    config.num_classes = len(source_classes)
 
     # Randomly assign parcels to train/val/test
     indices = {
-        config.source: len(source_data),
-        config.target: len(PixelSetData(config.data_root, config.target, source_classes, closed_set=config.closed_set))
+        config.source: get_dataset_length(config, config.source, split="train"),
+        config.target: get_dataset_length(config, config.target, split="train"),
     }
     folds = create_train_val_test_folds([config.source, config.target], config.num_folds, indices, config.val_ratio, config.test_ratio)
 
@@ -94,7 +98,12 @@ def main(config):
         config.fold_num = fold_num
 
         sample_pixels_val = config.sample_pixels_val or (config.eval and config.temporal_shift)
-        val_loader, test_loader = create_evaluation_loaders(config.target, splits, config, sample_pixels_val)
+        val_loader, test_loader = create_evaluation_loaders_for_config(
+            config.target,
+            splits,
+            config,
+            sample_pixels_val,
+        )
 
         if config.model == 'pseltae':
             model = PseLTae(input_dim=config.input_dim, num_classes=config.num_classes, with_extra=config.with_extra)
@@ -198,23 +207,13 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
         params += list(source_feature_reshaper.parameters())
     optimizer = torch.optim.Adam(params, lr=config.lr, weight_decay=config.weight_decay)
 
-    train_transform = transforms.Compose([
-        RandomSamplePixels(config.num_pixels),
-        RandomSampleTimeSteps(config.seq_length),
-        RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
-        Normalize(),
-        ToTensor(),
-    ])
-
-    dataset = PixelSetData(
-        config.data_root,
+    dataset = create_train_dataset(
+        config,
         dataset_name,
-        config.classes,
-        train_transform,
-        splits[dataset_name]['train'],
-        closed_set=config.closed_set,
+        splits,
+        transform=make_train_transform(config),
     )
-    data_loader = create_train_loader(dataset, config.batch_size, config.num_workers)
+    data_loader = create_training_loader(dataset, config)
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
 
     criterion = FocalLoss(gamma=config.focal_loss_gamma)
@@ -301,7 +300,7 @@ def create_train_val_test_folds(datasets, num_folds, num_indices, val_ratio=0.1,
 
             train_indices = set(indices[:n_train])
             val_indices = set(indices[n_train:n_train + n_val])
-            test_indices = set(indices[-n_test:])
+            test_indices = set(indices[-n_test:]) if n_test > 0 else set()
             assert set.intersection(train_indices, val_indices, test_indices) == set()
             assert len(train_indices) + len(val_indices) + len(test_indices) == n
 
@@ -362,10 +361,26 @@ if __name__ == '__main__':
                         help='Path to datasets root directory')
     parser.add_argument('--num_blocks', default=100, type=int, help='Number of geographical blocks in dataset for splitting. Default 100.')
 
-    available_tiles = ['denmark/32VNH/2017', 'france/30TXT/2017', 'france/31TCJ/2017', 'austria/33UVP/2017']
+    parser.add_argument(
+        '--dataset_type',
+        default='remote_sensing',
+        choices=['remote_sensing', 'har'],
+        help='dataset adapter to use: remote_sensing for TimeMatch parcels, har for AdaTime HAR/HHAR .pt files',
+    )
+    parser.add_argument(
+        '--har_dataset_name',
+        default='HAR',
+        choices=['HAR', 'HHAR', 'HHAR_SA'],
+        help='AdaTime dataset name when --dataset_type har',
+    )
+    parser.add_argument(
+        '--har_label_offset',
+        default='auto',
+        help='label offset for HAR/HHAR labels; auto converts 1-based labels to 0-based when needed',
+    )
 
-    parser.add_argument('--source', default='denmark/32VNH/2017', help='source dataset', choices=available_tiles)
-    parser.add_argument('--target', default='france/30TXT/2017', help='target dataset', choices=available_tiles)
+    parser.add_argument('--source', default='denmark/32VNH/2017', help='source dataset/domain')
+    parser.add_argument('--target', default='france/30TXT/2017', help='target dataset/domain')
     parser.add_argument('--num_folds', default=1, type=int, help='Number of train/test folds for cross validation')
     parser.add_argument("--val_ratio", default=0.1, type=float,
                         help='Ratio of training data to use for validation. Default 10%.')
@@ -445,14 +460,14 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_phase_partition_mode',
         default='uniform',
-        choices=['uniform', 'doy_gap', 'semantic_doy_gap', 'semantic_agglomerative'],
+        choices=['uniform', 'doy_gap', 'semantic_doy_gap', 'semantic_agglomerative', 'random_local'],
         help='phase partition mode for source phase compactness regularization',
     )
     parser.add_argument(
         '--source_segment_partition_mode',
         dest='source_segment_partition_mode',
         default=None,
-        choices=['uniform', 'doy_gap', 'semantic_doy_gap', 'semantic_agglomerative'],
+        choices=['uniform', 'doy_gap', 'semantic_doy_gap', 'semantic_agglomerative', 'random_local'],
         help='segment partition mode alias for v2.4.0 temporal-segment abstraction; defaults to source_phase_partition_mode when omitted',
     )
     parser.add_argument(
@@ -567,8 +582,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v271_global'],
-        help='source-side structural loss version: legacy compactness variants, v2.4.3 boundary-window segment transition residual, or v2.7.1 clean global trend/residual structure',
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v271_global', 'v271_global_segment_basis'],
+        help='source-side structural loss version: legacy compactness variants, v2.4.3 boundary-window segment transition residual, v2.7.1 clean global trend/residual structure, or the v2.7 diagnostic global+segment-basis composition',
     )
     parser.add_argument(
         '--source_structure_intra_trade_off',
@@ -671,6 +686,12 @@ if __name__ == '__main__':
         default=1.0,
         type=float,
         help='residual energy margin for v2.7.1 bounded residual energy',
+    )
+    parser.add_argument(
+        '--source_structure_v271_segment_basis_trade_off',
+        default=1.0,
+        type=float,
+        help='segment-basis weight when using v271_global_segment_basis',
     )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')
@@ -784,6 +805,19 @@ if __name__ == '__main__':
         help="minimum sampled time points required inside an adaptive support interval",
     )
     timematch.add_argument(
+        "--timematch_v271_adaptive_taper_mode",
+        default="none",
+        type=str,
+        choices=["none", "triangular", "linear", "gaussian"],
+        help="soft boundary taper for v2.7.1 adaptive support pooling; none preserves hard intervals",
+    )
+    timematch.add_argument(
+        "--timematch_v271_adaptive_taper_ratio",
+        default=0.0,
+        type=float,
+        help="boundary taper radius as a fraction of each adaptive support span",
+    )
+    timematch.add_argument(
         "--timematch_v271_adaptive_trend_trade_off",
         default=1.0,
         type=float,
@@ -840,6 +874,20 @@ if __name__ == '__main__':
     timematch.add_argument("--timematch_v271_adaptive_max_support_atoms", default=2, type=int)
     timematch.add_argument("--timematch_v271_adaptive_max_interval_span", default=90, type=int)
     timematch.add_argument("--timematch_v271_adaptive_gate_score_high", default=0.5, type=float)
+    timematch.add_argument(
+        "--timematch_v271_adaptive_gate_mode",
+        default="score",
+        choices=["score", "constant", "conservative"],
+        help="support-level gate strategy for DA adaptive segment loss; score preserves the previous behavior",
+    )
+    timematch.add_argument("--timematch_v271_adaptive_gate_low", default=0.30, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_gate_high", default=0.70, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_gate_light", default=0.30, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_gate_full", default=1.0, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_gate_ratio_high", default=4.0, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_gate_count_high", default=0, type=int)
+    timematch.add_argument("--timematch_v271_adaptive_gate_source_sep_high", default=2.0, type=float)
+    timematch.add_argument("--timematch_v271_adaptive_gate_target_explain_high", default=0.70, type=float)
     timematch.add_argument(
         "--timematch_v271_adaptive_discovery_apply_source_reshaper",
         default=False,
