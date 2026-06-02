@@ -17,6 +17,7 @@ echo "[INFO] Remote target: ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PROJECT_DIR}"
 cd "$(dirname "$PROJECT_DIR")"
 
 tar \
+    --ignore-failed-read \
     --exclude="${PROJECT_NAME}/.git" \
     --exclude="${PROJECT_NAME}/.idea" \
     --exclude="${PROJECT_NAME}/.pytest_cache" \

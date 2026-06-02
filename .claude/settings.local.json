@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Skill(codex)",
-      "Bash(python *)",
-      "Bash(git diff *)"
-    ]
-  }
-}

@@ -1,7 +1,8 @@
 import torch
+from torchvision import transforms
 from tqdm import tqdm
 
-from data_adapters.factory import create_train_dataset, create_training_loader, make_train_transform
+from dataset import PixelSetData, create_train_loader
 from evaluation import validation
 from ideas.source_phase_compactness import (
     SourceSegmentWeightTracker,
@@ -13,6 +14,14 @@ from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
     compute_dual_path_relation_regularization,
     compute_source_feature_reshaper_regularization,
+)
+from transforms import (
+    Identity,
+    Normalize,
+    RandomSamplePixels,
+    RandomSampleTimeSteps,
+    RandomTemporalShift,
+    ToTensor,
 )
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda
@@ -34,17 +43,26 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
     )
     model.to(device)
 
+    train_transform = transforms.Compose([
+        RandomSamplePixels(config.num_pixels),
+        RandomSampleTimeSteps(config.seq_length),
+        RandomTemporalShift(max_shift=config.max_shift_aug, p=config.shift_aug_p) if config.with_shift_aug else Identity(),
+        Normalize(),
+        ToTensor(),
+    ])
     dataset_name = config.source
     if config.train_on_target:
         dataset_name = config.target
 
-    dataset = create_train_dataset(
-        config,
+    dataset = PixelSetData(
+        config.data_root,
         dataset_name,
-        splits,
-        transform=make_train_transform(config),
+        config.classes,
+        train_transform,
+        splits[dataset_name]['train'],
+        closed_set=config.closed_set,
     )
-    data_loader = create_training_loader(dataset, config)
+    data_loader = create_train_loader(dataset, config.batch_size, config.num_workers)
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
     phase_partition_spec = build_source_segment_partition_spec(
         dataset.date_positions,
@@ -99,9 +117,9 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         dual_cls_loss_meter = AverageMeter()
         dual_relation_loss_meter = AverageMeter()
 
-        print(f"Epoch {epoch + 1}/{config.epochs} source training start: steps={len(data_loader)}")
+        progress_bar = tqdm(enumerate(data_loader), total=len(data_loader), desc=f'Epoch {epoch + 1}/{config.epochs}')
         global_step = epoch * len(data_loader)
-        for step, sample in enumerate(data_loader):
+        for step, sample in progress_bar:
             targets = sample['label'].cuda(device=device, non_blocking=True)
             pixels, mask, positions, extra = to_cuda(sample, device)
 
@@ -136,74 +154,6 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
                     boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
                     boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
-                    v271_trend_kernel_size=getattr(config, "source_structure_v271_trend_kernel_size", 5),
-                    v271_trend_smoothing_mode=getattr(
-                        config,
-                        "source_structure_v271_trend_smoothing_mode",
-                        "time",
-                    ),
-                    v271_trend_bandwidth=getattr(config, "source_structure_v271_trend_bandwidth", 0.0),
-                    v271_trend_kernel=getattr(config, "source_structure_v271_trend_kernel", "gaussian"),
-                    v271_trend_dynamics_trade_off=getattr(
-                        config,
-                        "source_structure_v271_trend_dynamics_trade_off",
-                        0.05,
-                    ),
-                    v271_residual_variance_trade_off=getattr(
-                        config,
-                        "source_structure_v271_residual_variance_trade_off",
-                        0.10,
-                    ),
-                    v271_residual_energy_trade_off=getattr(
-                        config,
-                        "source_structure_v271_residual_energy_trade_off",
-                        0.05,
-                    ),
-                    v271_residual_energy_margin=getattr(
-                        config,
-                        "source_structure_v271_residual_energy_margin",
-                        1.0,
-                    ),
-                    v271_segment_basis_trade_off=getattr(
-                        config,
-                        "source_structure_v271_segment_basis_trade_off",
-                        1.0,
-                    ),
-                    v271_event_support_trade_off=getattr(
-                        config,
-                        "source_structure_v271_event_support_trade_off",
-                        1.0,
-                    ),
-                    v271_event_support_count=getattr(
-                        config,
-                        "source_structure_v271_event_support_count",
-                        2,
-                    ),
-                    v271_event_support_sigma_ratio=getattr(
-                        config,
-                        "source_structure_v271_event_support_sigma_ratio",
-                        0.20,
-                    ),
-                    v271_event_support_mode=getattr(
-                        config,
-                        "source_structure_v271_event_support_mode",
-                        "event",
-                    ),
-                    v271_gtw_shift_radius_steps=getattr(
-                        config,
-                        "source_structure_v271_gtw_shift_radius_steps",
-                        2.0,
-                    ),
-                    v271_gtw_shift_count=getattr(
-                        config,
-                        "source_structure_v271_gtw_shift_count",
-                        5,
-                    ),
-                    v271_gtw_temperature=getattr(
-                        config,
-                        "source_structure_v271_gtw_temperature",
-                        0.05,
-                    ),
                     anchor_spatial_feats=spatial_feats_anchor,
                     anchor_positions=positions,
                 )
@@ -251,17 +201,14 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
 
             if step % config.log_step == 0:
                 lr = optimizer.param_groups[0]["lr"]
-                print(
-                    f"Epoch {epoch + 1}/{config.epochs} "
-                    f"step {step + 1}/{len(data_loader)} "
-                    f"lr={lr:.1E} "
-                    f"loss={loss_meter.avg:.4f} "
-                    f"cls={cls_loss_meter.avg:.4f} "
-                    f"structure={compact_loss_meter.avg:.4f} "
-                    f"reshaper={reshaper_loss_meter.avg:.4f} "
-                    f"dualcls={dual_cls_loss_meter.avg:.4f} "
-                    f"dualrel={dual_relation_loss_meter.avg:.4f}",
-                    flush=True,
+                progress_bar.set_postfix(
+                    lr=f'{lr:.1E}',
+                    loss=f"{loss_meter.avg:.3f}",
+                    cls=f"{cls_loss_meter.avg:.3f}",
+                    compact=f"{compact_loss_meter.avg:.3f}",
+                    reshaper=f"{reshaper_loss_meter.avg:.3f}",
+                    dualcls=f"{dual_cls_loss_meter.avg:.3f}",
+                    dualrel=f"{dual_relation_loss_meter.avg:.3f}",
                 )
                 writer.add_scalar("train/loss", loss_meter.val, global_step + step)
                 writer.add_scalar("train/lr", lr, global_step + step)
@@ -281,12 +228,7 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                 for key, value in dual_relation_logs.items():
                     writer.add_scalar(f"train/{key}", value, global_step + step)
 
-        print(
-            f"Epoch {epoch + 1}/{config.epochs} source training done: "
-            f"loss={loss_meter.avg:.4f} cls={cls_loss_meter.avg:.4f} "
-            f"structure={compact_loss_meter.avg:.4f}",
-            flush=True,
-        )
+        progress_bar.close()
 
         model.eval()
         best_f1 = validation(

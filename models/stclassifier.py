@@ -9,16 +9,6 @@ from models.pse import PixelSetEncoder
 from models.tae import TemporalAttentionEncoder
 
 
-def _prepare_pse_mlp_dims(input_dim, mlp1, mlp2, with_extra, extra_size):
-    """Copy PSE MLP dimensions and adapt the first layer to the data channel count."""
-    mlp1 = deepcopy(mlp1)
-    mlp2 = deepcopy(mlp2)
-    mlp1[0] = input_dim
-    if with_extra:
-        mlp2[0] += extra_size
-    return mlp1, mlp2
-
-
 class PseLTae(nn.Module):
     """
     Pixel-Set encoder + Lightweight Temporal Attention Encoder sequence classifier
@@ -43,7 +33,9 @@ class PseLTae(nn.Module):
         max_temporal_shift=100,
     ):
         super(PseLTae, self).__init__()
-        mlp1, mlp2 = _prepare_pse_mlp_dims(input_dim, mlp1, mlp2, with_extra, extra_size)
+        if with_extra:
+            mlp2 = deepcopy(mlp2)
+            mlp2[0] += extra_size
 
         self.spatial_encoder = PixelSetEncoder(
             input_dim,
@@ -123,7 +115,9 @@ class PseTae(nn.Module):
         max_position=365,
     ):
         super(PseTae, self).__init__()
-        mlp1, mlp2 = _prepare_pse_mlp_dims(input_dim, mlp1, mlp2, with_extra, extra_size)
+        if with_extra:
+            mlp2 = deepcopy(mlp2)
+            mlp2[0] += 4
         self.spatial_encoder = PixelSetEncoder(
             input_dim,
             mlp1=mlp1,
@@ -197,7 +191,9 @@ class PseGru(nn.Module):
         max_position=365,
     ):
         super(PseGru, self).__init__()
-        mlp1, mlp2 = _prepare_pse_mlp_dims(input_dim, mlp1, mlp2, with_extra, extra_size)
+        if with_extra:
+            mlp2 = deepcopy(mlp2)
+            mlp2[0] += 4
         self.spatial_encoder = PixelSetEncoder(
             input_dim,
             mlp1=mlp1,
@@ -268,7 +264,9 @@ class PseTempCNN(nn.Module):
         max_position=365,
     ):
         super(PseTempCNN, self).__init__()
-        mlp1, mlp2 = _prepare_pse_mlp_dims(input_dim, mlp1, mlp2, with_extra, extra_size)
+        if with_extra:
+            mlp2 = deepcopy(mlp2)
+            mlp2[0] += 4
 
         self.spatial_encoder = PixelSetEncoder(
             input_dim,

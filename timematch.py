@@ -2,8 +2,6 @@ from torch.utils.data.sampler import WeightedRandomSampler
 import sklearn.metrics
 from collections import Counter
 from copy import deepcopy
-import json
-import os
 
 import numpy as np
 import torch
@@ -12,7 +10,7 @@ from torch.utils import data
 from torchvision import transforms
 from tqdm import tqdm
 
-from data_adapters.factory import create_timematch_data_loaders
+from dataset import PixelSetData
 from evaluation import validation
 from ideas.source_phase_compactness import (
     SourceSegmentWeightTracker,
@@ -24,17 +22,6 @@ from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
     compute_dual_path_relation_regularization,
     compute_source_feature_reshaper_regularization,
-)
-from ideas.v271_adaptive_structure import (
-    compute_v271_adaptive_support_loss,
-    load_v271_adaptive_supports,
-)
-from ideas.v271_adaptive_support_discovery import (
-    build_atomic_partition_spec,
-    compute_source_segment_prototypes,
-    construct_pair_adaptive_supports,
-    describe_atomic_partition_spec,
-    discover_target_pair_segments,
 )
 from transforms import (
     Normalize,
@@ -64,152 +51,6 @@ def _check_temporal_index_range(model, positions, applied_shift, tag):
             "This usually means an extra temporal shift was applied on top of TimeMatch "
             "alignment or the positional encoding range is inconsistent with the dataset dates."
         )
-
-
-def _discover_v271_da_support_bank(
-    model,
-    source_feature_reshaper,
-    source_loader,
-    target_loader_no_aug,
-    config,
-    device,
-    target_to_source_shift,
-    epoch,
-):
-    model_was_training = model.training
-    reshaper_was_training = source_feature_reshaper.training if source_feature_reshaper is not None else False
-    model.eval()
-    if source_feature_reshaper is not None:
-        source_feature_reshaper.eval()
-
-    try:
-        partition_spec = build_atomic_partition_spec(
-            source_loader.dataset.date_positions,
-            getattr(config, "timematch_v271_adaptive_atomic_bins", 12),
-        )
-        print("v2.7 full-core adaptive atomic partition:", describe_atomic_partition_spec(partition_spec))
-        apply_source_reshaper = bool(getattr(config, "timematch_v271_adaptive_discovery_apply_source_reshaper", False))
-        prototypes, variances, counts = compute_source_segment_prototypes(
-            model,
-            source_feature_reshaper,
-            source_loader,
-            partition_spec,
-            config.num_classes,
-            device,
-            max_batches=getattr(config, "timematch_v271_adaptive_source_max_batches", 64),
-            apply_reshaper=apply_source_reshaper,
-        )
-        discovery = discover_target_pair_segments(
-            model,
-            None,
-            target_loader_no_aug,
-            prototypes,
-            variances,
-            counts,
-            partition_spec,
-            device,
-            target_to_source_shift=target_to_source_shift,
-            max_batches=getattr(config, "timematch_v271_adaptive_target_max_batches", 64),
-            max_margin=getattr(config, "timematch_v271_adaptive_max_margin", 0.20),
-            min_top2_mass=getattr(config, "timematch_v271_adaptive_min_top2_mass", 0.35),
-            prototype_temperature=getattr(config, "timematch_v271_adaptive_prototype_temperature", 1.0),
-            shift_jitter=getattr(config, "timematch_v271_adaptive_shift_jitter", 3),
-            soft_evidence=getattr(config, "timematch_v271_adaptive_soft_evidence", False),
-            shuffle_pair_baseline=getattr(config, "timematch_v271_adaptive_shuffle_pair_baseline", True),
-            baseline_pairs_per_sample=getattr(config, "timematch_v271_adaptive_baseline_pairs_per_sample", 4),
-            baseline_mode=getattr(config, "timematch_v271_adaptive_baseline_mode", "mean"),
-        )
-        threshold, supports = construct_pair_adaptive_supports(
-            discovery["pair_segment_rows"],
-            score_quantile=getattr(config, "timematch_v271_adaptive_score_quantile", 0.85),
-            min_score=getattr(config, "timematch_v271_adaptive_min_discovery_score", 0.0),
-            min_ratio=getattr(config, "timematch_v271_adaptive_min_discovery_ratio", 1.2),
-            top_m_per_pair=getattr(config, "timematch_v271_adaptive_top_m_per_pair", 1),
-            max_supports=getattr(config, "timematch_v271_adaptive_max_supports", 4),
-            min_support_count=getattr(config, "timematch_v271_adaptive_min_support_count", 16),
-            min_shift_stability=getattr(config, "timematch_v271_adaptive_min_shift_stability", 0.66),
-            max_support_atoms=getattr(config, "timematch_v271_adaptive_max_support_atoms", 2),
-            max_interval_span=getattr(config, "timematch_v271_adaptive_max_interval_span", 90),
-            gate_score_high=getattr(config, "timematch_v271_adaptive_gate_score_high", 0.5),
-            gate_mode=getattr(config, "timematch_v271_adaptive_gate_mode", "score"),
-            gate_low=getattr(config, "timematch_v271_adaptive_gate_low", 0.30),
-            gate_high=getattr(config, "timematch_v271_adaptive_gate_high", 0.70),
-            gate_light=getattr(config, "timematch_v271_adaptive_gate_light", 0.30),
-            gate_full=getattr(config, "timematch_v271_adaptive_gate_full", 1.0),
-            gate_ratio_high=getattr(config, "timematch_v271_adaptive_gate_ratio_high", 4.0),
-            gate_count_high=getattr(config, "timematch_v271_adaptive_gate_count_high", 0),
-            gate_source_sep_high=getattr(config, "timematch_v271_adaptive_gate_source_sep_high", 2.0),
-            gate_target_explain_high=getattr(config, "timematch_v271_adaptive_gate_target_explain_high", 0.70),
-        )
-        gate_values = [float(support.get("gate", 0.0)) for support in supports]
-        reliability_values = [float(support.get("reliability", 0.0)) for support in supports]
-        gate_levels = [str(support.get("gate_level", "")) for support in supports]
-        logs = {
-            "timematch_v271_adaptive_da_discovered": 1.0,
-            "timematch_v271_adaptive_da_discover_epoch": float(epoch + 1),
-            "timematch_v271_adaptive_da_support_count": float(len(supports)),
-            "timematch_v271_adaptive_da_pair_threshold": float(threshold),
-            "timematch_v271_adaptive_da_seen_target": float(discovery.get("seen_target_samples", 0)),
-            "timematch_v271_adaptive_da_accepted_fraction": float(discovery.get("accepted_fraction", 0.0)),
-            "timematch_v271_adaptive_da_evidence_weight": float(discovery.get("accepted_evidence_weight", 0.0)),
-            "timematch_v271_adaptive_da_shift": float(target_to_source_shift),
-            "timematch_v271_adaptive_da_gate_mean": float(np.mean(gate_values)) if gate_values else 0.0,
-            "timematch_v271_adaptive_da_reliability_mean": float(np.mean(reliability_values))
-            if reliability_values
-            else 0.0,
-            "timematch_v271_adaptive_da_gate_off_count": float(sum(level == "off" for level in gate_levels)),
-            "timematch_v271_adaptive_da_gate_light_count": float(sum(level == "light" for level in gate_levels)),
-            "timematch_v271_adaptive_da_gate_full_count": float(sum(level == "full" for level in gate_levels)),
-        }
-        for idx, support in enumerate(supports[:4]):
-            logs[f"timematch_v271_adaptive_da_support{idx + 1}_score"] = float(support.get("score", 0.0))
-            logs[f"timematch_v271_adaptive_da_support{idx + 1}_gate"] = float(support.get("gate", 0.0))
-            logs[f"timematch_v271_adaptive_da_support{idx + 1}_reliability"] = float(
-                support.get("reliability", 0.0)
-            )
-            logs[f"timematch_v271_adaptive_da_support{idx + 1}_count"] = float(support.get("support_count", 0.0))
-            logs[f"timematch_v271_adaptive_da_support{idx + 1}_span"] = float(
-                int(support["end"]) - int(support["start"]) + 1
-            )
-
-        payload = {
-            "source": config.source,
-            "target": config.target,
-            "epoch": int(epoch + 1),
-            "target_to_source_shift": int(target_to_source_shift),
-            "partition": partition_spec,
-            "pair_score_threshold": threshold,
-            "discovery": {
-                "seen_target_samples": discovery.get("seen_target_samples", 0),
-                "accepted_fraction": discovery.get("accepted_fraction", 0.0),
-                "accepted_evidence_weight": discovery.get("accepted_evidence_weight", 0.0),
-                "pair_rows": discovery.get("pair_rows", []),
-            },
-            "adaptive_supports": supports,
-        }
-        path = os.path.join(config.output_dir, f"v271_da_support_epoch_{epoch + 1}.json")
-        with open(path, "w", encoding="utf-8") as fp:
-            json.dump(payload, fp, indent=2)
-        logs["timematch_v271_adaptive_da_support_file_written"] = 1.0
-        print(
-            "v2.7 full-core adaptive supports: "
-            f"count={len(supports)}, threshold={threshold:.6f}, file={path}"
-        )
-        for support in supports:
-            print(
-                f"  pair={support['class_pair']} interval=[{support['start']},{support['end']}] "
-                f"score={support['score']:.6f} gate={support['gate']:.3f} "
-                f"reliability={support.get('reliability', 0.0):.3f} level={support.get('gate_level', 'score')} "
-                f"count={support['support_count']} atoms={support['atomic_segments']}"
-            )
-        if not supports:
-            print("v2.7 full-core adaptive supports: no reliable support; adaptive loss stays disabled.")
-        return supports, logs
-    finally:
-        if model_was_training:
-            model.train()
-        if source_feature_reshaper is not None and reshaper_was_training:
-            source_feature_reshaper.train()
 
 
 def train_timematch(student, config, writer, val_loader, device, best_model_path, fold_num, splits):
@@ -280,19 +121,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         phase_partition_spec=source_phase_partition_spec,
         min_sample_points_per_phase=getattr(config, "source_phase_min_sample_points", 2),
     )
-    v271_adaptive_supports, v271_support_logs = load_v271_adaptive_supports(
-        getattr(config, "timematch_v271_adaptive_support_file", ""),
-        min_score=getattr(config, "timematch_v271_adaptive_min_score", 0.0),
-        min_gate=getattr(config, "timematch_v271_adaptive_min_gate", 0.0),
-    )
-    v271_adaptive_trade_off = float(getattr(config, "timematch_v271_adaptive_trade_off", 0.0))
-    v271_adaptive_warmup_epochs = max(0, int(getattr(config, "timematch_v271_adaptive_warmup_epochs", 0)))
-    v271_adaptive_ramp_epochs = max(1, int(getattr(config, "timematch_v271_adaptive_ramp_epochs", 1)))
-    v271_discover_in_da = bool(getattr(config, "timematch_v271_adaptive_discover_in_da", False))
-    v271_discover_epoch = int(getattr(config, "timematch_v271_adaptive_discover_epoch", -1))
-    if v271_discover_epoch < 0:
-        v271_discover_epoch = v271_adaptive_warmup_epochs
-    v271_da_discovery_done = bool(v271_adaptive_supports)
 
     source_iter = iter(cycle(source_loader))
     target_iter = iter(cycle(target_loader))
@@ -335,27 +163,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 min_shift, max_shift = min(target_to_source_shift, 0), max(0, target_to_source_shift)
             writer.add_scalar("train/temporal_shift", target_to_source_shift, epoch)
 
-        if (
-            v271_discover_in_da
-            and not v271_da_discovery_done
-            and v271_adaptive_trade_off > 0.0
-            and epoch >= v271_discover_epoch
-        ):
-            v271_adaptive_supports, v271_support_logs = _discover_v271_da_support_bank(
-                teacher,
-                source_feature_reshaper,
-                source_loader,
-                target_loader_no_aug,
-                config,
-                device,
-                target_to_source_shift,
-                epoch,
-            )
-            v271_da_discovery_done = True
-            for name, value in v271_support_logs.items():
-                if isinstance(value, (int, float)):
-                    writer.add_scalar(f"train/{name}", value, epoch)
-
         student.train()
         teacher.eval()  # don't update BN or use dropout for teacher
         if source_feature_reshaper is not None:
@@ -383,15 +190,12 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             reshaper_logs = {}
             compact_loss = pixels_s.sum() * 0.0
             compact_logs = {}
-            v271_adaptive_loss = pixels_s.sum() * 0.0
-            v271_adaptive_logs = {}
             dual_relation_loss = pixels_s.sum() * 0.0
             dual_relation_logs = {}
             loss_source_reshaped = pixels_s.sum() * 0.0
             if config.domain_specific_bn:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
                 spatial_feats_source_raw = student.spatial_encoder(pixels_s, mask_s, extra_s)
-                spatial_feats_source = spatial_feats_source_raw
                 temporal_feats_source_raw = student.temporal_encoder(
                     spatial_feats_source_raw,
                     position_s + source_to_target_shift,
@@ -423,74 +227,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
                         boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
                         boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
-                        v271_trend_kernel_size=getattr(config, "source_structure_v271_trend_kernel_size", 5),
-                        v271_trend_smoothing_mode=getattr(
-                            config,
-                            "source_structure_v271_trend_smoothing_mode",
-                            "time",
-                        ),
-                        v271_trend_bandwidth=getattr(config, "source_structure_v271_trend_bandwidth", 0.0),
-                        v271_trend_kernel=getattr(config, "source_structure_v271_trend_kernel", "gaussian"),
-                        v271_trend_dynamics_trade_off=getattr(
-                            config,
-                            "source_structure_v271_trend_dynamics_trade_off",
-                            0.05,
-                        ),
-                        v271_residual_variance_trade_off=getattr(
-                            config,
-                            "source_structure_v271_residual_variance_trade_off",
-                            0.10,
-                        ),
-                        v271_residual_energy_trade_off=getattr(
-                            config,
-                            "source_structure_v271_residual_energy_trade_off",
-                            0.05,
-                        ),
-                        v271_residual_energy_margin=getattr(
-                            config,
-                            "source_structure_v271_residual_energy_margin",
-                            1.0,
-                        ),
-                        v271_segment_basis_trade_off=getattr(
-                            config,
-                            "source_structure_v271_segment_basis_trade_off",
-                            1.0,
-                        ),
-                        v271_event_support_trade_off=getattr(
-                            config,
-                            "source_structure_v271_event_support_trade_off",
-                            1.0,
-                        ),
-                        v271_event_support_count=getattr(
-                            config,
-                            "source_structure_v271_event_support_count",
-                            2,
-                        ),
-                        v271_event_support_sigma_ratio=getattr(
-                            config,
-                            "source_structure_v271_event_support_sigma_ratio",
-                            0.20,
-                        ),
-                        v271_event_support_mode=getattr(
-                            config,
-                            "source_structure_v271_event_support_mode",
-                            "event",
-                        ),
-                        v271_gtw_shift_radius_steps=getattr(
-                            config,
-                            "source_structure_v271_gtw_shift_radius_steps",
-                            2.0,
-                        ),
-                        v271_gtw_shift_count=getattr(
-                            config,
-                            "source_structure_v271_gtw_shift_count",
-                            5,
-                        ),
-                        v271_gtw_temperature=getattr(
-                            config,
-                            "source_structure_v271_gtw_temperature",
-                            0.05,
-                        ),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
@@ -546,74 +282,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
                         boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
                         boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
-                        v271_trend_kernel_size=getattr(config, "source_structure_v271_trend_kernel_size", 5),
-                        v271_trend_smoothing_mode=getattr(
-                            config,
-                            "source_structure_v271_trend_smoothing_mode",
-                            "time",
-                        ),
-                        v271_trend_bandwidth=getattr(config, "source_structure_v271_trend_bandwidth", 0.0),
-                        v271_trend_kernel=getattr(config, "source_structure_v271_trend_kernel", "gaussian"),
-                        v271_trend_dynamics_trade_off=getattr(
-                            config,
-                            "source_structure_v271_trend_dynamics_trade_off",
-                            0.05,
-                        ),
-                        v271_residual_variance_trade_off=getattr(
-                            config,
-                            "source_structure_v271_residual_variance_trade_off",
-                            0.10,
-                        ),
-                        v271_residual_energy_trade_off=getattr(
-                            config,
-                            "source_structure_v271_residual_energy_trade_off",
-                            0.05,
-                        ),
-                        v271_residual_energy_margin=getattr(
-                            config,
-                            "source_structure_v271_residual_energy_margin",
-                            1.0,
-                        ),
-                        v271_segment_basis_trade_off=getattr(
-                            config,
-                            "source_structure_v271_segment_basis_trade_off",
-                            1.0,
-                        ),
-                        v271_event_support_trade_off=getattr(
-                            config,
-                            "source_structure_v271_event_support_trade_off",
-                            1.0,
-                        ),
-                        v271_event_support_count=getattr(
-                            config,
-                            "source_structure_v271_event_support_count",
-                            2,
-                        ),
-                        v271_event_support_sigma_ratio=getattr(
-                            config,
-                            "source_structure_v271_event_support_sigma_ratio",
-                            0.20,
-                        ),
-                        v271_event_support_mode=getattr(
-                            config,
-                            "source_structure_v271_event_support_mode",
-                            "event",
-                        ),
-                        v271_gtw_shift_radius_steps=getattr(
-                            config,
-                            "source_structure_v271_gtw_shift_radius_steps",
-                            2.0,
-                        ),
-                        v271_gtw_shift_count=getattr(
-                            config,
-                            "source_structure_v271_gtw_shift_count",
-                            5,
-                        ),
-                        v271_gtw_temperature=getattr(
-                            config,
-                            "source_structure_v271_gtw_temperature",
-                            0.05,
-                        ),
                         anchor_spatial_feats=spatial_feats_source_raw.detach(),
                         anchor_positions=position_s,
                     )
@@ -651,74 +319,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
-            if v271_adaptive_supports and v271_adaptive_trade_off > 0.0:
-                if epoch >= v271_adaptive_warmup_epochs:
-                    ramp = min(1.0, (epoch - v271_adaptive_warmup_epochs + 1) / v271_adaptive_ramp_epochs)
-                else:
-                    ramp = 0.0
-                if ramp > 0.0:
-                    raw_v271_adaptive_loss, v271_adaptive_logs = compute_v271_adaptive_support_loss(
-                        spatial_feats_source,
-                        position_s,
-                        source_labels,
-                        v271_adaptive_supports,
-                        trend_kernel_size=getattr(config, "source_structure_v271_trend_kernel_size", 5),
-                        trend_smoothing_mode=getattr(
-                            config,
-                            "source_structure_v271_trend_smoothing_mode",
-                            "time",
-                        ),
-                        trend_bandwidth=getattr(config, "source_structure_v271_trend_bandwidth", 0.0),
-                        trend_kernel=getattr(config, "source_structure_v271_trend_kernel", "gaussian"),
-                        trend_cohesion_trade_off=getattr(
-                            config,
-                            "timematch_v271_adaptive_trend_trade_off",
-                            1.0,
-                        ),
-                        trend_dynamics_trade_off=getattr(
-                            config,
-                            "timematch_v271_adaptive_trend_dynamics_trade_off",
-                            0.05,
-                        ),
-                        residual_variance_trade_off=getattr(
-                            config,
-                            "timematch_v271_adaptive_residual_variance_trade_off",
-                            0.10,
-                        ),
-                        residual_energy_trade_off=getattr(
-                            config,
-                            "timematch_v271_adaptive_residual_energy_trade_off",
-                            0.05,
-                        ),
-                        residual_energy_margin=getattr(
-                            config,
-                            "source_structure_v271_residual_energy_margin",
-                            1.0,
-                        ),
-                        min_points=getattr(config, "timematch_v271_adaptive_min_points", 2),
-                        taper_mode=getattr(config, "timematch_v271_adaptive_taper_mode", "none"),
-                        taper_ratio=getattr(config, "timematch_v271_adaptive_taper_ratio", 0.0),
-                    )
-                    effective_v271_weight = v271_adaptive_trade_off * ramp
-                    v271_adaptive_loss = effective_v271_weight * raw_v271_adaptive_loss
-                    v271_adaptive_logs.update(v271_support_logs)
-                    v271_adaptive_logs["timematch_v271_adaptive_ramp"] = float(ramp)
-                    v271_adaptive_logs["timematch_v271_adaptive_trade_off"] = float(v271_adaptive_trade_off)
-                    v271_adaptive_logs["timematch_v271_adaptive_effective_weight"] = float(effective_v271_weight)
-                    v271_adaptive_logs["timematch_v271_adaptive_raw_loss"] = float(
-                        raw_v271_adaptive_loss.detach().item()
-                    )
-                    v271_adaptive_logs["timematch_v271_adaptive_weighted_loss"] = float(
-                        v271_adaptive_loss.detach().item()
-                    )
             loss = loss_source + config.trade_off * loss_target
             if source_feature_reshaper is not None:
-                loss = (
-                    loss
-                    + getattr(config, "timematch_source_structure_trade_off", 1.0) * compact_loss
-                    + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
-                )
-            loss = loss + v271_adaptive_loss
+                loss = loss + compact_loss + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
 
             # compute loss and backprop
             optimizer.zero_grad()
@@ -778,11 +381,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         writer.add_scalar(f"train/{name}", value, global_step)
                 for name, value in dual_relation_logs.items():
                     writer.add_scalar(f"train/{name}", value, global_step)
-                for name, value in v271_adaptive_logs.items():
-                    if isinstance(value, torch.Tensor) and value.numel() == 1:
-                        value = float(value.detach().item())
-                    if isinstance(value, (int, float)):
-                        writer.add_scalar(f"train/{name}", value, global_step)
 
             global_step += 1
 
@@ -858,7 +456,84 @@ def update_ema_variables(model, ema, decay=0.99):
 
 
 def get_data_loaders(splits, config, balance_source=True):
-    return create_timematch_data_loaders(splits, config, TupleDataset, balance_source=balance_source)
+    weak_aug = transforms.Compose([
+        RandomSamplePixels(config.num_pixels),
+        Normalize(),
+        ToTensor(),
+    ])
+
+    strong_aug = transforms.Compose([
+            RandomSamplePixels(config.num_pixels),
+            RandomSampleTimeSteps(config.seq_length),
+            Normalize(),
+            ToTensor(),
+    ])
+
+    source_dataset = PixelSetData(config.data_root, config.source,
+            config.classes, strong_aug,
+            indices=splits[config.source]['train'],
+            closed_set=getattr(config, 'closed_set', False),)
+
+    if balance_source:
+        source_labels = source_dataset.get_labels()
+        freq = Counter(source_labels)
+        class_weight = {x: 1.0 / freq[x] for x in freq}
+        source_weights = [class_weight[x] for x in source_labels]
+        sampler = WeightedRandomSampler(source_weights, len(source_labels))
+        print("using balanced loader for source")
+        source_loader = data.DataLoader(
+            source_dataset,
+            num_workers=config.num_workers,
+            pin_memory=True,
+            sampler=sampler,
+            batch_size=config.batch_size,
+            drop_last=True,
+        )
+    else:
+        source_loader = data.DataLoader(
+            source_dataset,
+            num_workers=config.num_workers,
+            pin_memory=True,
+            batch_size=config.batch_size,
+            shuffle=True,
+            drop_last=True,
+        )
+
+    target_dataset = PixelSetData(config.data_root, config.target,
+            config.classes, None,
+            indices=splits[config.target]['train'],
+            closed_set=getattr(config, 'closed_set', False))
+
+    strong_dataset = deepcopy(target_dataset)
+    strong_dataset.transform = strong_aug
+    weak_dataset = deepcopy(target_dataset)
+    weak_dataset.transform = weak_aug
+    target_dataset_weak_strong = TupleDataset(weak_dataset, strong_dataset)
+
+    no_aug_dataset = deepcopy(target_dataset)
+    no_aug_dataset.transform = weak_aug
+    # For shift estimation
+    target_loader_no_aug = data.DataLoader(
+        no_aug_dataset,
+        num_workers=config.num_workers,
+        batch_size=config.batch_size,
+        shuffle=True,
+    )
+
+    # For mean teacher training
+    target_loader_weak_strong = data.DataLoader(
+        target_dataset_weak_strong,
+        num_workers=config.num_workers,
+        batch_size=config.batch_size,
+        shuffle=True,
+        pin_memory=True,
+        drop_last=True,
+    )
+
+    print(f'size of source dataset: {len(source_dataset)} ({len(source_loader)} batches)')
+    print(f'size of target dataset: {len(target_dataset)} ({len(target_loader_weak_strong)} batches)')
+
+    return source_loader, target_loader_no_aug, target_loader_weak_strong
 
 
 class TupleDataset(data.Dataset):

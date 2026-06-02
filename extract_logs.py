@@ -1,1 +1,0 @@
-import os; dir_path = r"C:\Code\dev\PythonProject	imematch\logs254_metricbank_quickcheck_20260514_113252"; files = sorted([f for f in os.listdir(dir_path) if f.endswith(".log")]); print("Files:", files)
