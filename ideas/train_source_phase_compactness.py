@@ -27,6 +27,136 @@ from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda
 
 
+def _parse_grad_diag_steps(value):
+    if value is None:
+        return set()
+    if isinstance(value, (list, tuple, set)):
+        return {int(step) for step in value}
+    text = str(value).replace(";", ",").replace(" ", ",")
+    steps = set()
+    for item in text.split(","):
+        item = item.strip()
+        if item:
+            steps.add(int(item))
+    return steps
+
+
+def _named_trainable_params(module):
+    if module is None:
+        return []
+    return [param for param in module.parameters() if param.requires_grad]
+
+
+def _build_grad_diag_param_groups(model, source_feature_reshaper):
+    groups = [
+        ("spatial_encoder", _named_trainable_params(getattr(model, "spatial_encoder", None))),
+        ("temporal_encoder", _named_trainable_params(getattr(model, "temporal_encoder", None))),
+        ("decoder", _named_trainable_params(getattr(model, "decoder", None))),
+    ]
+    if source_feature_reshaper is not None:
+        groups.append(("reshaper", _named_trainable_params(source_feature_reshaper)))
+    return [(name, params) for name, params in groups if params]
+
+
+def _component_grads_by_group(loss, param_groups):
+    grads_by_group = {}
+    if loss is None or not isinstance(loss, torch.Tensor) or not loss.requires_grad:
+        for group_name, _ in param_groups:
+            grads_by_group[group_name] = None
+        return grads_by_group
+
+    all_params = []
+    group_slices = []
+    offset = 0
+    for group_name, params in param_groups:
+        all_params.extend(params)
+        group_slices.append((group_name, offset, offset + len(params)))
+        offset += len(params)
+
+    grads = torch.autograd.grad(
+        loss,
+        all_params,
+        retain_graph=True,
+        allow_unused=True,
+    )
+    for group_name, start, end in group_slices:
+        flat_parts = [
+            grad.detach().reshape(-1)
+            for grad in grads[start:end]
+            if grad is not None
+        ]
+        grads_by_group[group_name] = torch.cat(flat_parts) if flat_parts else None
+    return grads_by_group
+
+
+def _grad_norm(flat_grad):
+    if flat_grad is None:
+        return 0.0
+    return float(flat_grad.norm().item())
+
+
+def _grad_cosine(left_grad, right_grad, eps=1e-12):
+    left_norm = _grad_norm(left_grad)
+    right_norm = _grad_norm(right_grad)
+    if left_grad is None or right_grad is None or left_norm <= eps or right_norm <= eps:
+        return 0.0, 0
+    cosine = torch.dot(left_grad, right_grad) / (left_grad.norm() * right_grad.norm()).clamp_min(eps)
+    return float(cosine.item()), 1
+
+
+def _print_source_grad_diagnostics(losses, param_groups, epoch, step, global_step_1based):
+    grad_maps = {
+        loss_name: _component_grads_by_group(loss, param_groups)
+        for loss_name, loss in losses.items()
+    }
+    for loss_name, group_map in grad_maps.items():
+        for group_name, flat_grad in group_map.items():
+            print(
+                "SOURCE_GRAD_DIAG|"
+                f"global_step={global_step_1based}|"
+                f"epoch={epoch + 1}|"
+                f"batch_step={step + 1}|"
+                f"loss={loss_name}|"
+                f"group={group_name}|"
+                f"norm={_grad_norm(flat_grad):.8e}|"
+                f"active={1 if flat_grad is not None and _grad_norm(flat_grad) > 0.0 else 0}"
+            )
+
+    pairs = [
+        ("compact", "cls_raw"),
+        ("compact", "cls_reshaped"),
+        ("compact", "reshaper_reg"),
+        ("reshaper_reg", "cls_raw"),
+        ("reshaper_reg", "cls_reshaped"),
+        ("dual_relation", "cls_raw"),
+        ("dual_relation", "cls_reshaped"),
+    ]
+    for left_name, right_name in pairs:
+        if left_name not in grad_maps or right_name not in grad_maps:
+            continue
+        for group_name, _ in param_groups:
+            left_grad = grad_maps[left_name].get(group_name)
+            right_grad = grad_maps[right_name].get(group_name)
+            cosine, valid = _grad_cosine(left_grad, right_grad)
+            left_norm = _grad_norm(left_grad)
+            right_norm = _grad_norm(right_grad)
+            ratio = left_norm / right_norm if right_norm > 1e-12 else 0.0
+            print(
+                "SOURCE_GRAD_COS|"
+                f"global_step={global_step_1based}|"
+                f"epoch={epoch + 1}|"
+                f"batch_step={step + 1}|"
+                f"left={left_name}|"
+                f"right={right_name}|"
+                f"group={group_name}|"
+                f"left_norm={left_norm:.8e}|"
+                f"right_norm={right_norm:.8e}|"
+                f"ratio={ratio:.8e}|"
+                f"cosine={cosine:.8e}|"
+                f"valid={valid}"
+            )
+
+
 def train_supervised_source_phase_compactness(model, config, writer, splits, val_loader, device, best_model_path):
     """
     Source-only training with source-domain phase compactness regularization.
@@ -118,6 +248,13 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         phase_partition_spec=phase_partition_spec,
         min_sample_points_per_phase=getattr(config, "source_phase_min_sample_points", 2),
     )
+    grad_diag_enabled = bool(getattr(config, "source_structure_grad_diagnostic", False))
+    grad_diag_steps = _parse_grad_diag_steps(getattr(config, "source_structure_grad_diag_steps", ""))
+    grad_diag_param_groups = (
+        _build_grad_diag_param_groups(model, source_feature_reshaper)
+        if grad_diag_enabled
+        else []
+    )
 
     best_f1 = 0
     for epoch in range(config.epochs):
@@ -202,6 +339,22 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             else:
                 loss = cls_loss
             loss = loss + compact_loss + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
+
+            global_step_1based = global_step + step + 1
+            if grad_diag_enabled and global_step_1based in grad_diag_steps:
+                _print_source_grad_diagnostics(
+                    {
+                        "cls_raw": cls_loss_raw,
+                        "cls_reshaped": cls_loss,
+                        "compact": compact_loss,
+                        "reshaper_reg": reshaper_loss,
+                        "dual_relation": dual_relation_loss,
+                    },
+                    grad_diag_param_groups,
+                    epoch,
+                    step,
+                    global_step_1based,
+                )
 
             optimizer.zero_grad()
             loss.backward()

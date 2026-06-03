@@ -616,6 +616,18 @@ if __name__ == '__main__':
         type=int,
         help='half-window size per side used for v2.4.3 boundary-centered local segment transition windows',
     )
+    parser.add_argument(
+        '--source_structure_grad_diagnostic',
+        default=False,
+        type=bool_flag,
+        help='print source-stage gradient topology diagnostics for structure/reshaper mechanism analysis',
+    )
+    parser.add_argument(
+        '--source_structure_grad_diag_steps',
+        default='1,10,50,100,200,500',
+        type=str,
+        help='comma-separated 1-based source-training global steps where gradient diagnostics are printed',
+    )
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')
 
