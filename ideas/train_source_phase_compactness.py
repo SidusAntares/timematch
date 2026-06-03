@@ -32,10 +32,11 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
     Source-only training with source-domain phase compactness regularization.
 
     Design choice:
-    - the shared PSE is driven only by the raw-path classification objective
-    - structure regularization is attached to the source-only reshaper branch
-    - reshaped-path supervision updates downstream temporal/classification heads,
-      but does not backpropagate into the shared PSE or the reshaper
+    - when a source-only reshaper is enabled, structure regularization is attached
+      to the reshaper branch;
+    - when the reshaper is disabled, structure regularization can still be applied
+      directly to raw source features. This is needed for reshaper-vs-compactness
+      mechanism diagnostics.
     """
     assert not getattr(config, "with_shift_aug", False), (
         "sourcephasecompact / v2.3 phase-aware training must not use RandomTemporalShift-style "
@@ -95,6 +96,17 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         strength=getattr(config, "source_feature_reshaper_strength", 0.10),
         kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
     )
+    structure_trade_off = (
+        abs(float(getattr(config, "source_structure_intra_trade_off", 0.0)))
+        + abs(float(getattr(config, "source_structure_amplitude_trade_off", 0.0)))
+        + abs(float(getattr(config, "source_structure_interphase_trade_off", 0.0)))
+        + abs(float(getattr(config, "source_structure_shape_trade_off", 0.0)))
+        + abs(float(getattr(config, "source_structure_trend_trade_off", 0.0)))
+        + abs(float(getattr(config, "source_structure_season_trade_off", 0.0)))
+        + abs(float(getattr(config, "source_structure_segment_inter_trade_off", 0.0)))
+        + abs(float(getattr(config, "source_structure_boundary_window_trade_off", 0.0)))
+    )
+    use_structure_loss = structure_trade_off > 0.0
     params = list(model.parameters())
     if source_feature_reshaper is not None:
         source_feature_reshaper.to(device)
@@ -139,6 +151,10 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     spatial_feats_anchor,
                     spatial_feats,
                 )
+            else:
+                spatial_feats_anchor = spatial_feats_raw
+
+            if use_structure_loss:
                 compact_loss, compact_logs = compute_source_structure_loss(
                     spatial_feats,
                     positions,
@@ -157,6 +173,8 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     anchor_spatial_feats=spatial_feats_anchor,
                     anchor_positions=positions,
                 )
+
+            if source_feature_reshaper is not None:
                 temporal_feats = model.temporal_encoder(spatial_feats.detach(), positions)
                 outputs = model.decoder(temporal_feats)
             else:
@@ -229,6 +247,16 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     writer.add_scalar(f"train/{key}", value, global_step + step)
 
         progress_bar.close()
+        print(
+            "SOURCE_EPOCH_SUMMARY|"
+            f"epoch={epoch + 1}|"
+            f"loss={loss_meter.avg:.6f}|"
+            f"cls={cls_loss_meter.avg:.6f}|"
+            f"compact={compact_loss_meter.avg:.6f}|"
+            f"reshaper={reshaper_loss_meter.avg:.6f}|"
+            f"dualcls={dual_cls_loss_meter.avg:.6f}|"
+            f"dualrel={dual_relation_loss_meter.avg:.6f}"
+        )
 
         model.eval()
         best_f1 = validation(
