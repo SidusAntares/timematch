@@ -74,8 +74,12 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         feature_dim=student.spatial_encoder.output_dim,
         strength=getattr(config, "source_feature_reshaper_strength", 0.10),
         kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
+        init_seed=getattr(config, "source_feature_reshaper_init_seed", -1),
     )
     if source_feature_reshaper is not None:
+        if not getattr(config, "source_feature_reshaper_trainable", True):
+            for param in source_feature_reshaper.parameters():
+                param.requires_grad_(False)
         source_feature_reshaper.to(device)
         if "source_feature_reshaper_state_dict" in pretrained_checkpoint:
             source_feature_reshaper.load_state_dict(pretrained_checkpoint["source_feature_reshaper_state_dict"])

@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+import re
+import statistics as stats
+import sys
+from pathlib import Path
+
+
+TEST_RE = re.compile(r"Test result for ([^:]+): accuracy=([0-9.]+), f1=([0-9.]+)")
+NAME_RE = re.compile(r"gpu\d+_(.+)_seed(\d+)_(.+)\.log$")
+GLOBAL_SUFFIX_RE = re.compile(r"(.+)_global_(w[0-9p]+)$")
+FROZEN_INIT_RE = re.compile(r"frozen_s\d+_init(\d+)")
+
+
+def parse_kv_line(line, prefix):
+    values = {}
+    for part in line[len(prefix):].strip().split("|"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        values[key] = value
+    return values
+
+
+def weight_from_tag(tag):
+    if not tag or not tag.startswith("w"):
+        return 0.0
+    return float(tag[1:].replace("p", "."))
+
+
+def config_meta(config):
+    compact_tag = ""
+    base_config = config
+    compact_weight = 0.0
+    if config.startswith("global_w"):
+        compact_tag = config.replace("global_", "", 1)
+        compact_weight = weight_from_tag(compact_tag)
+        base_config = "plain"
+    else:
+        match = GLOBAL_SUFFIX_RE.match(config)
+        if match:
+            base_config = match.group(1)
+            compact_tag = match.group(2)
+            compact_weight = weight_from_tag(compact_tag)
+
+    if base_config == "plain":
+        mechanism = "none"
+    elif base_config.startswith("strength0_dualcls"):
+        mechanism = "strength0_dualpath"
+    elif base_config.startswith("trainable_s003"):
+        mechanism = "trainable_s003"
+    elif base_config.startswith("frozen_s003"):
+        mechanism = "frozen_s003"
+    elif base_config.startswith("frozen_s010"):
+        mechanism = "frozen_s010"
+    else:
+        mechanism = base_config
+
+    init_match = FROZEN_INIT_RE.search(base_config)
+    init_seed = init_match.group(1) if init_match else ""
+    return {
+        "base_config": base_config,
+        "mechanism": mechanism,
+        "compact_weight": compact_weight,
+        "compact_tag": compact_tag,
+        "init_seed": init_seed,
+    }
+
+
+def parse_log(path):
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    tests = TEST_RE.findall(text)
+    source_summaries = [
+        parse_kv_line(line, "SOURCE_EPOCH_SUMMARY|")
+        for line in text.splitlines()
+        if line.startswith("SOURCE_EPOCH_SUMMARY|")
+    ]
+    final_source = source_summaries[-1] if source_summaries else {}
+    name_match = NAME_RE.match(path.name)
+    task = name_match.group(1) if name_match else path.stem
+    seed = int(name_match.group(2)) if name_match else -1
+    config = name_match.group(3) if name_match else "unknown"
+    meta = config_meta(config)
+
+    status = "ok"
+    if "Traceback" in text or "error:" in text.lower():
+        status = "error"
+    if len(tests) < 3:
+        status = "incomplete"
+
+    source_self = source_target = da = None
+    if len(tests) >= 3:
+        source_self = float(tests[-3][2])
+        source_target = float(tests[-2][2])
+        da = float(tests[-1][2])
+
+    row = {
+        "task": task,
+        "seed": seed,
+        "config": config,
+        "base_config": meta["base_config"],
+        "mechanism": meta["mechanism"],
+        "compact_weight": meta["compact_weight"],
+        "compact_tag": meta["compact_tag"],
+        "init_seed": meta["init_seed"],
+        "source_self_f1": source_self,
+        "source_on_target_f1": source_target,
+        "da_f1": da,
+        "da_gain": None if da is None or source_target is None else da - source_target,
+        "delta_vs_plain": None,
+        "compact_lift": None,
+        "source_loss": final_source.get("loss"),
+        "source_cls_loss": final_source.get("cls"),
+        "source_compact_loss": final_source.get("compact"),
+        "source_spatial_delta": final_source.get("spatial_delta"),
+        "source_temporal_delta": final_source.get("temporal_delta"),
+        "status": status,
+        "log": path.name,
+    }
+    return row
+
+
+def enrich_deltas(rows):
+    plain = {
+        (row["task"], row["seed"]): row["da_f1"]
+        for row in rows
+        if row["status"] == "ok" and row["config"] == "plain" and row["da_f1"] is not None
+    }
+    base = {
+        (row["task"], row["seed"], row["base_config"]): row["da_f1"]
+        for row in rows
+        if row["status"] == "ok"
+        and float(row["compact_weight"]) == 0.0
+        and row["da_f1"] is not None
+    }
+    for row in rows:
+        if row["da_f1"] is None:
+            continue
+        plain_value = plain.get((row["task"], row["seed"]))
+        if plain_value is not None:
+            row["delta_vs_plain"] = row["da_f1"] - plain_value
+        base_value = base.get((row["task"], row["seed"], row["base_config"]))
+        if base_value is not None:
+            row["compact_lift"] = row["da_f1"] - base_value
+
+
+def fmt(value):
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:.6f}"
+    return str(value)
+
+
+def write_tsv(path, rows, fields):
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write("\t".join(fields) + "\n")
+        for row in rows:
+            handle.write("\t".join(fmt(row.get(field)) for field in fields) + "\n")
+
+
+def values(rows, field):
+    out = []
+    for row in rows:
+        value = row.get(field)
+        if value in (None, ""):
+            continue
+        out.append(float(value))
+    return out
+
+
+def mean(items):
+    return None if not items else sum(items) / len(items)
+
+
+def stdev(items):
+    return None if len(items) < 2 else stats.stdev(items)
+
+
+def summarize(rows, group_fields):
+    grouped = {}
+    for row in rows:
+        key = tuple(row[field] for field in group_fields)
+        grouped.setdefault(key, []).append(row)
+    summary_rows = []
+    for key, group in sorted(grouped.items()):
+        out = {field: value for field, value in zip(group_fields, key)}
+        out.update(
+            {
+                "n": len(group),
+                "ok_count": sum(1 for row in group if row["status"] == "ok"),
+                "da_mean": mean(values(group, "da_f1")),
+                "da_std": stdev(values(group, "da_f1")),
+                "source_on_target_mean": mean(values(group, "source_on_target_f1")),
+                "source_on_target_std": stdev(values(group, "source_on_target_f1")),
+                "da_gain_mean": mean(values(group, "da_gain")),
+                "delta_vs_plain_mean": mean(values(group, "delta_vs_plain")),
+                "delta_vs_plain_std": stdev(values(group, "delta_vs_plain")),
+                "delta_vs_plain_pos": sum(value > 0 for value in values(group, "delta_vs_plain")),
+                "compact_lift_mean": mean(values(group, "compact_lift")),
+                "compact_lift_std": stdev(values(group, "compact_lift")),
+                "compact_lift_pos": sum(value > 0 for value in values(group, "compact_lift")),
+                "compact_loss_mean": mean(values(group, "source_compact_loss")),
+                "spatial_delta_mean": mean(values(group, "source_spatial_delta")),
+                "temporal_delta_mean": mean(values(group, "source_temporal_delta")),
+            }
+        )
+        summary_rows.append(out)
+    return summary_rows
+
+
+def main():
+    if len(sys.argv) != 2:
+        raise SystemExit("Usage: summarize_v243b_reshaper_compact_stage2.py LOG_DIR")
+    root = Path(sys.argv[1])
+    rows = [parse_log(path) for path in sorted(root.glob("*.log"))]
+    enrich_deltas(rows)
+
+    fields = [
+        "task",
+        "seed",
+        "config",
+        "base_config",
+        "mechanism",
+        "compact_weight",
+        "init_seed",
+        "source_self_f1",
+        "source_on_target_f1",
+        "da_f1",
+        "da_gain",
+        "delta_vs_plain",
+        "compact_lift",
+        "source_loss",
+        "source_cls_loss",
+        "source_compact_loss",
+        "source_spatial_delta",
+        "source_temporal_delta",
+        "status",
+        "log",
+    ]
+    write_tsv(root / "summary.tsv", rows, fields)
+
+    summary_fields = [
+        "task",
+        "config",
+        "n",
+        "ok_count",
+        "da_mean",
+        "da_std",
+        "source_on_target_mean",
+        "source_on_target_std",
+        "da_gain_mean",
+        "delta_vs_plain_mean",
+        "delta_vs_plain_std",
+        "delta_vs_plain_pos",
+        "compact_lift_mean",
+        "compact_lift_std",
+        "compact_lift_pos",
+        "compact_loss_mean",
+        "spatial_delta_mean",
+        "temporal_delta_mean",
+    ]
+    write_tsv(root / "config_summary.tsv", summarize(rows, ["task", "config"]), summary_fields)
+
+    interaction_fields = [
+        "task",
+        "mechanism",
+        "compact_weight",
+        "n",
+        "ok_count",
+        "da_mean",
+        "da_std",
+        "source_on_target_mean",
+        "source_on_target_std",
+        "da_gain_mean",
+        "delta_vs_plain_mean",
+        "delta_vs_plain_std",
+        "delta_vs_plain_pos",
+        "compact_lift_mean",
+        "compact_lift_std",
+        "compact_lift_pos",
+        "compact_loss_mean",
+        "spatial_delta_mean",
+        "temporal_delta_mean",
+    ]
+    write_tsv(
+        root / "mechanism_compact_summary.tsv",
+        summarize(rows, ["task", "mechanism", "compact_weight"]),
+        interaction_fields,
+    )
+
+    print("Wrote:", root / "summary.tsv")
+    print("Wrote:", root / "config_summary.tsv")
+    print("Wrote:", root / "mechanism_compact_summary.tsv")
+
+
+if __name__ == "__main__":
+    main()

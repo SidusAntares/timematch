@@ -14,6 +14,8 @@ RESHAPER_KIND="${SOURCE_FEATURE_RESHAPER:-residual_temporal_conv}"
 RESHAPER_STRENGTH="${SOURCE_FEATURE_RESHAPER_STRENGTH:-0.10}"
 RESHAPER_KERNEL_SIZE="${SOURCE_FEATURE_RESHAPER_KERNEL_SIZE:-3}"
 RESHAPER_REG_TRADE_OFF="${SOURCE_FEATURE_RESHAPER_REG_TRADE_OFF:-0.05}"
+RESHAPER_INIT_SEED="${SOURCE_FEATURE_RESHAPER_INIT_SEED:--1}"
+RESHAPER_TRAINABLE="${SOURCE_FEATURE_RESHAPER_TRAINABLE:-True}"
 DUAL_CLS_TRADE_OFF="${SOURCE_FEATURE_DUAL_CLS_TRADE_OFF:-1.00}"
 DUAL_REL_TRADE_OFF="${SOURCE_FEATURE_DUAL_RELATION_TRADE_OFF:-0.03}"
 DUAL_PATH="${SOURCE_FEATURE_DUAL_PATH:-True}"
@@ -72,6 +74,8 @@ python train.py \
   --source_feature_reshaper_strength "$RESHAPER_STRENGTH" \
   --source_feature_reshaper_kernel_size "$RESHAPER_KERNEL_SIZE" \
   --source_feature_reshaper_reg_trade_off "$RESHAPER_REG_TRADE_OFF" \
+  --source_feature_reshaper_init_seed "$RESHAPER_INIT_SEED" \
+  --source_feature_reshaper_trainable "$RESHAPER_TRAINABLE" \
   --source_feature_dual_path "$DUAL_PATH" \
   --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
   --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
@@ -131,6 +135,8 @@ while IFS= read -r TARGET; do
     --source_feature_reshaper_strength "$RESHAPER_STRENGTH" \
     --source_feature_reshaper_kernel_size "$RESHAPER_KERNEL_SIZE" \
     --source_feature_reshaper_reg_trade_off "$RESHAPER_REG_TRADE_OFF" \
+    --source_feature_reshaper_init_seed "$RESHAPER_INIT_SEED" \
+    --source_feature_reshaper_trainable "$RESHAPER_TRAINABLE" \
     --source_feature_dual_path "$DUAL_PATH" \
     --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
     --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
@@ -179,6 +185,8 @@ while IFS= read -r TARGET; do
     --source_feature_reshaper_strength "$RESHAPER_STRENGTH" \
     --source_feature_reshaper_kernel_size "$RESHAPER_KERNEL_SIZE" \
     --source_feature_reshaper_reg_trade_off "$RESHAPER_REG_TRADE_OFF" \
+    --source_feature_reshaper_init_seed "$RESHAPER_INIT_SEED" \
+    --source_feature_reshaper_trainable "$RESHAPER_TRAINABLE" \
     --source_feature_dual_path "$DUAL_PATH" \
     --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
     --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \

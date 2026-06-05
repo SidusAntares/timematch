@@ -43,15 +43,24 @@ class ResidualTemporalConvReshaper(nn.Module):
         return spatial_feats + torch.tanh(self.gate) * delta
 
 
-def build_source_feature_reshaper(kind, feature_dim, strength=0.10, kernel_size=3, phase_count=5):
+def build_source_feature_reshaper(kind, feature_dim, strength=0.10, kernel_size=3, phase_count=5, init_seed=-1):
     if kind in (None, "none"):
         return None
     if kind == "residual_temporal_conv":
-        return ResidualTemporalConvReshaper(
-            feature_dim=feature_dim,
-            strength=strength,
-            kernel_size=kernel_size,
-        )
+        if init_seed is not None and int(init_seed) >= 0:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(int(init_seed))
+                return ResidualTemporalConvReshaper(
+                    feature_dim=feature_dim,
+                    strength=strength,
+                    kernel_size=kernel_size,
+                )
+        else:
+            return ResidualTemporalConvReshaper(
+                feature_dim=feature_dim,
+                strength=strength,
+                kernel_size=kernel_size,
+            )
     raise ValueError(f"Unknown source_feature_reshaper kind: {kind}")
 
 

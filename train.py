@@ -172,12 +172,17 @@ def get_num_trainable_params(model):
 
 
 def maybe_build_source_feature_reshaper(model, config):
-    return build_source_feature_reshaper(
+    source_feature_reshaper = build_source_feature_reshaper(
         kind=getattr(config, "source_feature_reshaper", "none"),
         feature_dim=model.spatial_encoder.output_dim,
         strength=getattr(config, "source_feature_reshaper_strength", 0.10),
         kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
+        init_seed=getattr(config, "source_feature_reshaper_init_seed", -1),
     )
+    if source_feature_reshaper is not None and not getattr(config, "source_feature_reshaper_trainable", True):
+        for param in source_feature_reshaper.parameters():
+            param.requires_grad_(False)
+    return source_feature_reshaper
 
 def get_dataset_size(data_root, dataset):
     dir = os.path.join(data_root, dataset)
@@ -415,6 +420,18 @@ if __name__ == '__main__':
         default=0.05,
         type=float,
         help='weight for identity/stat-preserving regularization of the source-only feature reshaper',
+    )
+    parser.add_argument(
+        '--source_feature_reshaper_init_seed',
+        default=-1,
+        type=int,
+        help='optional independent random seed for source feature reshaper initialization',
+    )
+    parser.add_argument(
+        '--source_feature_reshaper_trainable',
+        default=True,
+        type=bool_flag,
+        help='whether source feature reshaper parameters are optimized',
     )
     parser.add_argument(
         '--source_feature_dual_path',
