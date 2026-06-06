@@ -120,6 +120,46 @@ def _compute_deterministic_temporal_delta(temporal_encoder, raw_spatial_feats, r
             module.train(training)
 
 
+def _resolve_structure_feature_target(config, source_feature_reshaper):
+    target = str(getattr(config, "source_structure_feature_target", "auto")).lower()
+    if target == "auto":
+        return "reshaped" if source_feature_reshaper is not None else "raw"
+    if source_feature_reshaper is None and target in {"reshaped", "both"}:
+        return "raw"
+    return target
+
+
+def _compute_source_structure_loss_on_features(
+    feats,
+    positions,
+    targets,
+    config,
+    phase_weight_tracker,
+    anchor_feats,
+    detach_features=False,
+):
+    structure_feats = feats.detach() if detach_features else feats
+    structure_anchor = anchor_feats.detach() if detach_features else anchor_feats
+    return compute_source_structure_loss(
+        structure_feats,
+        positions,
+        targets,
+        weight_tracker=phase_weight_tracker,
+        version=getattr(config, "source_structure_loss_version", "compactness"),
+        intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
+        amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
+        interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
+        shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
+        trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
+        season_trade_off=getattr(config, "source_structure_season_trade_off", 0.02),
+        segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
+        boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
+        boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
+        anchor_spatial_feats=structure_anchor,
+        anchor_positions=positions,
+    )
+
+
 def _print_source_grad_diagnostics(losses, param_groups, epoch, step, global_step_1based):
     grad_maps = {
         loss_name: _component_grads_by_group(loss, param_groups)
@@ -282,6 +322,8 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         loss_meter = AverageMeter()
         cls_loss_meter = AverageMeter()
         compact_loss_meter = AverageMeter()
+        compact_raw_loss_meter = AverageMeter()
+        compact_reshaped_loss_meter = AverageMeter()
         reshaper_loss_meter = AverageMeter()
         dual_cls_loss_meter = AverageMeter()
         dual_relation_loss_meter = AverageMeter()
@@ -314,24 +356,46 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                 spatial_feats_anchor = spatial_feats_raw
 
             if use_structure_loss:
-                compact_loss, compact_logs = compute_source_structure_loss(
-                    spatial_feats,
-                    positions,
-                    targets,
-                    weight_tracker=phase_weight_tracker,
-                    version=getattr(config, "source_structure_loss_version", "compactness"),
-                    intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
-                    amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
-                    interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
-                    shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
-                    trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
-                    season_trade_off=getattr(config, "source_structure_season_trade_off", 0.02),
-                    segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
-                    boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
-                    boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
-                    anchor_spatial_feats=spatial_feats_anchor,
-                    anchor_positions=positions,
-                )
+                structure_target = _resolve_structure_feature_target(config, source_feature_reshaper)
+                detach_structure_features = bool(getattr(config, "source_structure_detach_features", False))
+                compact_raw_loss = spatial_feats_raw.sum() * 0.0
+                compact_reshaped_loss = spatial_feats_raw.sum() * 0.0
+                raw_logs = {}
+                reshaped_logs = {}
+                if structure_target in {"raw", "both"}:
+                    compact_raw_loss, raw_logs = _compute_source_structure_loss_on_features(
+                        spatial_feats_raw,
+                        positions,
+                        targets,
+                        config,
+                        phase_weight_tracker,
+                        spatial_feats_raw,
+                        detach_features=detach_structure_features,
+                    )
+                if structure_target in {"reshaped", "both"}:
+                    compact_reshaped_loss, reshaped_logs = _compute_source_structure_loss_on_features(
+                        spatial_feats,
+                        positions,
+                        targets,
+                        config,
+                        phase_weight_tracker,
+                        spatial_feats_anchor,
+                        detach_features=detach_structure_features,
+                    )
+                compact_loss = compact_raw_loss + compact_reshaped_loss
+                compact_logs = {
+                    "compactness_loss": float(raw_logs.get("compactness_loss", 0.0))
+                    + float(reshaped_logs.get("compactness_loss", 0.0)),
+                    "compactness_raw_loss": float(raw_logs.get("compactness_loss", 0.0)),
+                    "compactness_reshaped_loss": float(reshaped_logs.get("compactness_loss", 0.0)),
+                    "source_structure_detached": float(detach_structure_features),
+                }
+                for key, value in raw_logs.items():
+                    if key != "compactness_loss":
+                        compact_logs[f"raw_{key}"] = value
+                for key, value in reshaped_logs.items():
+                    if key != "compactness_loss":
+                        compact_logs[f"reshaped_{key}"] = value
 
             if source_feature_reshaper is not None:
                 temporal_feats = model.temporal_encoder(spatial_feats.detach(), positions)
@@ -398,6 +462,8 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             loss_meter.update(loss.item(), n=config.batch_size)
             cls_loss_meter.update(cls_loss_raw.item(), n=config.batch_size)
             compact_loss_meter.update(compact_logs["compactness_loss"], n=config.batch_size)
+            compact_raw_loss_meter.update(compact_logs.get("compactness_raw_loss", 0.0), n=config.batch_size)
+            compact_reshaped_loss_meter.update(compact_logs.get("compactness_reshaped_loss", 0.0), n=config.batch_size)
             if source_feature_reshaper is not None:
                 reshaper_loss_meter.update(reshaper_logs["source_reshaper_reg_loss"], n=config.batch_size)
                 dual_cls_loss_meter.update(cls_loss.item(), n=config.batch_size)
@@ -413,6 +479,8 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     loss=f"{loss_meter.avg:.3f}",
                     cls=f"{cls_loss_meter.avg:.3f}",
                     compact=f"{compact_loss_meter.avg:.3f}",
+                    rawc=f"{compact_raw_loss_meter.avg:.3f}",
+                    reshapedc=f"{compact_reshaped_loss_meter.avg:.3f}",
                     reshaper=f"{reshaper_loss_meter.avg:.3f}",
                     dualcls=f"{dual_cls_loss_meter.avg:.3f}",
                     dualrel=f"{dual_relation_loss_meter.avg:.3f}",
@@ -444,6 +512,10 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             f"loss={loss_meter.avg:.6f}|"
             f"cls={cls_loss_meter.avg:.6f}|"
             f"compact={compact_loss_meter.avg:.6f}|"
+            f"compact_raw={compact_raw_loss_meter.avg:.6f}|"
+            f"compact_reshaped={compact_reshaped_loss_meter.avg:.6f}|"
+            f"target={_resolve_structure_feature_target(config, source_feature_reshaper)}|"
+            f"detached={bool(getattr(config, 'source_structure_detach_features', False))}|"
             f"reshaper={reshaper_loss_meter.avg:.6f}|"
             f"dualcls={dual_cls_loss_meter.avg:.6f}|"
             f"dualrel={dual_relation_loss_meter.avg:.6f}|"

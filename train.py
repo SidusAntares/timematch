@@ -580,6 +580,18 @@ if __name__ == '__main__':
         help='source-side structural loss version: compactness, v2.3.2 multi-component, v2.3.3 profiled, v2.3.4 trend-residual, v2.3.5 trend-seasonal-residual, v2.4.0 segment-trend-residual, v2.4.1 segment-transition-residual, v2.4.2 semantic-segment transition residual, or v2.4.3 boundary-window segment transition residual',
     )
     parser.add_argument(
+        '--source_structure_feature_target',
+        default='auto',
+        choices=['auto', 'raw', 'reshaped', 'both'],
+        help='feature stream used by source structure loss: auto keeps legacy behavior, raw shapes the encoder output, reshaped shapes reshaper output, both applies both losses',
+    )
+    parser.add_argument(
+        '--source_structure_detach_features',
+        default=False,
+        type=bool_flag,
+        help='detach features before source structure loss for gradient-path control experiments',
+    )
+    parser.add_argument(
         '--source_structure_intra_trade_off',
         default=1.0,
         type=float,

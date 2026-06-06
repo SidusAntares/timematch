@@ -41,6 +41,8 @@ SOURCE_SEGMENT_SEMANTIC_AGGL_TARGET_SLACK="${SOURCE_SEGMENT_SEMANTIC_AGGL_TARGET
 SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE="${SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE:-1.15}"
 SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF="${SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF:-0.35}"
 SOURCE_STRUCTURE_LOSS_VERSION="${SOURCE_STRUCTURE_LOSS_VERSION:-compactness}"
+SOURCE_STRUCTURE_FEATURE_TARGET="${SOURCE_STRUCTURE_FEATURE_TARGET:-auto}"
+SOURCE_STRUCTURE_DETACH_FEATURES="${SOURCE_STRUCTURE_DETACH_FEATURES:-False}"
 SOURCE_STRUCTURE_INTRA_TRADE_OFF="${SOURCE_STRUCTURE_INTRA_TRADE_OFF:-1.0}"
 SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF="${SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF:-0.25}"
 SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF="${SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF:-0.25}"
@@ -100,6 +102,8 @@ python train.py \
   --source_segment_semantic_aggl_merge_cost_tolerance "$SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE" \
   --source_segment_semantic_aggl_dynamics_trade_off "$SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF" \
   --source_structure_loss_version "$SOURCE_STRUCTURE_LOSS_VERSION" \
+  --source_structure_feature_target "$SOURCE_STRUCTURE_FEATURE_TARGET" \
+  --source_structure_detach_features "$SOURCE_STRUCTURE_DETACH_FEATURES" \
   --source_structure_intra_trade_off "$SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
   --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
   --source_structure_interphase_trade_off "$SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF" \
@@ -161,6 +165,8 @@ while IFS= read -r TARGET; do
     --source_segment_semantic_aggl_merge_cost_tolerance "$SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE" \
     --source_segment_semantic_aggl_dynamics_trade_off "$SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF" \
     --source_structure_loss_version "$SOURCE_STRUCTURE_LOSS_VERSION" \
+    --source_structure_feature_target "$SOURCE_STRUCTURE_FEATURE_TARGET" \
+    --source_structure_detach_features "$SOURCE_STRUCTURE_DETACH_FEATURES" \
     --source_structure_intra_trade_off "$TIMEMATCH_SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
     --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
     --source_structure_interphase_trade_off "$SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF" \
@@ -211,6 +217,8 @@ while IFS= read -r TARGET; do
     --source_segment_semantic_aggl_merge_cost_tolerance "$SOURCE_SEGMENT_SEMANTIC_AGGL_MERGE_COST_TOLERANCE" \
     --source_segment_semantic_aggl_dynamics_trade_off "$SOURCE_SEGMENT_SEMANTIC_AGGL_DYNAMICS_TRADE_OFF" \
     --source_structure_loss_version "$SOURCE_STRUCTURE_LOSS_VERSION" \
+    --source_structure_feature_target "$SOURCE_STRUCTURE_FEATURE_TARGET" \
+    --source_structure_detach_features "$SOURCE_STRUCTURE_DETACH_FEATURES" \
     --source_structure_intra_trade_off "$TIMEMATCH_SOURCE_STRUCTURE_INTRA_TRADE_OFF" \
     --source_structure_amplitude_trade_off "$SOURCE_STRUCTURE_AMPLITUDE_TRADE_OFF" \
     --source_structure_interphase_trade_off "$SOURCE_STRUCTURE_INTERPHASE_TRADE_OFF" \
