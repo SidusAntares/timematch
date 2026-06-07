@@ -11,7 +11,6 @@ GPUS="${GPUS:-0 1 2 3}"
 TASKS="${TASKS:-FR2_to_DK1}"
 SEEDS="${SEEDS:-1 2}"
 COMPACT_WEIGHT="${COMPACT_WEIGHT:-1.0}"
-FROZEN_INIT="${FROZEN_INIT:-101}"
 
 mkdir -p "$LOG_DIR"
 
@@ -163,13 +162,6 @@ add_task_seed_jobs() {
     "strength0_plus_raw_compact" "residual_temporal_conv" "0.00" "False" "101" "0.00" "0.03" "$COMPACT_WEIGHT" "raw" "False" "$est_weight" \
     "Strength0 dual path plus raw encoder compactness."
 
-  add_config "$task" "$source_dataset" "$target_dataset" "$seed" "frozen_s003_init${FROZEN_INIT}" \
-    "frozen_s003" "residual_temporal_conv" "0.03" "False" "$FROZEN_INIT" "0.00" "0.03" "0.0" "auto" "False" "$est_weight" \
-    "Frozen near-identity reshaper."
-  add_config "$task" "$source_dataset" "$target_dataset" "$seed" "frozen_s003_init${FROZEN_INIT}_raw_global_${COMPACT_TAG}" \
-    "frozen_s003_plus_raw_compact" "residual_temporal_conv" "0.03" "False" "$FROZEN_INIT" "0.00" "0.03" "$COMPACT_WEIGHT" "raw" "False" "$est_weight" \
-    "Frozen reshaper plus raw encoder compactness."
-
   add_config "$task" "$source_dataset" "$target_dataset" "$seed" "trainable_s003_reg000" \
     "trainable_s003" "residual_temporal_conv" "0.03" "True" "101" "0.00" "0.03" "0.0" "auto" "False" "$est_weight" \
     "Trainable near-identity reshaper without compactness."
@@ -179,9 +171,9 @@ add_task_seed_jobs() {
   add_config "$task" "$source_dataset" "$target_dataset" "$seed" "trainable_s003_reshaped_global_${COMPACT_TAG}" \
     "trainable_s003_plus_reshaped_compact" "residual_temporal_conv" "0.03" "True" "101" "0.00" "0.03" "$COMPACT_WEIGHT" "reshaped" "False" "$est_weight" \
     "Trainable reshaper plus compactness on reshaper output."
-  add_config "$task" "$source_dataset" "$target_dataset" "$seed" "trainable_s003_raw_global_${COMPACT_TAG}_detached" \
-    "trainable_s003_raw_compact_detached" "residual_temporal_conv" "0.03" "True" "101" "0.00" "0.03" "$COMPACT_WEIGHT" "raw" "True" "$est_weight" \
-    "Detached raw compactness control with trainable reshaper."
+  add_config "$task" "$source_dataset" "$target_dataset" "$seed" "trainable_s003_both_global_${COMPACT_TAG}" \
+    "trainable_s003_plus_both_compact" "residual_temporal_conv" "0.03" "True" "101" "0.00" "0.03" "$COMPACT_WEIGHT" "both" "False" "$est_weight" \
+    "Trainable reshaper plus compactness on raw encoder and reshaper output."
 }
 
 IFS=',' read -r -a TASK_NAMES <<< "$TASKS"

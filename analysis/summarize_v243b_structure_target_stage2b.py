@@ -39,6 +39,9 @@ def config_meta(config):
     if "reshaped_global" in config:
         target = "reshaped"
         compact = compact_weight_from_config(config)
+    if "both_global" in config:
+        target = "both"
+        compact = compact_weight_from_config(config)
     if "detached" in config:
         detached = True
     if config == "plain":
@@ -56,6 +59,8 @@ def config_meta(config):
         mechanism = mechanism + "_plus_raw"
     if "reshaped_global" in config:
         mechanism = mechanism + "_plus_reshaped"
+    if "both_global" in config:
+        mechanism = mechanism + "_plus_both"
     if detached:
         mechanism = mechanism + "_detached"
 
