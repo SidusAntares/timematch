@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+import sys
+from pathlib import Path
+
+from summarize_v243b_structure_target_stage2b import (
+    enrich_deltas,
+    mean,
+    parse_log,
+    stdev,
+    summarize,
+    values,
+    write_tsv,
+)
+
+
+def stage_label(config):
+    if config == "plain":
+        return "plain"
+    if config.startswith("raw_global_") and config.endswith("_source_only"):
+        return "raw_source_only"
+    if config.startswith("raw_global_") and config.endswith("_da_only_detached"):
+        return "raw_da_only_detached"
+    if config.startswith("raw_global_") and config.endswith("_da_only"):
+        return "raw_da_only"
+    if config.startswith("raw_global_") and config.endswith("_source_da"):
+        return "raw_source_da"
+    if config == "trainable_s003_reg000":
+        return "reshaper_source_only"
+    if config.startswith("trainable_s003_raw_global_") and config.endswith("_da_only"):
+        return "reshaper_source_plus_raw_da"
+    return None
+
+
+def da_f1_by_task_seed_label(rows):
+    mapping = {}
+    for row in rows:
+        if row["status"] != "ok" or row["da_f1"] is None:
+            continue
+        label = stage_label(row["config"])
+        if label is None:
+            continue
+        mapping[(row["task"], row["seed"], label)] = row["da_f1"]
+    return mapping
+
+
+def diff(left, right):
+    if left is None or right is None:
+        return None
+    return left - right
+
+
+def config_value(mapping, task, seed, label):
+    return mapping.get((task, seed, label))
+
+
+def make_stage_rows(rows):
+    mapping = da_f1_by_task_seed_label(rows)
+    task_seeds = sorted({(row["task"], row["seed"]) for row in rows})
+    out = []
+    for task, seed in task_seeds:
+        plain = config_value(mapping, task, seed, "plain")
+        raw_source_only = config_value(mapping, task, seed, "raw_source_only")
+        raw_da_only_detached = config_value(mapping, task, seed, "raw_da_only_detached")
+        raw_da_only = config_value(mapping, task, seed, "raw_da_only")
+        raw_source_da = config_value(mapping, task, seed, "raw_source_da")
+        reshaper_source_only = config_value(mapping, task, seed, "reshaper_source_only")
+        reshaper_source_plus_raw_da = config_value(
+            mapping, task, seed, "reshaper_source_plus_raw_da"
+        )
+        if plain is None:
+            continue
+        out.append(
+            {
+                "task": task,
+                "seed": seed,
+                "plain": plain,
+                "raw_source_only": raw_source_only,
+                "raw_da_only_detached": raw_da_only_detached,
+                "raw_da_only": raw_da_only,
+                "raw_source_da": raw_source_da,
+                "reshaper_source_only": reshaper_source_only,
+                "reshaper_source_plus_raw_da": reshaper_source_plus_raw_da,
+                "raw_source_only_effect": diff(raw_source_only, plain),
+                "raw_da_loss_value_effect": diff(raw_da_only_detached, plain),
+                "raw_da_grad_effect": diff(raw_da_only, raw_da_only_detached),
+                "raw_da_only_effect": diff(raw_da_only, plain),
+                "raw_source_da_effect": diff(raw_source_da, plain),
+                "raw_da_after_source_effect": diff(raw_source_da, raw_source_only),
+                "raw_source_after_da_effect": diff(raw_source_da, raw_da_only),
+                "reshaper_source_effect": diff(reshaper_source_only, plain),
+                "raw_da_after_reshaper_effect": diff(
+                    reshaper_source_plus_raw_da, reshaper_source_only
+                ),
+                "reshaper_plus_raw_da_total_effect": diff(
+                    reshaper_source_plus_raw_da, plain
+                ),
+                "complete_core": int(
+                    all(
+                        value is not None
+                        for value in [
+                            raw_source_only,
+                            raw_da_only_detached,
+                            raw_da_only,
+                            raw_source_da,
+                            reshaper_source_only,
+                            reshaper_source_plus_raw_da,
+                        ]
+                    )
+                ),
+            }
+        )
+    return out
+
+
+def summarize_stage_rows(stage_rows):
+    grouped = {}
+    for row in stage_rows:
+        grouped.setdefault(row["task"], []).append(row)
+    effect_fields = [
+        "raw_source_only_effect",
+        "raw_da_loss_value_effect",
+        "raw_da_grad_effect",
+        "raw_da_only_effect",
+        "raw_source_da_effect",
+        "raw_da_after_source_effect",
+        "raw_source_after_da_effect",
+        "reshaper_source_effect",
+        "raw_da_after_reshaper_effect",
+        "reshaper_plus_raw_da_total_effect",
+    ]
+    summary = []
+    for task, group in sorted(grouped.items()):
+        out = {
+            "task": task,
+            "n": len(group),
+            "complete_core": sum(row["complete_core"] for row in group),
+        }
+        for field in effect_fields:
+            vals = values(group, field)
+            out[f"{field}_mean"] = mean(vals)
+            out[f"{field}_std"] = stdev(vals)
+            out[f"{field}_pos"] = sum(value > 0 for value in vals)
+        summary.append(out)
+    return summary
+
+
+def summarize_overall(stage_rows):
+    effect_fields = [
+        "raw_source_only_effect",
+        "raw_da_loss_value_effect",
+        "raw_da_grad_effect",
+        "raw_da_only_effect",
+        "raw_source_da_effect",
+        "raw_da_after_source_effect",
+        "raw_source_after_da_effect",
+        "reshaper_source_effect",
+        "raw_da_after_reshaper_effect",
+        "reshaper_plus_raw_da_total_effect",
+    ]
+    out = {"scope": "overall", "n": len(stage_rows)}
+    for field in effect_fields:
+        vals = values(stage_rows, field)
+        out[f"{field}_mean"] = mean(vals)
+        out[f"{field}_std"] = stdev(vals)
+        out[f"{field}_pos"] = sum(value > 0 for value in vals)
+    return [out]
+
+
+def main():
+    if len(sys.argv) != 2:
+        raise SystemExit("Usage: summarize_v243b_stage_timing_counterfactual.py LOG_DIR")
+    root = Path(sys.argv[1])
+    rows = [parse_log(path) for path in sorted(root.glob("*.log"))]
+    enrich_deltas(rows)
+
+    row_fields = [
+        "task",
+        "seed",
+        "config",
+        "mechanism",
+        "structure_target",
+        "detached",
+        "compact_weight",
+        "source_self_f1",
+        "source_on_target_f1",
+        "da_f1",
+        "da_gain",
+        "delta_vs_plain",
+        "source_loss",
+        "source_cls_loss",
+        "source_compact_loss",
+        "source_compact_raw_loss",
+        "source_compact_reshaped_loss",
+        "source_spatial_delta",
+        "source_temporal_delta",
+        "status",
+        "log",
+    ]
+    write_tsv(root / "summary.tsv", rows, row_fields)
+
+    config_fields = [
+        "task",
+        "config",
+        "n",
+        "ok_count",
+        "da_mean",
+        "da_std",
+        "source_on_target_mean",
+        "source_on_target_std",
+        "da_gain_mean",
+        "delta_vs_plain_mean",
+        "delta_vs_plain_std",
+        "delta_vs_plain_pos",
+        "compact_loss_mean",
+        "compact_raw_loss_mean",
+        "compact_reshaped_loss_mean",
+        "spatial_delta_mean",
+        "temporal_delta_mean",
+    ]
+    write_tsv(root / "config_summary.tsv", summarize(rows, ["task", "config"]), config_fields)
+
+    stage_rows = make_stage_rows(rows)
+    stage_fields = [
+        "task",
+        "seed",
+        "plain",
+        "raw_source_only",
+        "raw_da_only_detached",
+        "raw_da_only",
+        "raw_source_da",
+        "reshaper_source_only",
+        "reshaper_source_plus_raw_da",
+        "raw_source_only_effect",
+        "raw_da_loss_value_effect",
+        "raw_da_grad_effect",
+        "raw_da_only_effect",
+        "raw_source_da_effect",
+        "raw_da_after_source_effect",
+        "raw_source_after_da_effect",
+        "reshaper_source_effect",
+        "raw_da_after_reshaper_effect",
+        "reshaper_plus_raw_da_total_effect",
+        "complete_core",
+    ]
+    write_tsv(root / "stage_timing_contrasts.tsv", stage_rows, stage_fields)
+
+    stage_summary_fields = ["task", "n", "complete_core"]
+    for field in [
+        "raw_source_only_effect",
+        "raw_da_loss_value_effect",
+        "raw_da_grad_effect",
+        "raw_da_only_effect",
+        "raw_source_da_effect",
+        "raw_da_after_source_effect",
+        "raw_source_after_da_effect",
+        "reshaper_source_effect",
+        "raw_da_after_reshaper_effect",
+        "reshaper_plus_raw_da_total_effect",
+    ]:
+        stage_summary_fields.extend([f"{field}_mean", f"{field}_std", f"{field}_pos"])
+    write_tsv(
+        root / "stage_timing_summary.tsv",
+        summarize_stage_rows(stage_rows),
+        stage_summary_fields,
+    )
+
+    overall_fields = ["scope", "n"]
+    for field in [
+        "raw_source_only_effect",
+        "raw_da_loss_value_effect",
+        "raw_da_grad_effect",
+        "raw_da_only_effect",
+        "raw_source_da_effect",
+        "raw_da_after_source_effect",
+        "raw_source_after_da_effect",
+        "reshaper_source_effect",
+        "raw_da_after_reshaper_effect",
+        "reshaper_plus_raw_da_total_effect",
+    ]:
+        overall_fields.extend([f"{field}_mean", f"{field}_std", f"{field}_pos"])
+    write_tsv(root / "stage_timing_overall.tsv", summarize_overall(stage_rows), overall_fields)
+
+    print("Wrote:", root / "summary.tsv")
+    print("Wrote:", root / "config_summary.tsv")
+    print("Wrote:", root / "stage_timing_contrasts.tsv")
+    print("Wrote:", root / "stage_timing_summary.tsv")
+    print("Wrote:", root / "stage_timing_overall.tsv")
+
+
+if __name__ == "__main__":
+    main()

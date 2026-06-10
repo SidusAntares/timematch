@@ -53,6 +53,107 @@ def _check_temporal_index_range(model, positions, applied_shift, tag):
         )
 
 
+def _resolve_timematch_structure_feature_target(config, source_feature_reshaper):
+    target = str(getattr(config, "source_structure_feature_target", "auto")).lower()
+    if target == "auto":
+        # Preserve legacy TimeMatch behavior: when a reshaper exists, structure
+        # defaults to reshaped source features; without a reshaper, compactness
+        # must be requested explicitly via source_structure_feature_target=raw.
+        return "reshaped" if source_feature_reshaper is not None else "none"
+    if source_feature_reshaper is None and target in {"reshaped", "both"}:
+        return "raw"
+    return target
+
+
+def _compute_timematch_structure_loss_on_features(
+    feats,
+    positions,
+    targets,
+    config,
+    phase_weight_tracker,
+    anchor_feats,
+    detach_features=False,
+):
+    structure_feats = feats.detach() if detach_features else feats
+    structure_anchor = anchor_feats.detach() if detach_features else anchor_feats
+    return compute_source_structure_loss(
+        structure_feats,
+        positions,
+        targets,
+        weight_tracker=phase_weight_tracker,
+        version=getattr(config, "source_structure_loss_version", "compactness"),
+        intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
+        amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
+        interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
+        shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
+        trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
+        season_trade_off=getattr(config, "source_structure_season_trade_off", 0.02),
+        segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
+        boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
+        boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
+        anchor_spatial_feats=structure_anchor,
+        anchor_positions=positions,
+    )
+
+
+def _compute_timematch_structure_loss(
+    spatial_feats_raw,
+    spatial_feats,
+    positions,
+    targets,
+    config,
+    phase_weight_tracker,
+    source_feature_reshaper,
+):
+    structure_target = _resolve_timematch_structure_feature_target(config, source_feature_reshaper)
+    detach_features = bool(getattr(config, "source_structure_detach_features", False))
+    compact_raw_loss = spatial_feats_raw.sum() * 0.0
+    compact_reshaped_loss = spatial_feats_raw.sum() * 0.0
+    raw_logs = {}
+    reshaped_logs = {}
+
+    if structure_target in {"raw", "both"}:
+        compact_raw_loss, raw_logs = _compute_timematch_structure_loss_on_features(
+            spatial_feats_raw,
+            positions,
+            targets,
+            config,
+            phase_weight_tracker,
+            anchor_feats=spatial_feats_raw.detach(),
+            detach_features=detach_features,
+        )
+    if structure_target in {"reshaped", "both"} and source_feature_reshaper is not None:
+        compact_reshaped_loss, reshaped_logs = _compute_timematch_structure_loss_on_features(
+            spatial_feats,
+            positions,
+            targets,
+            config,
+            phase_weight_tracker,
+            anchor_feats=spatial_feats_raw.detach(),
+            detach_features=detach_features,
+        )
+
+    compact_loss = compact_raw_loss + compact_reshaped_loss
+    compact_logs = {
+        "compactness_loss": float(raw_logs.get("compactness_loss", 0.0))
+        + float(reshaped_logs.get("compactness_loss", 0.0)),
+        "compactness_raw_loss": float(raw_logs.get("compactness_loss", 0.0)),
+        "compactness_reshaped_loss": float(reshaped_logs.get("compactness_loss", 0.0)),
+        "source_structure_detached": float(detach_features),
+        "source_structure_target_raw": float(structure_target in {"raw", "both"}),
+        "source_structure_target_reshaped": float(
+            structure_target in {"reshaped", "both"} and source_feature_reshaper is not None
+        ),
+    }
+    for key, value in raw_logs.items():
+        if key != "compactness_loss":
+            compact_logs[f"raw_{key}"] = value
+    for key, value in reshaped_logs.items():
+        if key != "compactness_loss":
+            compact_logs[f"reshaped_{key}"] = value
+    return compact_loss, compact_logs
+
+
 def train_timematch(student, config, writer, val_loader, device, best_model_path, fold_num, splits):
     assert not getattr(config, "with_shift_aug", False), (
         "TimeMatch with source phase compactness / v2.3 phase-aware partition must not enable "
@@ -151,6 +252,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
     for epoch in range(config.epochs):
         progress_bar = tqdm(range(steps_per_epoch), desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}")
         loss_meter = AverageMeter()
+        compact_loss_meter = AverageMeter()
+        compact_raw_loss_meter = AverageMeter()
+        compact_reshaped_loss_meter = AverageMeter()
 
         if config.estimate_shift:
             estimated_class_distr = estimate_class_distribution(all_pseudo_labels, config.num_classes)
@@ -206,6 +310,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 )
                 logits_source_raw = student.decoder(temporal_feats_source_raw)
                 logits_source = logits_source_raw
+                spatial_feats_source = spatial_feats_source_raw
                 if source_feature_reshaper is not None:
                     spatial_feats_source = source_feature_reshaper(
                         spatial_feats_source_raw.detach(),
@@ -215,24 +320,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
                         spatial_feats_source_raw.detach(),
                         spatial_feats_source,
-                    )
-                    compact_loss, compact_logs = compute_source_structure_loss(
-                        spatial_feats_source,
-                        position_s,
-                        source_labels,
-                        weight_tracker=phase_weight_tracker,
-                        version=getattr(config, "source_structure_loss_version", "compactness"),
-                        intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
-                        amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
-                        interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
-                        shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
-                        trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
-                        season_trade_off=getattr(config, "source_structure_season_trade_off", 0.02),
-                        segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
-                        boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
-                        boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
-                        anchor_spatial_feats=spatial_feats_source_raw.detach(),
-                        anchor_positions=position_s,
                     )
                     temporal_feats_source = student.temporal_encoder(
                         spatial_feats_source.detach(),
@@ -247,6 +334,15 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                             raw_temporal_feats=temporal_feats_source_raw,
                             reshaped_temporal_feats=temporal_feats_source,
                         )
+                compact_loss, compact_logs = _compute_timematch_structure_loss(
+                    spatial_feats_source_raw,
+                    spatial_feats_source,
+                    position_s,
+                    source_labels,
+                    config,
+                    phase_weight_tracker,
+                    source_feature_reshaper,
+                )
                 if target_update_count >= 2:  # at least 2 examples required for BN
                     _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
                     logits_target = student.forward(pixels_t[pseudo_mask], mask_t[pseudo_mask], position_t[pseudo_mask], extra_t[pseudo_mask])
@@ -271,24 +367,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         spatial_feats_source_raw.detach(),
                         spatial_feats_source,
                     )
-                    compact_loss, compact_logs = compute_source_structure_loss(
-                        spatial_feats_source,
-                        position_s,
-                        source_labels,
-                        weight_tracker=phase_weight_tracker,
-                        version=getattr(config, "source_structure_loss_version", "compactness"),
-                        intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
-                        amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
-                        interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
-                        shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
-                        trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
-                        season_trade_off=getattr(config, "source_structure_season_trade_off", 0.02),
-                        segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
-                        boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
-                        boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
-                        anchor_spatial_feats=spatial_feats_source_raw.detach(),
-                        anchor_positions=position_s,
-                    )
                     temporal_feats_source = student.temporal_encoder(
                         spatial_feats_source.detach(),
                         position_s + source_to_target_shift,
@@ -302,6 +380,15 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                             raw_temporal_feats=temporal_feats_source_raw,
                             reshaped_temporal_feats=temporal_feats_source,
                         )
+                compact_loss, compact_logs = _compute_timematch_structure_loss(
+                    spatial_feats_source_raw,
+                    spatial_feats_source,
+                    position_s,
+                    source_labels,
+                    config,
+                    phase_weight_tracker,
+                    source_feature_reshaper,
+                )
 
                 if target_update_count > 0:
                     _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
@@ -324,8 +411,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
             loss = loss_source + config.trade_off * loss_target
+            loss = loss + compact_loss
             if source_feature_reshaper is not None:
-                loss = loss + compact_loss + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
+                loss = loss + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
 
             # compute loss and backprop
             optimizer.zero_grad()
@@ -337,7 +425,10 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
             # Metrics
             loss_meter.update(loss.item())
-            progress_bar.set_postfix(loss=f"{loss_meter.avg:.3f}")
+            compact_loss_meter.update(float(compact_logs.get("compactness_loss", 0.0)))
+            compact_raw_loss_meter.update(float(compact_logs.get("compactness_raw_loss", 0.0)))
+            compact_reshaped_loss_meter.update(float(compact_logs.get("compactness_reshaped_loss", 0.0)))
+            progress_bar.set_postfix(loss=f"{loss_meter.avg:.3f}", compact=f"{compact_loss_meter.avg:.3f}")
             all_labels.extend(sample_target_weak['label'].tolist())
             all_pseudo_labels.extend(pseudo_targets.tolist())
             all_pseudo_mask.extend(pseudo_mask.tolist())
@@ -346,25 +437,25 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 writer.add_scalar("train/loss", loss_meter.val, global_step)
                 writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
                 writer.add_scalar("train/target_updates", target_update_count, global_step)
+                writer.add_scalar(
+                    "train/source_phase_compactness_loss",
+                    float(compact_logs.get("compactness_loss", 0.0)),
+                    global_step,
+                )
+                writer.add_scalar(
+                    "train/source_structure_loss",
+                    float(compact_logs.get("structure_loss", compact_logs.get("compactness_loss", 0.0))),
+                    global_step,
+                )
+                writer.add_scalar(
+                    "train/source_cls_loss_raw",
+                    float(loss_source_raw.detach().item()),
+                    global_step,
+                )
                 if source_feature_reshaper is not None:
                     writer.add_scalar(
                         "train/source_feature_reshaper_reg_loss",
                         float(reshaper_logs.get("source_reshaper_reg_loss", 0.0)),
-                        global_step,
-                    )
-                    writer.add_scalar(
-                        "train/source_phase_compactness_loss",
-                        float(compact_logs.get("compactness_loss", 0.0)),
-                        global_step,
-                    )
-                    writer.add_scalar(
-                        "train/source_structure_loss",
-                        float(compact_logs.get("structure_loss", compact_logs.get("compactness_loss", 0.0))),
-                        global_step,
-                    )
-                    writer.add_scalar(
-                        "train/source_cls_loss_raw",
-                        float(loss_source_raw.detach().item()),
                         global_step,
                     )
                     writer.add_scalar(
@@ -397,6 +488,18 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         print(f"Teacher pseudo label F1 {conf_pseudo_f1:.3f} (n={pseudo_count})")
         writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
         writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
+        print(
+            "TIMEMATCH_EPOCH_SUMMARY|"
+            f"epoch={epoch + 1}|"
+            f"loss={loss_meter.avg:.6f}|"
+            f"compact={compact_loss_meter.avg:.6f}|"
+            f"compact_raw={compact_raw_loss_meter.avg:.6f}|"
+            f"compact_reshaped={compact_reshaped_loss_meter.avg:.6f}|"
+            f"target={_resolve_timematch_structure_feature_target(config, source_feature_reshaper)}|"
+            f"detached={bool(getattr(config, 'source_structure_detach_features', False))}|"
+            f"reshaper_enabled={source_feature_reshaper is not None}|"
+            f"target_updates={int(pseudo_count)}"
+        )
 
         writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
         writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
