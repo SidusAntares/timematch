@@ -154,6 +154,60 @@ def _compute_timematch_structure_loss(
     return compact_loss, compact_logs
 
 
+def _safe_macro_f1(labels, preds):
+    if len(labels) == 0:
+        return 0.0
+    return sklearn.metrics.f1_score(labels, preds, average="macro", zero_division=0)
+
+
+def _pseudo_label_stats(labels, preds, confs, mask, num_classes):
+    labels = np.asarray(labels)
+    preds = np.asarray(preds)
+    confs = np.asarray(confs, dtype=np.float64)
+    mask = np.asarray(mask, dtype=bool)
+    total = int(labels.shape[0])
+    masked_count = int(mask.sum())
+    stats = {
+        "total": total,
+        "masked_count": masked_count,
+        "coverage": masked_count / max(total, 1),
+        "all_f1": _safe_macro_f1(labels, preds),
+        "all_acc": float((labels == preds).mean()) if total > 0 else 0.0,
+        "mean_conf": float(confs.mean()) if total > 0 else 0.0,
+        "masked_f1": 0.0,
+        "masked_acc": 0.0,
+        "masked_mean_conf": 0.0,
+    }
+    if masked_count > 0:
+        stats["masked_f1"] = _safe_macro_f1(labels[mask], preds[mask])
+        stats["masked_acc"] = float((labels[mask] == preds[mask]).mean())
+        stats["masked_mean_conf"] = float(confs[mask].mean())
+    pred_counts = np.bincount(preds, minlength=num_classes).astype(np.float64)
+    pred_probs = pred_counts / max(pred_counts.sum(), 1.0)
+    pred_entropy = -np.sum(pred_probs * np.log(pred_probs + 1e-12))
+    stats["pred_entropy"] = float(pred_entropy)
+    return stats
+
+
+def _print_pseudo_summary(stage, epoch, shift, stats):
+    print(
+        "TIMEMATCH_PSEUDO_SUMMARY|"
+        f"stage={stage}|"
+        f"epoch={epoch}|"
+        f"shift={shift}|"
+        f"total={stats['total']}|"
+        f"masked_count={stats['masked_count']}|"
+        f"coverage={stats['coverage']:.6f}|"
+        f"all_f1={stats['all_f1']:.6f}|"
+        f"all_acc={stats['all_acc']:.6f}|"
+        f"masked_f1={stats['masked_f1']:.6f}|"
+        f"masked_acc={stats['masked_acc']:.6f}|"
+        f"mean_conf={stats['mean_conf']:.6f}|"
+        f"masked_mean_conf={stats['masked_mean_conf']:.6f}|"
+        f"pred_entropy={stats['pred_entropy']:.6f}"
+    )
+
+
 def train_timematch(student, config, writer, val_loader, device, best_model_path, fold_num, splits):
     assert not getattr(config, "with_shift_aug", False), (
         "TimeMatch with source phase compactness / v2.3 phase-aware partition must not enable "
@@ -247,6 +301,19 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         # Use estimated shift to get initial pseudo labels
         pseudo_softmaxes = get_pseudo_labels(teacher, target_loader_no_aug, device, target_to_source_shift, n=None)
         all_pseudo_labels = torch.max(pseudo_softmaxes, dim=1)[1]
+    else:
+        pseudo_softmaxes = get_pseudo_labels(teacher, target_loader_no_aug, device, target_to_source_shift, n=None)
+        all_pseudo_labels = torch.max(pseudo_softmaxes, dim=1)[1]
+
+    pseudo_conf, pseudo_preds = torch.max(pseudo_softmaxes, dim=1)
+    initial_pseudo_stats = _pseudo_label_stats(
+        target_labels,
+        pseudo_preds.cpu().numpy(),
+        pseudo_conf.cpu().numpy(),
+        pseudo_conf.cpu().numpy() > config.pseudo_threshold,
+        config.num_classes,
+    )
+    _print_pseudo_summary("initial", 0, target_to_source_shift, initial_pseudo_stats)
 
     source_to_target_shift = 0
     for epoch in range(config.epochs):
@@ -276,7 +343,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         if source_feature_reshaper is not None:
             source_feature_reshaper.train()
 
-        all_labels, all_pseudo_labels, all_pseudo_mask = [], [], []
+        all_labels, all_pseudo_labels, all_pseudo_conf, all_pseudo_mask = [], [], [], []
         for step in progress_bar:
             sample_source, (sample_target_weak, sample_target_strong) = next(source_iter), next(target_iter)
 
@@ -430,8 +497,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             compact_reshaped_loss_meter.update(float(compact_logs.get("compactness_reshaped_loss", 0.0)))
             progress_bar.set_postfix(loss=f"{loss_meter.avg:.3f}", compact=f"{compact_loss_meter.avg:.3f}")
             all_labels.extend(sample_target_weak['label'].tolist())
-            all_pseudo_labels.extend(pseudo_targets.tolist())
-            all_pseudo_mask.extend(pseudo_mask.tolist())
+            all_pseudo_labels.extend(pseudo_targets.detach().cpu().tolist())
+            all_pseudo_conf.extend(pseudo_conf.detach().cpu().tolist())
+            all_pseudo_mask.extend(pseudo_mask.detach().cpu().tolist())
 
             if step % config.log_step == 0:
                 writer.add_scalar("train/loss", loss_meter.val, global_step)
@@ -482,15 +550,28 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         progress_bar.close()
 
         # Evaluate pseudo labels
-        all_labels, all_pseudo_labels, all_pseudo_mask = np.array(all_labels), np.array(all_pseudo_labels), np.array(all_pseudo_mask)
-        pseudo_count = all_pseudo_mask.sum()
-        conf_pseudo_f1 = sklearn.metrics.f1_score(all_labels[all_pseudo_mask], all_pseudo_labels[all_pseudo_mask], average='macro', zero_division=0)
+        pseudo_stats = _pseudo_label_stats(
+            all_labels,
+            all_pseudo_labels,
+            all_pseudo_conf,
+            all_pseudo_mask,
+            config.num_classes,
+        )
+        pseudo_count = pseudo_stats["masked_count"]
+        conf_pseudo_f1 = pseudo_stats["masked_f1"]
         print(f"Teacher pseudo label F1 {conf_pseudo_f1:.3f} (n={pseudo_count})")
+        _print_pseudo_summary("train_epoch", epoch + 1, target_to_source_shift, pseudo_stats)
         writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
         writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
+        writer.add_scalar("train/pseudo_all_f1", pseudo_stats["all_f1"], epoch)
+        writer.add_scalar("train/pseudo_all_acc", pseudo_stats["all_acc"], epoch)
+        writer.add_scalar("train/pseudo_coverage", pseudo_stats["coverage"], epoch)
+        writer.add_scalar("train/pseudo_masked_acc", pseudo_stats["masked_acc"], epoch)
+        writer.add_scalar("train/pseudo_mean_conf", pseudo_stats["mean_conf"], epoch)
         print(
             "TIMEMATCH_EPOCH_SUMMARY|"
             f"epoch={epoch + 1}|"
+            f"shift={target_to_source_shift}|"
             f"loss={loss_meter.avg:.6f}|"
             f"compact={compact_loss_meter.avg:.6f}|"
             f"compact_raw={compact_raw_loss_meter.avg:.6f}|"
@@ -498,11 +579,14 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             f"target={_resolve_timematch_structure_feature_target(config, source_feature_reshaper)}|"
             f"detached={bool(getattr(config, 'source_structure_detach_features', False))}|"
             f"reshaper_enabled={source_feature_reshaper is not None}|"
-            f"target_updates={int(pseudo_count)}"
+            f"target_updates={int(pseudo_count)}|"
+            f"pseudo_coverage={pseudo_stats['coverage']:.6f}|"
+            f"pseudo_all_f1={pseudo_stats['all_f1']:.6f}|"
+            f"pseudo_all_acc={pseudo_stats['all_acc']:.6f}|"
+            f"pseudo_masked_f1={pseudo_stats['masked_f1']:.6f}|"
+            f"pseudo_masked_acc={pseudo_stats['masked_acc']:.6f}|"
+            f"pseudo_mean_conf={pseudo_stats['mean_conf']:.6f}"
         )
-
-        writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
-        writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
 
         if config.run_validation:
             if config.output_student:
