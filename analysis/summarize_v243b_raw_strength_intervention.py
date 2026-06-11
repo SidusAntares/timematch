@@ -302,10 +302,60 @@ def main():
         + [item for field in summary_fields for item in (f"{field}_mean", f"{field}_std", f"{field}_pos")],
     )
 
+    curve_fields = [
+        "delta_da_f1",
+        "delta_source_on_target_f1",
+        "delta_da_gain",
+        "delta_initial_all_f1",
+        "delta_initial_masked_f1",
+        "delta_initial_coverage",
+        "delta_initial_mean_conf",
+        "delta_last_all_f1",
+        "delta_last_masked_f1",
+        "delta_last_coverage",
+        "delta_last_mean_conf",
+        "delta_best_epoch_all_f1",
+        "delta_best_epoch_masked_f1",
+        "delta_best_epoch_coverage",
+    ]
+    write_tsv(
+        root / "strength_effect_curve.tsv",
+        summarize(deltas, ["task", "compact_weight", "config"], curve_fields),
+        ["task", "compact_weight", "config", "n"]
+        + [item for field in curve_fields for item in (f"{field}_mean", f"{field}_std", f"{field}_pos")],
+    )
+
+    pseudo_fields = [
+        "task",
+        "seed",
+        "config",
+        "compact_weight",
+        "delta_da_f1",
+        "delta_source_on_target_f1",
+        "delta_da_gain",
+        "delta_initial_all_f1",
+        "delta_initial_masked_f1",
+        "delta_initial_coverage",
+        "delta_initial_mean_conf",
+        "delta_epoch1_all_f1",
+        "delta_epoch1_masked_f1",
+        "delta_epoch1_coverage",
+        "delta_last_all_f1",
+        "delta_last_masked_f1",
+        "delta_last_coverage",
+        "delta_last_mean_conf",
+        "delta_best_epoch_all_f1",
+        "delta_best_epoch_masked_f1",
+        "delta_best_epoch_coverage",
+    ]
+    write_tsv(root / "pseudolabel_divergence.tsv", deltas, pseudo_fields)
+
     print("Wrote:", root / "raw_strength_rows.tsv")
     print("Wrote:", root / "raw_strength_delta_vs_plain.tsv")
     print("Wrote:", root / "raw_strength_summary_by_task.tsv")
     print("Wrote:", root / "raw_strength_summary_overall.tsv")
+    print("Wrote:", root / "strength_effect_curve.tsv")
+    print("Wrote:", root / "pseudolabel_divergence.tsv")
 
 
 if __name__ == "__main__":
