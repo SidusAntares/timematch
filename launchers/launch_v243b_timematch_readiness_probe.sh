@@ -8,10 +8,14 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 RUN_TAG="${RUN_TAG:-v243b_timematch_readiness}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs/${RUN_TAG}_$(date +%Y%m%d_%H%M%S)}"
 GPUS="${GPUS:-0 1 2 3}"
-TASKS="${TASKS:-FR2_to_FR1,DK1_to_FR1}"
-SEEDS="${SEEDS:-1 2 3}"
-CONFIGS="${CONFIGS:-plain,raw_global_w1_source_only}"
+TASKS="${TASKS:-FR2_to_FR1,DK1_to_FR1,FR2_to_DK1,FR1_to_AT1,AT1_to_DK1,FR2_to_AT1}"
+SEEDS="${SEEDS:-1 2 3 4 5}"
+BASE_CONFIG="${BASE_CONFIG:-plain}"
+SHAPED_CONFIG="${SHAPED_CONFIG:-raw_global_w1_source_only}"
+CONFIGS="${CONFIGS:-${BASE_CONFIG},${SHAPED_CONFIG}}"
 SOURCE_TAG_PREFIX="${SOURCE_TAG_PREFIX:-v243b_stage}"
+CHECKPOINT_ONLY="${CHECKPOINT_ONLY:-False}"
+FAIL_ON_MISSING="${FAIL_ON_MISSING:-False}"
 
 DATA_ROOT="${DATA_ROOT:-/data/user/DBL/timematch_data}"
 OUTPUTS_ROOT="${OUTPUTS_ROOT:-outputs}"
@@ -28,7 +32,9 @@ if [ "${#GPU_IDS[@]}" -eq 0 ]; then
 fi
 
 JOBS="$LOG_DIR/jobs.tsv"
+CHECKPOINT_STATUS="$LOG_DIR/checkpoint_status.tsv"
 : > "$JOBS"
+printf "task\tseed\tconfig\tsource_model\tcheckpoint\tstatus\n" > "$CHECKPOINT_STATUS"
 
 task_spec() {
   case "$1" in
@@ -83,6 +89,8 @@ timematch_model_name() {
 
 IFS=',' read -r -a TASK_NAMES <<< "$TASKS"
 IFS=',' read -r -a CONFIG_NAMES <<< "$CONFIGS"
+missing_count=0
+runnable_count=0
 for seed in $SEEDS; do
   for task in "${TASK_NAMES[@]}"; do
     task="$(echo "$task" | xargs)"
@@ -90,11 +98,38 @@ for seed in $SEEDS; do
     read -r source_dataset target_dataset est_weight <<< "$spec"
     for config in "${CONFIG_NAMES[@]}"; do
       config="$(echo "$config" | xargs)"
-      printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
-        "$task" "$source_dataset" "$target_dataset" "$seed" "$config" "$est_weight" >> "$JOBS"
+      source_model="$(source_model_name "$source_dataset" "$task" "$seed" "$config")"
+      source_model_dir="$(output_model_dir "$source_model")"
+      checkpoint="$source_model_dir/fold_0/model.pt"
+      if [ -f "$checkpoint" ]; then
+        printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
+          "$task" "$source_dataset" "$target_dataset" "$seed" "$config" "$est_weight" >> "$JOBS"
+        printf "%s\t%s\t%s\t%s\t%s\tfound\n" \
+          "$task" "$seed" "$config" "$source_model" "$checkpoint" >> "$CHECKPOINT_STATUS"
+        runnable_count=$((runnable_count + 1))
+      else
+        printf "%s\t%s\t%s\t%s\t%s\tmissing\n" \
+          "$task" "$seed" "$config" "$source_model" "$checkpoint" >> "$CHECKPOINT_STATUS"
+        missing_count=$((missing_count + 1))
+      fi
     done
   done
 done
+
+if [ "$runnable_count" -eq 0 ]; then
+  echo "ERROR: no runnable jobs; all requested source checkpoints are missing. See $CHECKPOINT_STATUS" >&2
+  exit 2
+fi
+
+case "$(echo "$CHECKPOINT_ONLY" | tr '[:upper:]' '[:lower:]')" in
+  1|true|yes|y|on)
+    echo "CHECKPOINT_ONLY=True"
+    echo "Runnable jobs: $runnable_count"
+    echo "Missing checkpoints: $missing_count"
+    echo "Checkpoint status: $CHECKPOINT_STATUS"
+    exit 0
+    ;;
+esac
 
 for gpu in "${GPU_IDS[@]}"; do
   : > "$LOG_DIR/queue_gpu${gpu}.tsv"
@@ -124,11 +159,6 @@ run_worker() {
 
     local source_model_dir
     source_model_dir="$(output_model_dir "$source_model")"
-    if [ ! -f "$source_model_dir/fold_0/model.pt" ]; then
-      echo "MISS|gpu=$gpu|task=$task|seed=$seed|config=$config|source=$source_model" | tee "$log_file"
-      worker_failed=1
-      continue
-    fi
 
     echo "START|gpu=$gpu|task=$task|seed=$seed|config=$config|source=$source_model|timematch=$timematch_model|log=$log_file"
     (
@@ -185,9 +215,14 @@ echo "LOG_DIR=$LOG_DIR"
 echo "TASKS=$TASKS"
 echo "SEEDS=$SEEDS"
 echo "CONFIGS=$CONFIGS"
+echo "BASE_CONFIG=$BASE_CONFIG"
+echo "SHAPED_CONFIG=$SHAPED_CONFIG"
 echo "SOURCE_TAG_PREFIX=$SOURCE_TAG_PREFIX"
 echo "TIMEMATCH_EPOCHS=$TIMEMATCH_EPOCHS"
 echo "STEPS_PER_EPOCH=$STEPS_PER_EPOCH"
+echo "RUNNABLE_JOBS=$runnable_count"
+echo "MISSING_CHECKPOINTS=$missing_count"
+echo "CHECKPOINT_STATUS=$CHECKPOINT_STATUS"
 
 pids=()
 failed=0
@@ -203,7 +238,14 @@ for pid in "${pids[@]}"; do
 done
 
 python "$ROOT_DIR/analysis/summarize_v243b_timematch_readiness.py" \
-  "$LOG_DIR" plain raw_global_w1_source_only || failed=1
+  "$LOG_DIR" "$BASE_CONFIG" "$SHAPED_CONFIG" || failed=1
+
+if [ "$missing_count" -gt 0 ]; then
+  echo "WARNING: $missing_count requested source checkpoints were missing. See $CHECKPOINT_STATUS"
+  case "$(echo "$FAIL_ON_MISSING" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|y|on) failed=1 ;;
+  esac
+fi
 
 echo "Logs saved to: $LOG_DIR"
 exit "$failed"
