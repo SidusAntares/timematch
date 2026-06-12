@@ -393,6 +393,12 @@ if __name__ == '__main__':
     parser.add_argument('--with_extra', default=False, type=bool_flag, help='whether to input extra geometric features to the PSE')
     parser.add_argument('--tensorboard_log_dir', default='runs')
     parser.add_argument('--train_on_target', default=False, action='store_true', help='supervised training on target for upper bound comparison')
+    parser.add_argument(
+        '--source_checkpoint_epochs',
+        default='',
+        type=str,
+        help='comma-separated source-training epochs to save as diagnostic checkpoints, or all; empty disables',
+    )
 
     parser.add_argument('--with_shift_aug', default=False, type=bool_flag, help='whether to apply random temporal shift augmentation')
     parser.add_argument('--shift_aug_p', default=1.0, type=float, help='probability to apply temporal shift augmentation')

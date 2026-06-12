@@ -1,4 +1,5 @@
 import torch
+import os
 from torchvision import transforms
 from tqdm import tqdm
 
@@ -39,6 +40,65 @@ def _parse_grad_diag_steps(value):
         if item:
             steps.add(int(item))
     return steps
+
+
+def _parse_source_checkpoint_epochs(value):
+    if value is None:
+        return None, set()
+    text = str(value).strip().lower()
+    if not text:
+        return None, set()
+    if text in {"all", "*"}:
+        return "all", set()
+    epochs = set()
+    for item in text.replace(";", ",").replace(" ", ",").split(","):
+        item = item.strip()
+        if item:
+            epochs.add(int(item))
+    return "selected", epochs
+
+
+def _save_source_epoch_checkpoint(
+    model,
+    source_feature_reshaper,
+    config,
+    epoch,
+    best_f1,
+):
+    mode, epochs = _parse_source_checkpoint_epochs(
+        getattr(config, "source_checkpoint_epochs", "")
+    )
+    epoch_1based = epoch + 1
+    if mode is None:
+        return
+    if mode == "selected" and epoch_1based not in epochs:
+        return
+
+    checkpoint_dir = os.path.join(config.fold_dir, "source_epoch_checkpoints")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint_path = os.path.join(checkpoint_dir, f"epoch_{epoch_1based:03d}.pt")
+    checkpoint = {
+        "epoch": epoch,
+        "state_dict": model.state_dict(),
+        "best_f1": best_f1,
+        "source_epoch_checkpoint": epoch_1based,
+    }
+    if source_feature_reshaper is not None:
+        checkpoint["source_feature_reshaper_state_dict"] = source_feature_reshaper.state_dict()
+    torch.save(checkpoint, checkpoint_path)
+
+    manifest_path = os.path.join(checkpoint_dir, "manifest.tsv")
+    if not os.path.exists(manifest_path):
+        with open(manifest_path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("epoch\tcheckpoint\tbest_f1\n")
+    with open(manifest_path, "a", encoding="utf-8", newline="\n") as handle:
+        handle.write(f"{epoch_1based}\t{checkpoint_path}\t{best_f1:.6f}\n")
+    print(
+        "SOURCE_CHECKPOINT|"
+        f"epoch={epoch_1based}|"
+        f"path={checkpoint_path}|"
+        f"best_f1={best_f1:.6f}"
+    )
 
 
 def _named_trainable_params(module):
@@ -536,4 +596,11 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             writer,
             source_feature_reshaper=source_feature_reshaper,
             apply_source_feature_reshaper=False,
+        )
+        _save_source_epoch_checkpoint(
+            model,
+            source_feature_reshaper,
+            config,
+            epoch,
+            best_f1,
         )
