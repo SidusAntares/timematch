@@ -5,14 +5,23 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-RUN_TAG="${RUN_TAG:-v243b_readiness_checkpoint_causal}"
-LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs/${RUN_TAG}_$(date +%Y%m%d_%H%M%S)}"
 GPUS="${GPUS:-0 1 2 3}"
 TASKS="${TASKS:-FR2_to_FR1,AT1_to_FR2}"
 SEEDS="${SEEDS:-1 2 3}"
 CHECKPOINT_EPOCHS="${CHECKPOINT_EPOCHS:-1,3,5,10,20,35,50}"
 DRY_RUN="${DRY_RUN:-False}"
 REUSE_SOURCE_CHECKPOINTS="${REUSE_SOURCE_CHECKPOINTS:-False}"
+RUN_TAG="${RUN_TAG:-v243b_readiness_checkpoint_causal_$(date +%Y%m%d_%H%M%S)}"
+
+case "$(echo "$DRY_RUN" | tr '[:upper:]' '[:lower:]')" in
+  1|true|yes|y|on)
+    DEFAULT_LOG_DIR="${TMPDIR:-/tmp}/${RUN_TAG}_dryrun"
+    ;;
+  *)
+    DEFAULT_LOG_DIR="$ROOT_DIR/logs/$RUN_TAG"
+    ;;
+esac
+LOG_DIR="${LOG_DIR:-$DEFAULT_LOG_DIR}"
 
 DATA_ROOT="${DATA_ROOT:-/data/user/DBL/timematch_data}"
 OUTPUTS_ROOT="${OUTPUTS_ROOT:-outputs}"
@@ -275,6 +284,7 @@ run_worker() {
 
 echo "RUN_TAG=$RUN_TAG"
 echo "LOG_DIR=$LOG_DIR"
+echo "OUTPUTS_ROOT=$OUTPUTS_ROOT"
 echo "TASKS=$TASKS"
 echo "SEEDS=$SEEDS"
 echo "CONFIGS=$CONFIGS"

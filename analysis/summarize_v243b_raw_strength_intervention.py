@@ -63,6 +63,42 @@ def stdev(items):
     return None if len(items) < 2 else stats.stdev(items)
 
 
+def rank_values(values):
+    indexed = [(idx, value) for idx, value in enumerate(values) if value is not None]
+    ranks = [None] * len(values)
+    if len(indexed) < 2:
+        return ranks
+    indexed.sort(key=lambda item: item[1])
+    pos = 0
+    while pos < len(indexed):
+        end = pos + 1
+        while end < len(indexed) and indexed[end][1] == indexed[pos][1]:
+            end += 1
+        avg_rank = (pos + 1 + end) / 2.0
+        for idx, _ in indexed[pos:end]:
+            ranks[idx] = avg_rank
+        pos = end
+    return ranks
+
+
+def pearson(xs, ys):
+    pairs = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None]
+    if len(pairs) < 2:
+        return None
+    mean_x = sum(x for x, _ in pairs) / len(pairs)
+    mean_y = sum(y for _, y in pairs) / len(pairs)
+    var_x = sum((x - mean_x) ** 2 for x, _ in pairs)
+    var_y = sum((y - mean_y) ** 2 for _, y in pairs)
+    if var_x <= 0.0 or var_y <= 0.0:
+        return None
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in pairs)
+    return cov / (var_x * var_y) ** 0.5
+
+
+def spearman(xs, ys):
+    return pearson(rank_values(xs), rank_values(ys))
+
+
 def delta(left, right):
     if left is None or right is None:
         return None
@@ -225,6 +261,66 @@ def summarize(rows, group_fields, value_fields):
     return out_rows
 
 
+def build_dose_response(rows):
+    ok_rows = [
+        row for row in rows
+        if row["status"] == "ok" and row.get("compact_weight") is not None
+    ]
+    by_task_weight = {}
+    for row in ok_rows:
+        key = (row["task"], row["compact_weight"])
+        by_task_weight.setdefault(key, []).append(row)
+
+    metric_fields = [
+        "source_compact_loss",
+        "source_on_target_f1",
+        "da_f1",
+        "da_gain",
+        "initial_all_f1",
+        "initial_masked_f1",
+        "initial_coverage",
+        "epoch1_all_f1",
+        "epoch1_masked_f1",
+        "epoch1_coverage",
+        "last_all_f1",
+        "last_masked_f1",
+        "last_coverage",
+        "best_epoch_all_f1",
+        "best_epoch_masked_f1",
+    ]
+    curves = []
+    for (task, weight), group in sorted(by_task_weight.items()):
+        item = {"task": task, "compact_weight": weight, "n": len(group)}
+        for field in metric_fields:
+            item[f"{field}_mean"] = mean([row.get(field) for row in group])
+            item[f"{field}_std"] = stdev([row.get(field) for row in group])
+        curves.append(item)
+
+    response_rows = []
+    grouped = {}
+    for row in curves:
+        grouped.setdefault(row["task"], []).append(row)
+    for task, group in sorted(grouped.items()):
+        group = sorted(group, key=lambda row: row["compact_weight"])
+        weights = [row["compact_weight"] for row in group]
+        out = {
+            "task": task,
+            "n_weights": len(group),
+            "min_weight": min(weights) if weights else None,
+            "max_weight": max(weights) if weights else None,
+        }
+        for field in metric_fields:
+            values = [row.get(f"{field}_mean") for row in group]
+            out[f"spearman_weight_{field}"] = spearman(weights, values)
+            out[f"pearson_weight_{field}"] = pearson(weights, values)
+            out[f"delta_max_minus_zero_{field}"] = (
+                delta(values[-1], values[0]) if len(values) >= 2 else None
+            )
+        response_rows.append(out)
+
+    return curves, response_rows
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit("Usage: summarize_v243b_raw_strength_intervention.py LOG_DIR")
@@ -350,12 +446,20 @@ def main():
     ]
     write_tsv(root / "pseudolabel_divergence.tsv", deltas, pseudo_fields)
 
+    dose_curves, dose_response = build_dose_response(rows)
+    dose_curve_fields = list(dose_curves[0].keys()) if dose_curves else []
+    write_tsv(root / "dose_response_curve.tsv", dose_curves, dose_curve_fields)
+    dose_response_fields = list(dose_response[0].keys()) if dose_response else []
+    write_tsv(root / "dose_response_attribution.tsv", dose_response, dose_response_fields)
+
     print("Wrote:", root / "raw_strength_rows.tsv")
     print("Wrote:", root / "raw_strength_delta_vs_plain.tsv")
     print("Wrote:", root / "raw_strength_summary_by_task.tsv")
     print("Wrote:", root / "raw_strength_summary_overall.tsv")
     print("Wrote:", root / "strength_effect_curve.tsv")
     print("Wrote:", root / "pseudolabel_divergence.tsv")
+    print("Wrote:", root / "dose_response_curve.tsv")
+    print("Wrote:", root / "dose_response_attribution.tsv")
 
 
 if __name__ == "__main__":
