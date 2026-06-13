@@ -11,6 +11,10 @@ from ideas.source_phase_compactness import (
     compute_source_structure_loss,
     describe_source_segment_partition_spec,
 )
+from ideas.source_raw_compactness import (
+    compute_source_raw_global_compactness_loss,
+    is_raw_global_compactness_version,
+)
 from ideas.source_feature_reshaper import (
     build_source_feature_reshaper,
     compute_dual_path_relation_regularization,
@@ -200,6 +204,24 @@ def _compute_source_structure_loss_on_features(
 ):
     structure_feats = feats.detach() if detach_features else feats
     structure_anchor = anchor_feats.detach() if detach_features else anchor_feats
+    if is_raw_global_compactness_version(
+        getattr(config, "source_structure_loss_version", "compactness")
+    ):
+        return compute_source_raw_global_compactness_loss(
+            structure_feats,
+            targets,
+            intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
+            compact_distance=getattr(config, "source_structure_compact_distance", "mse"),
+            norm_preserve_trade_off=getattr(
+                config, "source_structure_norm_preserve_trade_off", 0.0
+            ),
+            norm_preserve_target=getattr(
+                config, "source_structure_norm_preserve_target", "min_mean"
+            ),
+            norm_preserve_value=getattr(
+                config, "source_structure_norm_preserve_value", 1.0
+            ),
+        )
     return compute_source_structure_loss(
         structure_feats,
         positions,
