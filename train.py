@@ -652,6 +652,30 @@ if __name__ == '__main__':
         help='half-window size per side used for v2.4.3 boundary-centered local segment transition windows',
     )
     parser.add_argument(
+        '--source_structure_compact_distance',
+        default='mse',
+        choices=['mse', 'normalized_mse'],
+        help='distance used for intra compactness: mse keeps legacy Euclidean scale, normalized_mse applies MSE after L2-normalizing features',
+    )
+    parser.add_argument(
+        '--source_structure_norm_preserve_trade_off',
+        default=0.0,
+        type=float,
+        help='source-only penalty weight preserving per-sample feature norm around a detached source-batch/class mean within compactness groups',
+    )
+    parser.add_argument(
+        '--source_structure_norm_preserve_target',
+        default='min_mean',
+        choices=['min_mean', 'fixed', 'batch_mean', 'class_mean', 'detached_mean', 'none'],
+        help='source-only norm anchor: min_mean/fixed use source_structure_norm_preserve_value; batch_mean/class_mean only control within-batch norm spread',
+    )
+    parser.add_argument(
+        '--source_structure_norm_preserve_value',
+        default=1.0,
+        type=float,
+        help='fixed norm value or minimum mean norm used by source_structure_norm_preserve_target',
+    )
+    parser.add_argument(
         '--source_structure_grad_diagnostic',
         default=False,
         type=bool_flag,
@@ -726,6 +750,43 @@ if __name__ == '__main__':
     timematch.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT'])
     timematch.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
     timematch.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
+    timematch.add_argument(
+        "--timematch_trajectory_diagnostic",
+        type=bool_flag,
+        default=False,
+        help="print per-epoch target pseudo-label and feature trajectory diagnostics",
+    )
+    timematch.add_argument(
+        "--timematch_trajectory_feature_kind",
+        type=str,
+        default="final",
+        choices=["final", "raw_pooled", "both"],
+        help="feature space used by TimeMatch trajectory diagnostics",
+    )
+    timematch.add_argument(
+        "--timematch_trajectory_max_batches",
+        type=int,
+        default=64,
+        help="maximum target batches for each trajectory diagnostic pass; <=0 means all",
+    )
+    timematch.add_argument(
+        "--timematch_trajectory_every",
+        type=int,
+        default=1,
+        help="run trajectory diagnostics every N TimeMatch epochs",
+    )
+    timematch.add_argument(
+        "--timematch_trajectory_num_workers",
+        type=int,
+        default=0,
+        help="data-loader workers for trajectory diagnostics; default 0 keeps RandomSamplePixels reproducible",
+    )
+    timematch.add_argument(
+        "--timematch_trajectory_sample_seed",
+        type=int,
+        default=1729,
+        help="fixed sampling seed for trajectory diagnostics so per-epoch drift is not pixel-sampling noise",
+    )
 
     # Source-only + source phase compactness regularization
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')

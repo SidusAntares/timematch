@@ -52,11 +52,21 @@ SOURCE_STRUCTURE_SEASON_TRADE_OFF="${SOURCE_STRUCTURE_SEASON_TRADE_OFF:-0.02}"
 SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF="${SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF:-0.02}"
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF="${SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF:-0.02}"
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE="${SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE:-2}"
+SOURCE_STRUCTURE_COMPACT_DISTANCE="${SOURCE_STRUCTURE_COMPACT_DISTANCE:-mse}"
+SOURCE_STRUCTURE_NORM_PRESERVE_TRADE_OFF="${SOURCE_STRUCTURE_NORM_PRESERVE_TRADE_OFF:-0.0}"
+SOURCE_STRUCTURE_NORM_PRESERVE_TARGET="${SOURCE_STRUCTURE_NORM_PRESERVE_TARGET:-min_mean}"
+SOURCE_STRUCTURE_NORM_PRESERVE_VALUE="${SOURCE_STRUCTURE_NORM_PRESERVE_VALUE:-1.0}"
 SOURCE_STRUCTURE_GRAD_DIAGNOSTIC="${SOURCE_STRUCTURE_GRAD_DIAGNOSTIC:-False}"
 SOURCE_STRUCTURE_GRAD_DIAG_STEPS="${SOURCE_STRUCTURE_GRAD_DIAG_STEPS:-1,10,50,100,200,500}"
 SOURCE_PRETRAIN_EPOCHS="${SOURCE_PRETRAIN_EPOCHS:-100}"
 TIMEMATCH_EPOCHS="${TIMEMATCH_EPOCHS:-20}"
 TIMEMATCH_STEPS_PER_EPOCH="${TIMEMATCH_STEPS_PER_EPOCH:-500}"
+TIMEMATCH_TRAJECTORY_DIAGNOSTIC="${TIMEMATCH_TRAJECTORY_DIAGNOSTIC:-False}"
+TIMEMATCH_TRAJECTORY_FEATURE_KIND="${TIMEMATCH_TRAJECTORY_FEATURE_KIND:-final}"
+TIMEMATCH_TRAJECTORY_MAX_BATCHES="${TIMEMATCH_TRAJECTORY_MAX_BATCHES:-64}"
+TIMEMATCH_TRAJECTORY_EVERY="${TIMEMATCH_TRAJECTORY_EVERY:-1}"
+TIMEMATCH_TRAJECTORY_NUM_WORKERS="${TIMEMATCH_TRAJECTORY_NUM_WORKERS:-0}"
+TIMEMATCH_TRAJECTORY_SAMPLE_SEED="${TIMEMATCH_TRAJECTORY_SAMPLE_SEED:-1729}"
 NUM_WORKERS="${NUM_WORKERS:-8}"
 SEED="${SEED:-1}"
 
@@ -114,6 +124,10 @@ python train.py \
   --source_structure_segment_inter_trade_off "$SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF" \
   --source_structure_boundary_window_trade_off "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF" \
   --source_structure_boundary_window_size "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE" \
+  --source_structure_compact_distance "$SOURCE_STRUCTURE_COMPACT_DISTANCE" \
+  --source_structure_norm_preserve_trade_off "$SOURCE_STRUCTURE_NORM_PRESERVE_TRADE_OFF" \
+  --source_structure_norm_preserve_target "$SOURCE_STRUCTURE_NORM_PRESERVE_TARGET" \
+  --source_structure_norm_preserve_value "$SOURCE_STRUCTURE_NORM_PRESERVE_VALUE" \
   --source_structure_grad_diagnostic "$SOURCE_STRUCTURE_GRAD_DIAGNOSTIC" \
   --source_structure_grad_diag_steps "$SOURCE_STRUCTURE_GRAD_DIAG_STEPS" \
   --epochs "$SOURCE_PRETRAIN_EPOCHS" \
@@ -177,6 +191,10 @@ while IFS= read -r TARGET; do
     --source_structure_segment_inter_trade_off "$TIMEMATCH_SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF" \
     --source_structure_boundary_window_trade_off "$TIMEMATCH_SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF" \
     --source_structure_boundary_window_size "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE" \
+    --source_structure_compact_distance "$SOURCE_STRUCTURE_COMPACT_DISTANCE" \
+    --source_structure_norm_preserve_trade_off "0.0" \
+    --source_structure_norm_preserve_target "$SOURCE_STRUCTURE_NORM_PRESERVE_TARGET" \
+    --source_structure_norm_preserve_value "$SOURCE_STRUCTURE_NORM_PRESERVE_VALUE" \
     --num_workers "$NUM_WORKERS" \
     --seed "$SEED" \
     -e "$SOURCE_MODEL" \
@@ -229,6 +247,10 @@ while IFS= read -r TARGET; do
     --source_structure_segment_inter_trade_off "$TIMEMATCH_SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF" \
     --source_structure_boundary_window_trade_off "$TIMEMATCH_SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF" \
     --source_structure_boundary_window_size "$SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE" \
+    --source_structure_compact_distance "$SOURCE_STRUCTURE_COMPACT_DISTANCE" \
+    --source_structure_norm_preserve_trade_off "0.0" \
+    --source_structure_norm_preserve_target "$SOURCE_STRUCTURE_NORM_PRESERVE_TARGET" \
+    --source_structure_norm_preserve_value "$SOURCE_STRUCTURE_NORM_PRESERVE_VALUE" \
     --num_workers "$NUM_WORKERS" \
     --seed "$SEED" \
     -e "$TIMEMATCH_MODEL" \
@@ -237,5 +259,11 @@ while IFS= read -r TARGET; do
     timematch \
     --epochs "$TIMEMATCH_EPOCHS" \
     --steps_per_epoch "$TIMEMATCH_STEPS_PER_EPOCH" \
+    --timematch_trajectory_diagnostic "$TIMEMATCH_TRAJECTORY_DIAGNOSTIC" \
+    --timematch_trajectory_feature_kind "$TIMEMATCH_TRAJECTORY_FEATURE_KIND" \
+    --timematch_trajectory_max_batches "$TIMEMATCH_TRAJECTORY_MAX_BATCHES" \
+    --timematch_trajectory_every "$TIMEMATCH_TRAJECTORY_EVERY" \
+    --timematch_trajectory_num_workers "$TIMEMATCH_TRAJECTORY_NUM_WORKERS" \
+    --timematch_trajectory_sample_seed "$TIMEMATCH_TRAJECTORY_SAMPLE_SEED" \
     --weights "outputs/$SOURCE_MODEL"
 done <<< "$TARGETS_BLOCK"

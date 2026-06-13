@@ -2,6 +2,7 @@ from torch.utils.data.sampler import WeightedRandomSampler
 import sklearn.metrics
 from collections import Counter
 from copy import deepcopy
+import random
 
 import numpy as np
 import torch
@@ -208,6 +209,261 @@ def _print_pseudo_summary(stage, epoch, shift, stats):
     )
 
 
+def _label_entropy(labels, num_classes):
+    labels = np.asarray(labels, dtype=np.int64)
+    if labels.size == 0:
+        return 0.0
+    counts = np.bincount(labels, minlength=num_classes).astype(np.float64)
+    probs = counts / max(counts.sum(), 1.0)
+    valid = probs > 0
+    return float(-(probs[valid] * np.log(probs[valid] + 1e-12)).sum())
+
+
+def _class_centroids(features, labels, num_classes):
+    centroids = []
+    valid = []
+    for class_id in range(num_classes):
+        group = features[labels == class_id]
+        if group.numel() == 0:
+            centroids.append(torch.zeros(features.shape[1], dtype=features.dtype))
+            valid.append(False)
+        else:
+            centroids.append(group.mean(dim=0))
+            valid.append(True)
+    return torch.stack(centroids, dim=0), torch.tensor(valid, dtype=torch.bool)
+
+
+def _within_class_trace(features, labels, num_classes):
+    total = 0.0
+    count = 0
+    for class_id in range(num_classes):
+        group = features[labels == class_id]
+        if group.shape[0] == 0:
+            continue
+        centered = group - group.mean(dim=0, keepdim=True)
+        total += float((centered ** 2).sum(dim=1).mean().item()) * group.shape[0]
+        count += int(group.shape[0])
+    return total / max(count, 1)
+
+
+def _mean_centroid_l2(current, current_valid, previous):
+    if previous is None:
+        return 0.0
+    prev_centroids = previous["centroids"]
+    prev_valid = previous["valid"]
+    valid = current_valid & prev_valid
+    if int(valid.sum().item()) == 0:
+        return 0.0
+    return float(torch.norm(current[valid] - prev_centroids[valid], dim=1).mean().item())
+
+
+def _mean_centroid_cosine_distance(current, current_valid, previous):
+    if previous is None:
+        return 0.0
+    prev_centroids = previous["centroids"]
+    prev_valid = previous["valid"]
+    valid = current_valid & prev_valid
+    if int(valid.sum().item()) == 0:
+        return 0.0
+    cosine = F.cosine_similarity(current[valid], prev_centroids[valid], dim=1)
+    return float((1.0 - cosine).mean().item())
+
+
+def _print_timematch_trajectory_summary(stage, epoch, shift, feature_kind, stats):
+    ordered = [
+        "count",
+        "pseudo_acc",
+        "pseudo_macro_f1",
+        "pseudo_mean_conf",
+        "pseudo_entropy",
+        "pseudo_flip_ratio",
+        "pseudo_centroid_shift",
+        "pseudo_centroid_cosine_distance",
+        "oracle_centroid_shift",
+        "oracle_centroid_cosine_distance",
+        "feature_mean_shift",
+        "pseudo_within_trace",
+        "oracle_within_trace",
+        "feature_cov_trace",
+        "feature_norm_mean",
+        "feature_norm_std",
+    ]
+    parts = [
+        "TIMEMATCH_TRAJECTORY_SUMMARY",
+        f"stage={stage}",
+        f"epoch={epoch}",
+        f"shift={shift}",
+        f"feature_kind={feature_kind}",
+    ]
+    for key in ordered:
+        value = stats.get(key, 0.0)
+        if isinstance(value, int):
+            parts.append(f"{key}={value}")
+        else:
+            parts.append(f"{key}={float(value):.6f}")
+    print("|".join(parts))
+
+
+@torch.no_grad()
+def _collect_timematch_trajectory_state(
+    model,
+    target_loader,
+    device,
+    shift,
+    num_classes,
+    feature_kind,
+    max_batches=64,
+    sample_seed=-1,
+):
+    model.eval()
+    features, labels, preds, confs = [], [], [], []
+    if sample_seed is not None and int(sample_seed) >= 0:
+        py_random_state = random.getstate()
+        np_random_state = np.random.get_state()
+        random.seed(int(sample_seed))
+        np.random.seed(int(sample_seed))
+    else:
+        py_random_state = np_random_state = None
+
+    try:
+        for batch_idx, sample in enumerate(target_loader):
+            if max_batches > 0 and batch_idx >= max_batches:
+                break
+            pixels, valid_pixels, positions, extra = to_cuda(sample, device)
+            targets = sample["label"].to(device=device, non_blocking=True)
+            _check_temporal_index_range(model, positions, shift, "target_trajectory")
+
+            spatial_feats = model.spatial_encoder(pixels, valid_pixels, extra)
+            temporal_feats = model.temporal_encoder(spatial_feats, positions + shift)
+            logits = model.decoder(temporal_feats)
+            probs = F.softmax(logits, dim=1)
+            batch_conf, batch_preds = torch.max(probs, dim=1)
+
+            if feature_kind == "raw_pooled":
+                batch_features = spatial_feats.mean(dim=1)
+            elif feature_kind == "final":
+                batch_features = temporal_feats
+            else:
+                raise ValueError(f"unsupported trajectory feature_kind: {feature_kind}")
+            if batch_features.ndim > 2:
+                batch_features = batch_features.reshape(batch_features.shape[0], -1)
+
+            features.append(batch_features.detach().cpu().float())
+            labels.append(targets.detach().cpu().long())
+            preds.append(batch_preds.detach().cpu().long())
+            confs.append(batch_conf.detach().cpu().float())
+    finally:
+        if py_random_state is not None:
+            random.setstate(py_random_state)
+            np.random.set_state(np_random_state)
+
+    if not features:
+        return None
+
+    features = torch.cat(features, dim=0)
+    labels = torch.cat(labels, dim=0)
+    preds = torch.cat(preds, dim=0)
+    confs = torch.cat(confs, dim=0)
+    pseudo_centroids, pseudo_valid = _class_centroids(features, preds, num_classes)
+    oracle_centroids, oracle_valid = _class_centroids(features, labels, num_classes)
+    feature_mean = features.mean(dim=0)
+    centered = features - feature_mean.unsqueeze(0)
+    return {
+        "features": features,
+        "labels": labels,
+        "preds": preds,
+        "confs": confs,
+        "pseudo": {"centroids": pseudo_centroids, "valid": pseudo_valid},
+        "oracle": {"centroids": oracle_centroids, "valid": oracle_valid},
+        "feature_mean": feature_mean,
+        "feature_cov_trace": float((centered ** 2).sum(dim=1).mean().item()),
+        "pseudo_within_trace": _within_class_trace(features, preds, num_classes),
+        "oracle_within_trace": _within_class_trace(features, labels, num_classes),
+        "feature_norm_mean": float(features.norm(dim=1).mean().item()),
+        "feature_norm_std": float(features.norm(dim=1).std(unbiased=False).item()),
+    }
+
+
+def _trajectory_stats_from_state(state, previous, num_classes):
+    labels = state["labels"].numpy()
+    preds = state["preds"].numpy()
+    confs = state["confs"].numpy()
+    stats = {
+        "count": int(state["labels"].shape[0]),
+        "pseudo_acc": float((state["labels"] == state["preds"]).float().mean().item()),
+        "pseudo_macro_f1": _safe_macro_f1(labels, preds),
+        "pseudo_mean_conf": float(confs.mean()) if confs.size > 0 else 0.0,
+        "pseudo_entropy": _label_entropy(preds, num_classes),
+        "pseudo_flip_ratio": 0.0,
+        "pseudo_centroid_shift": _mean_centroid_l2(
+            state["pseudo"]["centroids"],
+            state["pseudo"]["valid"],
+            None if previous is None else previous["pseudo"],
+        ),
+        "pseudo_centroid_cosine_distance": _mean_centroid_cosine_distance(
+            state["pseudo"]["centroids"],
+            state["pseudo"]["valid"],
+            None if previous is None else previous["pseudo"],
+        ),
+        "oracle_centroid_shift": _mean_centroid_l2(
+            state["oracle"]["centroids"],
+            state["oracle"]["valid"],
+            None if previous is None else previous["oracle"],
+        ),
+        "oracle_centroid_cosine_distance": _mean_centroid_cosine_distance(
+            state["oracle"]["centroids"],
+            state["oracle"]["valid"],
+            None if previous is None else previous["oracle"],
+        ),
+        "feature_mean_shift": 0.0,
+        "pseudo_within_trace": state["pseudo_within_trace"],
+        "oracle_within_trace": state["oracle_within_trace"],
+        "feature_cov_trace": state["feature_cov_trace"],
+        "feature_norm_mean": state["feature_norm_mean"],
+        "feature_norm_std": state["feature_norm_std"],
+    }
+    if previous is not None:
+        count = min(int(state["preds"].shape[0]), int(previous["preds"].shape[0]))
+        if count > 0:
+            stats["pseudo_flip_ratio"] = float((state["preds"][:count] != previous["preds"][:count]).float().mean().item())
+        stats["feature_mean_shift"] = float(torch.norm(state["feature_mean"] - previous["feature_mean"]).item())
+    return stats
+
+
+@torch.no_grad()
+def _run_timematch_trajectory_diagnostic(
+    model,
+    target_loader,
+    device,
+    shift,
+    num_classes,
+    feature_kinds,
+    previous_states,
+    stage,
+    epoch,
+    max_batches,
+    sample_seed,
+):
+    next_states = {}
+    for feature_kind in feature_kinds:
+        state = _collect_timematch_trajectory_state(
+            model,
+            target_loader,
+            device,
+            shift,
+            num_classes,
+            feature_kind=feature_kind,
+            max_batches=max_batches,
+            sample_seed=sample_seed,
+        )
+        if state is None:
+            continue
+        stats = _trajectory_stats_from_state(state, previous_states.get(feature_kind), num_classes)
+        _print_timematch_trajectory_summary(stage, epoch, shift, feature_kind, stats)
+        next_states[feature_kind] = state
+    return next_states
+
+
 def train_timematch(student, config, writer, val_loader, device, best_model_path, fold_num, splits):
     assert not getattr(config, "with_shift_aug", False), (
         "TimeMatch with source phase compactness / v2.3 phase-aware partition must not enable "
@@ -288,6 +544,31 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
     # To evaluate how well we estimate class distribution
     target_labels = target_loader_no_aug.dataset.get_labels()
     actual_class_distr = estimate_class_distribution(target_labels, config.num_classes)
+    trajectory_loader = None
+    trajectory_feature_kinds = []
+    trajectory_states = {}
+    if bool(getattr(config, "timematch_trajectory_diagnostic", False)):
+        feature_kind = str(getattr(config, "timematch_trajectory_feature_kind", "final")).lower()
+        if feature_kind == "both":
+            trajectory_feature_kinds = ["raw_pooled", "final"]
+        else:
+            trajectory_feature_kinds = [feature_kind]
+        trajectory_loader = data.DataLoader(
+            target_loader_no_aug.dataset,
+            num_workers=int(getattr(config, "timematch_trajectory_num_workers", 0)),
+            batch_size=config.batch_size,
+            shuffle=False,
+            pin_memory=True,
+        )
+        print(
+            "TIMEMATCH_TRAJECTORY_CONFIG|"
+            f"enabled=True|"
+            f"feature_kind={feature_kind}|"
+            f"max_batches={getattr(config, 'timematch_trajectory_max_batches', 64)}|"
+            f"every={getattr(config, 'timematch_trajectory_every', 1)}|"
+            f"num_workers={getattr(config, 'timematch_trajectory_num_workers', 0)}|"
+            f"sample_seed={getattr(config, 'timematch_trajectory_sample_seed', 1729)}"
+        )
 
     # estimate an initial guess for shift using Inception Score
     if config.estimate_shift:
@@ -314,6 +595,20 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         config.num_classes,
     )
     _print_pseudo_summary("initial", 0, target_to_source_shift, initial_pseudo_stats)
+    if trajectory_loader is not None:
+        trajectory_states = _run_timematch_trajectory_diagnostic(
+            teacher,
+            trajectory_loader,
+            device,
+            target_to_source_shift,
+            config.num_classes,
+            trajectory_feature_kinds,
+            trajectory_states,
+            stage="initial",
+            epoch=0,
+            max_batches=int(getattr(config, "timematch_trajectory_max_batches", 64)),
+            sample_seed=int(getattr(config, "timematch_trajectory_sample_seed", 1729)),
+        )
 
     source_to_target_shift = 0
     for epoch in range(config.epochs):
@@ -587,6 +882,21 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             f"pseudo_masked_acc={pseudo_stats['masked_acc']:.6f}|"
             f"pseudo_mean_conf={pseudo_stats['mean_conf']:.6f}"
         )
+        trajectory_every = max(int(getattr(config, "timematch_trajectory_every", 1)), 1)
+        if trajectory_loader is not None and ((epoch + 1) % trajectory_every == 0 or epoch + 1 == config.epochs):
+            trajectory_states = _run_timematch_trajectory_diagnostic(
+                teacher,
+                trajectory_loader,
+                device,
+                target_to_source_shift,
+                config.num_classes,
+                trajectory_feature_kinds,
+                trajectory_states,
+                stage="train_epoch",
+                epoch=epoch + 1,
+                max_batches=int(getattr(config, "timematch_trajectory_max_batches", 64)),
+                sample_seed=int(getattr(config, "timematch_trajectory_sample_seed", 1729)),
+            )
 
         if config.run_validation:
             if config.output_student:

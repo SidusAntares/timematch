@@ -215,6 +215,10 @@ def _compute_source_structure_loss_on_features(
         segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
         boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
         boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
+        compact_distance=getattr(config, "source_structure_compact_distance", "mse"),
+        norm_preserve_trade_off=getattr(config, "source_structure_norm_preserve_trade_off", 0.0),
+        norm_preserve_target=getattr(config, "source_structure_norm_preserve_target", "min_mean"),
+        norm_preserve_value=getattr(config, "source_structure_norm_preserve_value", 1.0),
         anchor_spatial_feats=structure_anchor,
         anchor_positions=positions,
     )
@@ -355,6 +359,7 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         + abs(float(getattr(config, "source_structure_season_trade_off", 0.0)))
         + abs(float(getattr(config, "source_structure_segment_inter_trade_off", 0.0)))
         + abs(float(getattr(config, "source_structure_boundary_window_trade_off", 0.0)))
+        + abs(float(getattr(config, "source_structure_norm_preserve_trade_off", 0.0)))
     )
     use_structure_loss = structure_trade_off > 0.0
     params = list(model.parameters())
@@ -576,6 +581,10 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             f"compact_reshaped={compact_reshaped_loss_meter.avg:.6f}|"
             f"target={_resolve_structure_feature_target(config, source_feature_reshaper)}|"
             f"detached={bool(getattr(config, 'source_structure_detach_features', False))}|"
+            f"compact_distance={getattr(config, 'source_structure_compact_distance', 'mse')}|"
+            f"norm_preserve={float(getattr(config, 'source_structure_norm_preserve_trade_off', 0.0)):.6f}|"
+            f"norm_target={getattr(config, 'source_structure_norm_preserve_target', 'min_mean')}|"
+            f"norm_value={float(getattr(config, 'source_structure_norm_preserve_value', 1.0)):.6f}|"
             f"reshaper={reshaper_loss_meter.avg:.6f}|"
             f"dualcls={dual_cls_loss_meter.avg:.6f}|"
             f"dualrel={dual_relation_loss_meter.avg:.6f}|"

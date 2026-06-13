@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+import re
+import statistics as stats
+import sys
+from pathlib import Path
+
+
+TEST_RE = re.compile(r"Test result for ([^:]+): accuracy=([0-9.]+), f1=([0-9.]+)")
+NAME_RE = re.compile(r"gpu\d+_(.+)_seed(\d+)_(.+)\.log$")
+TRAJECTORY_PREFIX = "TIMEMATCH_TRAJECTORY_SUMMARY|"
+
+
+METRIC_FIELDS = [
+    "pseudo_acc",
+    "pseudo_macro_f1",
+    "pseudo_mean_conf",
+    "pseudo_entropy",
+    "pseudo_flip_ratio",
+    "pseudo_centroid_shift",
+    "pseudo_centroid_cosine_distance",
+    "oracle_centroid_shift",
+    "oracle_centroid_cosine_distance",
+    "feature_mean_shift",
+    "pseudo_within_trace",
+    "oracle_within_trace",
+    "feature_cov_trace",
+    "feature_norm_mean",
+    "feature_norm_std",
+]
+
+
+def parse_kv_line(line, prefix):
+    values = {}
+    for part in line[len(prefix):].strip().split("|"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        values[key] = value
+    return values
+
+
+def safe_float(value):
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def safe_int(value):
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except ValueError:
+        return None
+
+
+def fmt(value):
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:.6f}"
+    return str(value)
+
+
+def mean(items):
+    items = [item for item in items if item is not None]
+    return None if not items else sum(items) / len(items)
+
+
+def stdev(items):
+    items = [item for item in items if item is not None]
+    return None if len(items) < 2 else stats.stdev(items)
+
+
+def delta(left, right):
+    if left is None or right is None:
+        return None
+    return left - right
+
+
+def write_tsv(path, rows, fields):
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write("\t".join(fields) + "\n")
+        for row in rows:
+            handle.write("\t".join(fmt(row.get(field)) for field in fields) + "\n")
+
+
+def parse_log(path):
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    name_match = NAME_RE.match(path.name)
+    task = name_match.group(1) if name_match else path.stem
+    seed = int(name_match.group(2)) if name_match else -1
+    config = name_match.group(3) if name_match else "unknown"
+
+    tests = TEST_RE.findall(text)
+    source_self_f1 = source_on_target_f1 = da_f1 = None
+    if len(tests) >= 3:
+        source_self_f1 = safe_float(tests[-3][2])
+        source_on_target_f1 = safe_float(tests[-2][2])
+        da_f1 = safe_float(tests[-1][2])
+
+    status = "ok"
+    if "Traceback" in text or "error:" in text.lower():
+        status = "error"
+    if len(tests) < 3:
+        status = "incomplete"
+
+    rows = []
+    for line in text.splitlines():
+        if not line.startswith(TRAJECTORY_PREFIX):
+            continue
+        values = parse_kv_line(line, TRAJECTORY_PREFIX)
+        row = {
+            "task": task,
+            "seed": seed,
+            "config": config,
+            "stage": values.get("stage", ""),
+            "epoch": safe_int(values.get("epoch")),
+            "shift": safe_int(values.get("shift")),
+            "feature_kind": values.get("feature_kind", ""),
+            "count": safe_int(values.get("count")),
+            "source_self_f1": source_self_f1,
+            "source_on_target_f1": source_on_target_f1,
+            "da_f1": da_f1,
+            "da_gain": delta(da_f1, source_on_target_f1),
+            "status": status,
+            "log": path.name,
+        }
+        for field in METRIC_FIELDS:
+            row[field] = safe_float(values.get(field))
+        rows.append(row)
+    if not rows:
+        rows.append({
+            "task": task,
+            "seed": seed,
+            "config": config,
+            "stage": "",
+            "epoch": None,
+            "shift": None,
+            "feature_kind": "",
+            "count": None,
+            "source_self_f1": source_self_f1,
+            "source_on_target_f1": source_on_target_f1,
+            "da_f1": da_f1,
+            "da_gain": delta(da_f1, source_on_target_f1),
+            "status": "no_trajectory" if status == "ok" else status,
+            "log": path.name,
+        })
+    return rows
+
+
+def summarize(rows, group_fields, metric_fields):
+    grouped = {}
+    for row in rows:
+        if row.get("status") != "ok":
+            continue
+        key = tuple(row.get(field) for field in group_fields)
+        grouped.setdefault(key, []).append(row)
+    out = []
+    for key, group in sorted(grouped.items()):
+        item = {field: value for field, value in zip(group_fields, key)}
+        item["n"] = len(group)
+        for field in metric_fields:
+            vals = [row.get(field) for row in group]
+            item[f"{field}_mean"] = mean(vals)
+            item[f"{field}_std"] = stdev(vals)
+        out.append(item)
+    return out
+
+
+def build_delta_vs_plain(rows):
+    plain = {
+        (row["task"], row["seed"], row["stage"], row["epoch"], row["feature_kind"]): row
+        for row in rows
+        if row.get("status") == "ok" and row["config"] == "plain"
+    }
+    out = []
+    fields = ["source_on_target_f1", "da_f1", "da_gain"] + METRIC_FIELDS
+    for row in rows:
+        if row.get("status") != "ok" or row["config"] == "plain":
+            continue
+        base = plain.get((row["task"], row["seed"], row["stage"], row["epoch"], row["feature_kind"]))
+        if base is None:
+            continue
+        item = {
+            "task": row["task"],
+            "seed": row["seed"],
+            "config": row["config"],
+            "stage": row["stage"],
+            "epoch": row["epoch"],
+            "feature_kind": row["feature_kind"],
+            "plain_da_f1": base.get("da_f1"),
+            "config_da_f1": row.get("da_f1"),
+            "delta_da_f1": delta(row.get("da_f1"), base.get("da_f1")),
+        }
+        for field in fields:
+            item[f"plain_{field}"] = base.get(field)
+            item[f"config_{field}"] = row.get(field)
+            item[f"delta_{field}"] = delta(row.get(field), base.get(field))
+        out.append(item)
+    return out
+
+
+def latest_epoch_rows(rows):
+    latest = {}
+    for row in rows:
+        if row.get("status") != "ok" or row.get("epoch") is None:
+            continue
+        key = (row["task"], row["seed"], row["config"], row["feature_kind"])
+        current = latest.get(key)
+        if current is None or row["epoch"] > current["epoch"]:
+            latest[key] = row
+    return list(latest.values())
+
+
+def build_strength_contrast(rows, left_config, right_config):
+    indexed = {
+        (row["task"], row["seed"], row["stage"], row["epoch"], row["feature_kind"], row["config"]): row
+        for row in rows
+        if row.get("status") == "ok"
+    }
+    out = []
+    for key, left in sorted(indexed.items()):
+        task, seed, stage, epoch, feature_kind, config = key
+        if config != left_config:
+            continue
+        right = indexed.get((task, seed, stage, epoch, feature_kind, right_config))
+        if right is None:
+            continue
+        item = {
+            "task": task,
+            "seed": seed,
+            "stage": stage,
+            "epoch": epoch,
+            "feature_kind": feature_kind,
+            "left_config": left_config,
+            "right_config": right_config,
+            "left_da_f1": left.get("da_f1"),
+            "right_da_f1": right.get("da_f1"),
+            "delta_da_f1": delta(left.get("da_f1"), right.get("da_f1")),
+            "status": "ok",
+        }
+        for field in ["source_on_target_f1", "da_f1", "da_gain"] + METRIC_FIELDS:
+            item[f"left_{field}"] = left.get(field)
+            item[f"right_{field}"] = right.get(field)
+            item[f"delta_{field}"] = delta(left.get(field), right.get(field))
+        out.append(item)
+    return out
+
+
+def main():
+    if len(sys.argv) != 2:
+        raise SystemExit("Usage: summarize_v243b_timematch_trajectory.py LOG_DIR")
+    root = Path(sys.argv[1])
+    rows = []
+    for path in sorted(root.glob("*.log")):
+        rows.extend(parse_log(path))
+
+    detail_fields = [
+        "task",
+        "seed",
+        "config",
+        "stage",
+        "epoch",
+        "shift",
+        "feature_kind",
+        "count",
+        "source_self_f1",
+        "source_on_target_f1",
+        "da_f1",
+        "da_gain",
+    ] + METRIC_FIELDS + ["status", "log"]
+    write_tsv(root / "timematch_trajectory_rows.tsv", rows, detail_fields)
+
+    curve_metrics = ["source_on_target_f1", "da_f1", "da_gain"] + METRIC_FIELDS
+    curve = summarize(rows, ["task", "config", "feature_kind", "stage", "epoch"], curve_metrics)
+    write_tsv(
+        root / "timematch_trajectory_curve.tsv",
+        curve,
+        ["task", "config", "feature_kind", "stage", "epoch", "n"]
+        + [item for field in curve_metrics for item in (f"{field}_mean", f"{field}_std")],
+    )
+
+    deltas = build_delta_vs_plain(rows)
+    delta_fields = list(deltas[0].keys()) if deltas else []
+    write_tsv(root / "timematch_trajectory_delta_vs_plain.tsv", deltas, delta_fields)
+
+    delta_metrics = [field for field in deltas[0].keys() if field.startswith("delta_")] if deltas else []
+    delta_curve = summarize(deltas, ["task", "config", "feature_kind", "stage", "epoch"], delta_metrics)
+    write_tsv(
+        root / "timematch_trajectory_delta_curve.tsv",
+        delta_curve,
+        ["task", "config", "feature_kind", "stage", "epoch", "n"]
+        + [item for field in delta_metrics for item in (f"{field}_mean", f"{field}_std")],
+    )
+
+    latest = latest_epoch_rows(rows)
+    latest_summary = summarize(latest, ["task", "config", "feature_kind"], curve_metrics)
+    write_tsv(
+        root / "timematch_trajectory_latest_summary.tsv",
+        latest_summary,
+        ["task", "config", "feature_kind", "n"]
+        + [item for field in curve_metrics for item in (f"{field}_mean", f"{field}_std")],
+    )
+
+    contrast = build_strength_contrast(
+        rows,
+        left_config="raw_global_w0p75_source_only",
+        right_config="raw_global_w1_source_only",
+    )
+    contrast_fields = list(contrast[0].keys()) if contrast else []
+    write_tsv(root / "timematch_trajectory_w0p75_minus_w1.tsv", contrast, contrast_fields)
+
+    contrast_delta_metrics = [field for field in contrast[0].keys() if field.startswith("delta_")] if contrast else []
+    contrast_curve = summarize(contrast, ["task", "feature_kind", "stage", "epoch"], contrast_delta_metrics)
+    write_tsv(
+        root / "timematch_trajectory_w0p75_minus_w1_curve.tsv",
+        contrast_curve,
+        ["task", "feature_kind", "stage", "epoch", "n"]
+        + [item for field in contrast_delta_metrics for item in (f"{field}_mean", f"{field}_std")],
+    )
+
+    print("Wrote:", root / "timematch_trajectory_rows.tsv")
+    print("Wrote:", root / "timematch_trajectory_curve.tsv")
+    print("Wrote:", root / "timematch_trajectory_delta_vs_plain.tsv")
+    print("Wrote:", root / "timematch_trajectory_delta_curve.tsv")
+    print("Wrote:", root / "timematch_trajectory_latest_summary.tsv")
+    print("Wrote:", root / "timematch_trajectory_w0p75_minus_w1.tsv")
+    print("Wrote:", root / "timematch_trajectory_w0p75_minus_w1_curve.tsv")
+
+
+if __name__ == "__main__":
+    main()

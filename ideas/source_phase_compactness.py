@@ -18,6 +18,10 @@ SOURCE_STRUCTURE_SEASON_TRADE_OFF = 0.02
 SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF = 0.02
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF = 0.20
 SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE = 2
+SOURCE_STRUCTURE_COMPACT_DISTANCE = "mse"
+SOURCE_STRUCTURE_NORM_PRESERVE_TRADE_OFF = 0.0
+SOURCE_STRUCTURE_NORM_PRESERVE_TARGET = "min_mean"
+SOURCE_STRUCTURE_NORM_PRESERVE_VALUE = 1.0
 SHAPE_REG_DIRECTION_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_TRADE_OFF = 0.5
 SHAPE_REG_COLLAPSE_MARGIN = 0.35
@@ -96,6 +100,34 @@ def _safe_cosine_dissimilarity(left, right, eps=1e-6):
     cosine = np.sum(left * right, axis=1) / denom
     cosine = np.clip(cosine, -1.0, 1.0)
     return 1.0 - cosine
+
+
+def _compactness_distance(class_feats, class_center, mode="mse", eps=1e-6):
+    mode = str(mode or "mse").lower()
+    if mode in {"mse", "euclidean", "l2"}:
+        return (class_feats - class_center).pow(2).sum(dim=1).mean()
+    if mode in {"normalized_mse", "l2_normalized_mse", "unit_mse"}:
+        normalized_feats = torch.nn.functional.normalize(class_feats, dim=1, eps=eps)
+        normalized_center = torch.nn.functional.normalize(class_center, dim=1, eps=eps)
+        return (normalized_feats - normalized_center).pow(2).sum(dim=1).mean()
+    raise ValueError(f"Unsupported source structure compact distance: {mode}")
+
+
+def _class_norm_preserve_loss(class_feats, target="min_mean", value=1.0, eps=1e-6):
+    target = str(target or "batch_mean").lower()
+    norms = class_feats.norm(dim=1)
+    if target in {"none", "off", "disabled"}:
+        return class_feats.sum() * 0.0
+    if target in {"batch_mean", "class_mean", "detached_mean"}:
+        anchor = norms.detach().mean().clamp_min(eps)
+        return ((norms - anchor) / anchor).pow(2).mean()
+    if target in {"min_mean", "floor", "hinge"}:
+        anchor = norms.new_tensor(float(value)).clamp_min(eps)
+        return torch.relu(anchor - norms.mean()).div(anchor).pow(2)
+    if target in {"fixed", "constant"}:
+        anchor = norms.new_tensor(float(value)).clamp_min(eps)
+        return ((norms - anchor) / anchor).pow(2).mean()
+    raise ValueError(f"Unsupported source structure norm preserve target: {target}")
 
 
 def _compute_dataset_semantic_boundary_scores(
@@ -1062,6 +1094,10 @@ def compute_source_structure_loss(
     segment_inter_trade_off=SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF,
     boundary_window_trade_off=SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF,
     boundary_window_size=SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE,
+    compact_distance=SOURCE_STRUCTURE_COMPACT_DISTANCE,
+    norm_preserve_trade_off=SOURCE_STRUCTURE_NORM_PRESERVE_TRADE_OFF,
+    norm_preserve_target=SOURCE_STRUCTURE_NORM_PRESERVE_TARGET,
+    norm_preserve_value=SOURCE_STRUCTURE_NORM_PRESERVE_VALUE,
     anchor_spatial_feats=None,
     anchor_positions=None,
 ):
@@ -1173,6 +1209,8 @@ def compute_source_structure_loss(
     zero = spatial_feats.sum() * 0.0
     phase_logs = {}
     phase_structures = []
+    norm_preserve_loss = zero
+    norm_preserve_class_count = 0
 
     for phase_idx, phase_mask in enumerate(phase_masks):
         phase_counts = phase_mask.sum(dim=1)
@@ -1204,8 +1242,21 @@ def compute_source_structure_loss(
 
             class_phase_feats = phase_feats[class_mask]
             class_center = class_phase_feats.mean(dim=0, keepdim=True)
-            class_within = (class_phase_feats - class_center).pow(2).sum(dim=1).mean()
+            class_within = _compactness_distance(
+                class_phase_feats,
+                class_center,
+                mode=compact_distance,
+                eps=eps,
+            )
             phase_loss = phase_loss + class_within
+            if float(norm_preserve_trade_off) != 0.0:
+                norm_preserve_loss = norm_preserve_loss + _class_norm_preserve_loss(
+                    class_phase_feats,
+                    target=norm_preserve_target,
+                    value=norm_preserve_value,
+                    eps=eps,
+                )
+                norm_preserve_class_count += 1
             valid_class_count += 1
             class_centers[int(class_id.item())] = class_center.squeeze(0)
 
@@ -1556,6 +1607,8 @@ def compute_source_structure_loss(
         segment_inter_loss = segment_inter_loss / segment_inter_class_count
     if boundary_window_class_count > 0:
         boundary_window_weight_signal = boundary_window_weight_signal / boundary_window_class_count
+    if norm_preserve_class_count > 0:
+        norm_preserve_loss = norm_preserve_loss / norm_preserve_class_count
     if version in {"trend_seasonal_residual", "trend_season", "season_pattern", "v235"}:
         season_loss = (
             season_coherence_loss
@@ -1596,6 +1649,8 @@ def compute_source_structure_loss(
             + float(amplitude_trade_off) * amplitude_loss
             + float(interphase_trade_off) * interphase_loss
         )
+
+    total_loss = total_loss + float(norm_preserve_trade_off) * norm_preserve_loss
 
     if weight_tracker is not None:
         phase_logs.update(weight_tracker.get_logs())
@@ -1640,6 +1695,16 @@ def compute_source_structure_loss(
     )
     phase_logs["source_structure_boundary_window_weight_signal"] = float(
         boundary_window_weight_signal.detach().item()
+    )
+    phase_logs["source_structure_norm_preserve_loss"] = float(
+        (SOURCE_PHASE_COMPACTNESS_LAMBDA * norm_preserve_loss).detach().item()
+    )
+    phase_logs["source_structure_norm_preserve_classes"] = float(norm_preserve_class_count)
+    phase_logs["source_structure_norm_preserve_value"] = float(norm_preserve_value)
+    phase_logs["source_structure_compact_distance_mode"] = (
+        2.0
+        if str(compact_distance).lower() in {"normalized_mse", "l2_normalized_mse", "unit_mse"}
+        else 1.0
     )
     phase_logs["source_structure_amplitude_classes"] = float(amplitude_class_count)
     phase_logs["source_structure_interphase_classes"] = float(interphase_class_count)

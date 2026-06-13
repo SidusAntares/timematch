@@ -16,6 +16,7 @@ OUTPUT_PREFIX="${OUTPUT_PREFIX:-target_readiness_${FEATURE_KIND}}"
 RUN_FROZEN_PROBE="${RUN_FROZEN_PROBE:-True}"
 RUN_TARGET_READINESS="${RUN_TARGET_READINESS:-True}"
 RUN_EPOCH_TRAJECTORY="${RUN_EPOCH_TRAJECTORY:-True}"
+RUN_CONTENT_PROBE="${RUN_CONTENT_PROBE:-True}"
 
 if [ -z "$DIAG_LOG_DIR" ]; then
   echo "ERROR: DIAG_LOG_DIR is required, e.g. DIAG_LOG_DIR=logs/v243b_raw_compactness_dose_response_20260612_164026" >&2
@@ -77,6 +78,28 @@ if run_bool "$RUN_FROZEN_PROBE"; then
     --probe_epochs "${FROZEN_PROBE_EPOCHS:-300}" \
     --feature_kind "$FEATURE_KIND" \
     --output_prefix "frozen_probe_${FEATURE_KIND}" || failed=1
+fi
+
+if run_bool "$RUN_CONTENT_PROBE"; then
+  echo "STEP=representation_content_raw_pooled"
+  python "$ROOT_DIR/analysis/v243b_representation_content_probe.py" "$DIAG_LOG_DIR" \
+    --data_root "$DATA_ROOT" \
+    --device "$DEVICE" \
+    --num_workers "$NUM_WORKERS" \
+    --max_batches "$MAX_BATCHES" \
+    --max_metric_samples "${CONTENT_MAX_METRIC_SAMPLES:-4096}" \
+    --feature_kind raw_pooled \
+    --output_prefix representation_content_raw_pooled || failed=1
+
+  echo "STEP=representation_content_final"
+  python "$ROOT_DIR/analysis/v243b_representation_content_probe.py" "$DIAG_LOG_DIR" \
+    --data_root "$DATA_ROOT" \
+    --device "$DEVICE" \
+    --num_workers "$NUM_WORKERS" \
+    --max_batches "$MAX_BATCHES" \
+    --max_metric_samples "${CONTENT_MAX_METRIC_SAMPLES:-4096}" \
+    --feature_kind final \
+    --output_prefix representation_content_final || failed=1
 fi
 
 echo "Diagnostics saved under: $DIAG_LOG_DIR"
