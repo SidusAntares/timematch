@@ -167,8 +167,6 @@ run_worker() {
         --output_dir "$OUTPUTS_ROOT"
         --closed_set True
         --with_shift_aug False
-        --source_feature_reshaper none
-        --source_feature_dual_path False
         --source_phase_partition_mode uniform
         --source_segment_partition_mode uniform
         --source_phase_count 1

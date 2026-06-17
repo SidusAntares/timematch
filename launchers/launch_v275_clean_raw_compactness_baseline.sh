@@ -12,6 +12,8 @@ GPUS="${GPUS:-0 1 2 3}"
 TASKS="${TASKS:-FR1_to_FR2,FR1_to_DK1,FR1_to_AT1,FR2_to_FR1,FR2_to_DK1,FR2_to_AT1,DK1_to_FR1,DK1_to_FR2,DK1_to_AT1,AT1_to_FR1,AT1_to_FR2,AT1_to_DK1}"
 SEEDS="${SEEDS:-1 2 3}"
 RAW_WEIGHTS="${RAW_WEIGHTS:-0.5 0.75 1.0}"
+INCLUDE_PLAIN="${INCLUDE_PLAIN:-True}"
+BASELINE_ROWS_TSV="${BASELINE_ROWS_TSV:-}"
 DRY_RUN="${DRY_RUN:-False}"
 
 mkdir -p "$LOG_DIR"
@@ -47,16 +49,6 @@ export SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF="0.0"
 export SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF="0.0"
 export SOURCE_STRUCTURE_BOUNDARY_WINDOW_SIZE="2"
 
-# No reshaper / dual path in the clean core mechanism.
-export SOURCE_FEATURE_RESHAPER="none"
-export SOURCE_FEATURE_RESHAPER_STRENGTH="0.0"
-export SOURCE_FEATURE_RESHAPER_TRAINABLE="False"
-export SOURCE_FEATURE_RESHAPER_INIT_SEED="-1"
-export SOURCE_FEATURE_RESHAPER_REG_TRADE_OFF="0.0"
-export SOURCE_FEATURE_DUAL_PATH="False"
-export SOURCE_FEATURE_DUAL_CLS_TRADE_OFF="1.0"
-export SOURCE_FEATURE_DUAL_RELATION_TRADE_OFF="0.0"
-
 # Current theory uses source-stage shaping; DA-stage structure stays off.
 export TIMEMATCH_SOURCE_STRUCTURE_INTRA_TRADE_OFF="0.0"
 export TIMEMATCH_SOURCE_STRUCTURE_TREND_TRADE_OFF="0.0"
@@ -73,7 +65,7 @@ JOBS="$LOG_DIR/jobs.tsv"
 SORTED_JOBS="$LOG_DIR/jobs_sorted.tsv"
 MANIFEST="$LOG_DIR/config_manifest.tsv"
 : > "$JOBS"
-printf "config\tcompact_weight\tloss_version\treshaper\tstructure_target\tda_intra\tpurpose\n" > "$MANIFEST"
+printf "config\tcompact_weight\tloss_version\tstructure_target\tda_intra\tpurpose\n" > "$MANIFEST"
 
 weight_tag() {
   local value="$1"
@@ -107,8 +99,8 @@ add_manifest() {
   if grep -F -q "${config}"$'\t' "$MANIFEST"; then
     return
   fi
-  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-    "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$MANIFEST"
+  printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
+    "$1" "$2" "$3" "$4" "$5" "$6" >> "$MANIFEST"
 }
 
 add_job() {
@@ -123,16 +115,20 @@ add_task_seed_jobs() {
   local target_dataset="$4"
   local est_weight="$5"
 
-  add_job "$task" "$source_dataset" "$target_dataset" "$seed" "plain" "0.0" "$est_weight"
-  add_manifest "plain" "0.0" "$SOURCE_STRUCTURE_LOSS_VERSION" "none" "raw" "0.0" \
-    "Original TimeMatch source checkpoint; v2.7.5 structure disabled by zero weight."
+  case "$(echo "$INCLUDE_PLAIN" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|y|on)
+      add_job "$task" "$source_dataset" "$target_dataset" "$seed" "plain" "0.0" "$est_weight"
+      add_manifest "plain" "0.0" "$SOURCE_STRUCTURE_LOSS_VERSION" "raw" "0.0" \
+        "Original TimeMatch source checkpoint; v2.7.5 structure disabled by zero weight."
+      ;;
+  esac
 
   local weight tag config
   for weight in $RAW_WEIGHTS; do
     tag="w$(weight_tag "$weight")"
     config="raw_global_${tag}_source_only"
     add_job "$task" "$source_dataset" "$target_dataset" "$seed" "$config" "$weight" "$est_weight"
-    add_manifest "$config" "$weight" "$SOURCE_STRUCTURE_LOSS_VERSION" "none" "raw" "0.0" \
+    add_manifest "$config" "$weight" "$SOURCE_STRUCTURE_LOSS_VERSION" "raw" "0.0" \
       "v2.7.5 source-stage raw global encoder compactness; DA-stage structure off."
   done
 }
@@ -174,13 +170,13 @@ run_worker() {
     echo "START|gpu=$gpu|task=$task|seed=$seed|config=$config|compact_weight=$compact_weight|log=$log_file"
     (
       export SEED="$seed"
-      export RESHAPER_TAG="$tag"
+      export RUN_TAG_SUFFIX="$tag"
       export SOURCE_STRUCTURE_INTRA_TRADE_OFF="$compact_weight"
 
       CUDA_VISIBLE_DEVICES="$gpu" \
         SOURCE="$source_dataset" \
         TARGETS_BLOCK="$target_dataset" \
-        bash "$IDEA_DIR/run_timematch_closed_set_sourcephasecompact_reshaper_dualpath_source_block.sh"
+        bash "$IDEA_DIR/run_timematch_closed_set_sourcephasecompact_source_block.sh"
     ) > "$log_file" 2>&1
 
     status="$?"
@@ -199,6 +195,8 @@ echo "LOG_DIR=$LOG_DIR"
 echo "TASKS=$TASKS"
 echo "SEEDS=$SEEDS"
 echo "RAW_WEIGHTS=$RAW_WEIGHTS"
+echo "INCLUDE_PLAIN=$INCLUDE_PLAIN"
+echo "BASELINE_ROWS_TSV=$BASELINE_ROWS_TSV"
 echo "SOURCE_STRUCTURE_LOSS_VERSION=$SOURCE_STRUCTURE_LOSS_VERSION"
 echo "SOURCE_PRETRAIN_EPOCHS=$SOURCE_PRETRAIN_EPOCHS"
 echo "TIMEMATCH_EPOCHS=$TIMEMATCH_EPOCHS"
@@ -231,7 +229,14 @@ for pid in "${pids[@]}"; do
   fi
 done
 
-python "$ROOT_DIR/analysis/summarize_v243b_raw_strength_intervention.py" "$LOG_DIR" || failed=1
+if [ -n "$BASELINE_ROWS_TSV" ] && [ -f "$BASELINE_ROWS_TSV" ]; then
+  python "$ROOT_DIR/analysis/summarize_v243b_raw_strength_intervention.py" "$LOG_DIR" "$BASELINE_ROWS_TSV" || failed=1
+else
+  if [ -n "$BASELINE_ROWS_TSV" ]; then
+    echo "WARN: BASELINE_ROWS_TSV not found: $BASELINE_ROWS_TSV" >&2
+  fi
+  python "$ROOT_DIR/analysis/summarize_v243b_raw_strength_intervention.py" "$LOG_DIR" || failed=1
+fi
 
 echo "Logs saved to: $LOG_DIR"
 exit "$failed"

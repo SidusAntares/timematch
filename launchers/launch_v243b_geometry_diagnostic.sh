@@ -12,7 +12,7 @@ GPUS="${GPUS:-0 1 2 3}"
 
 TASKS="${TASKS:-AT1_to_DK1,FR1_to_AT1,FR2_to_DK1,DK1_to_FR1}"
 SEEDS="${SEEDS:-1,2,3}"
-CONFIGS="${CONFIGS:-plain,raw_global_w1,trainable_s003_reg000,trainable_s003_raw_global_w1}"
+CONFIGS="${CONFIGS:-plain,raw_global_w1}"
 MAX_BATCHES="${MAX_BATCHES:-64}"
 BATCH_SIZE="${BATCH_SIZE:-128}"
 NUM_WORKERS="${NUM_WORKERS:-8}"

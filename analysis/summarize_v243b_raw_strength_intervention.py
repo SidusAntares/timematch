@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import csv
 import re
 import statistics as stats
 import sys
@@ -51,6 +52,53 @@ def write_tsv(path, rows, fields):
         handle.write("\t".join(fields) + "\n")
         for row in rows:
             handle.write("\t".join(fmt(row.get(field)) for field in fields) + "\n")
+
+
+def read_rows_tsv(path):
+    numeric_fields = {
+        "seed",
+        "compact_weight",
+        "source_self_f1",
+        "source_on_target_f1",
+        "da_f1",
+        "da_gain",
+        "source_loss",
+        "source_cls_loss",
+        "source_compact_loss",
+        "source_compact_raw_loss",
+        "source_spatial_delta",
+        "source_temporal_delta",
+        "initial_shift",
+        "initial_all_f1",
+        "initial_masked_f1",
+        "initial_coverage",
+        "initial_mean_conf",
+        "epoch1_all_f1",
+        "epoch1_masked_f1",
+        "epoch1_coverage",
+        "last_shift",
+        "last_all_f1",
+        "last_masked_f1",
+        "last_coverage",
+        "last_mean_conf",
+        "best_epoch_all_f1",
+        "best_epoch_masked_f1",
+        "best_epoch_coverage",
+        "pseudo_summary_count",
+    }
+    rows = []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle, delimiter="\t"):
+            parsed = {}
+            for key, value in row.items():
+                if key in numeric_fields:
+                    parsed[key] = safe_float(value)
+                    if key in {"seed", "initial_shift", "last_shift", "pseudo_summary_count"}:
+                        parsed[key] = safe_int(value)
+                else:
+                    parsed[key] = value
+            rows.append(parsed)
+    return rows
 
 
 def mean(items):
@@ -322,10 +370,26 @@ def build_dose_response(rows):
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("Usage: summarize_v243b_raw_strength_intervention.py LOG_DIR")
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit(
+            "Usage: summarize_v243b_raw_strength_intervention.py LOG_DIR [BASELINE_ROWS_TSV]"
+        )
     root = Path(sys.argv[1])
     rows = [parse_log(path) for path in sorted(root.glob("*.log"))]
+    if len(sys.argv) == 3:
+        baseline_rows = [
+            row for row in read_rows_tsv(Path(sys.argv[2]))
+            if row.get("status") == "ok" and row.get("config") == "plain"
+        ]
+        existing_plain = {
+            (row.get("task"), row.get("seed"))
+            for row in rows
+            if row.get("status") == "ok" and row.get("config") == "plain"
+        }
+        rows.extend(
+            row for row in baseline_rows
+            if (row.get("task"), row.get("seed")) not in existing_plain
+        )
 
     detail_fields = [
         "task",

@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+import re
+import statistics as stats
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+
+TEST_RE = re.compile(r"Test result for ([^:]+): accuracy=([0-9.]+), f1=([0-9.]+)")
+NAME_RE = re.compile(r"gpu\d+_(.+)_seed(\d+)_(.+)\.log$")
+
+
+def fmt(value):
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:.6f}"
+    return str(value)
+
+
+def mean(values):
+    return sum(values) / len(values) if values else None
+
+
+def stdev(values):
+    return stats.stdev(values) if len(values) > 1 else None
+
+
+def write_tsv(path, rows, fields):
+    with path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write("\t".join(fields) + "\n")
+        for row in rows:
+            handle.write("\t".join(fmt(row.get(field)) for field in fields) + "\n")
+
+
+def parse_log(path):
+    match = NAME_RE.match(path.name)
+    if not match:
+        return None
+    task, seed, config = match.group(1), int(match.group(2)), match.group(3)
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    tests = TEST_RE.findall(text)
+    status = "ok"
+    if "Traceback" in text or "error:" in text.lower():
+        status = "error"
+    if not tests:
+        status = "incomplete"
+    da_f1 = float(tests[-1][2]) if tests else None
+    da_acc = float(tests[-1][1]) if tests else None
+    return {
+        "task": task,
+        "seed": seed,
+        "config": config,
+        "da_acc": da_acc,
+        "da_f1": da_f1,
+        "status": status,
+        "log": path.name,
+    }
+
+
+def main():
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: summarize_v275_da_only.py LOG_DIR")
+    log_dir = Path(sys.argv[1])
+    rows = [
+        row
+        for row in (parse_log(path) for path in sorted(log_dir.glob("gpu*.log")))
+        if row is not None
+    ]
+    write_tsv(
+        log_dir / "da_only_rows.tsv",
+        rows,
+        ["task", "seed", "config", "da_acc", "da_f1", "status", "log"],
+    )
+
+    by_key = {(row["task"], row["seed"], row["config"]): row for row in rows if row["status"] == "ok"}
+    deltas = []
+    for (task, seed, config), row in sorted(by_key.items()):
+        if config == "plain":
+            continue
+        base = by_key.get((task, seed, "plain"))
+        if base is None:
+            continue
+        deltas.append(
+            {
+                "task": task,
+                "seed": seed,
+                "config": config,
+                "plain_da_f1": base["da_f1"],
+                "config_da_f1": row["da_f1"],
+                "delta_da_f1": row["da_f1"] - base["da_f1"],
+            }
+        )
+    write_tsv(
+        log_dir / "da_only_delta_vs_plain.tsv",
+        deltas,
+        ["task", "seed", "config", "plain_da_f1", "config_da_f1", "delta_da_f1"],
+    )
+
+    grouped = defaultdict(list)
+    for row in deltas:
+        grouped[(row["task"], row["config"])].append(row["delta_da_f1"])
+    summary = []
+    for (task, config), values in sorted(grouped.items()):
+        summary.append(
+            {
+                "task": task,
+                "config": config,
+                "n": len(values),
+                "delta_da_f1_mean": mean(values),
+                "delta_da_f1_std": stdev(values),
+                "positive_seed_count": sum(value > 0 for value in values),
+            }
+        )
+    write_tsv(
+        log_dir / "da_only_summary_by_task.tsv",
+        summary,
+        ["task", "config", "n", "delta_da_f1_mean", "delta_da_f1_std", "positive_seed_count"],
+    )
+
+    overall = defaultdict(list)
+    for row in deltas:
+        overall[row["config"]].append(row["delta_da_f1"])
+    overall_rows = []
+    for config, values in sorted(overall.items()):
+        overall_rows.append(
+            {
+                "config": config,
+                "n": len(values),
+                "delta_da_f1_mean": mean(values),
+                "delta_da_f1_std": stdev(values),
+                "positive_seed_count": sum(value > 0 for value in values),
+            }
+        )
+    write_tsv(
+        log_dir / "da_only_summary_overall.tsv",
+        overall_rows,
+        ["config", "n", "delta_da_f1_mean", "delta_da_f1_std", "positive_seed_count"],
+    )
+
+
+if __name__ == "__main__":
+    main()

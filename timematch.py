@@ -2,7 +2,6 @@ from torch.utils.data.sampler import WeightedRandomSampler
 import sklearn.metrics
 from collections import Counter
 from copy import deepcopy
-import random
 
 import numpy as np
 import torch
@@ -13,21 +12,6 @@ from tqdm import tqdm
 
 from dataset import PixelSetData
 from evaluation import validation
-from ideas.source_phase_compactness import (
-    SourceSegmentWeightTracker,
-    build_source_segment_partition_spec,
-    compute_source_structure_loss,
-    describe_source_segment_partition_spec,
-)
-from ideas.source_raw_compactness import (
-    compute_source_raw_global_compactness_loss,
-    is_raw_global_compactness_version,
-)
-from ideas.source_feature_reshaper import (
-    build_source_feature_reshaper,
-    compute_dual_path_relation_regularization,
-    compute_source_feature_reshaper_regularization,
-)
 from transforms import (
     Normalize,
     RandomSamplePixels,
@@ -58,464 +42,16 @@ def _check_temporal_index_range(model, positions, applied_shift, tag):
         )
 
 
-def _resolve_timematch_structure_feature_target(config, source_feature_reshaper):
-    target = str(getattr(config, "source_structure_feature_target", "auto")).lower()
-    if target == "auto":
-        # Preserve legacy TimeMatch behavior: when a reshaper exists, structure
-        # defaults to reshaped source features; without a reshaper, compactness
-        # must be requested explicitly via source_structure_feature_target=raw.
-        return "reshaped" if source_feature_reshaper is not None else "none"
-    if source_feature_reshaper is None and target in {"reshaped", "both"}:
-        return "raw"
-    return target
-
-
-def _compute_timematch_structure_loss_on_features(
-    feats,
-    positions,
-    targets,
-    config,
-    phase_weight_tracker,
-    anchor_feats,
-    detach_features=False,
-):
-    structure_feats = feats.detach() if detach_features else feats
-    structure_anchor = anchor_feats.detach() if detach_features else anchor_feats
-    if is_raw_global_compactness_version(
-        getattr(config, "source_structure_loss_version", "compactness")
-    ):
-        return compute_source_raw_global_compactness_loss(
-            structure_feats,
-            targets,
-            intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
-            compact_distance=getattr(config, "source_structure_compact_distance", "mse"),
-            norm_preserve_trade_off=getattr(
-                config, "source_structure_norm_preserve_trade_off", 0.0
-            ),
-            norm_preserve_target=getattr(
-                config, "source_structure_norm_preserve_target", "min_mean"
-            ),
-            norm_preserve_value=getattr(
-                config, "source_structure_norm_preserve_value", 1.0
-            ),
-        )
-    return compute_source_structure_loss(
-        structure_feats,
-        positions,
-        targets,
-        weight_tracker=phase_weight_tracker,
-        version=getattr(config, "source_structure_loss_version", "compactness"),
-        intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
-        amplitude_trade_off=getattr(config, "source_structure_amplitude_trade_off", 0.25),
-        interphase_trade_off=getattr(config, "source_structure_interphase_trade_off", 0.25),
-        shape_trade_off=getattr(config, "source_structure_shape_trade_off", 0.15),
-        trend_trade_off=getattr(config, "source_structure_trend_trade_off", 0.05),
-        season_trade_off=getattr(config, "source_structure_season_trade_off", 0.02),
-        segment_inter_trade_off=getattr(config, "source_structure_segment_inter_trade_off", 0.02),
-        boundary_window_trade_off=getattr(config, "source_structure_boundary_window_trade_off", 0.02),
-        boundary_window_size=getattr(config, "source_structure_boundary_window_size", 2),
-        anchor_spatial_feats=structure_anchor,
-        anchor_positions=positions,
-    )
-
-
-def _compute_timematch_structure_loss(
-    spatial_feats_raw,
-    spatial_feats,
-    positions,
-    targets,
-    config,
-    phase_weight_tracker,
-    source_feature_reshaper,
-):
-    structure_target = _resolve_timematch_structure_feature_target(config, source_feature_reshaper)
-    detach_features = bool(getattr(config, "source_structure_detach_features", False))
-    compact_raw_loss = spatial_feats_raw.sum() * 0.0
-    compact_reshaped_loss = spatial_feats_raw.sum() * 0.0
-    raw_logs = {}
-    reshaped_logs = {}
-
-    if structure_target in {"raw", "both"}:
-        compact_raw_loss, raw_logs = _compute_timematch_structure_loss_on_features(
-            spatial_feats_raw,
-            positions,
-            targets,
-            config,
-            phase_weight_tracker,
-            anchor_feats=spatial_feats_raw.detach(),
-            detach_features=detach_features,
-        )
-    if structure_target in {"reshaped", "both"} and source_feature_reshaper is not None:
-        compact_reshaped_loss, reshaped_logs = _compute_timematch_structure_loss_on_features(
-            spatial_feats,
-            positions,
-            targets,
-            config,
-            phase_weight_tracker,
-            anchor_feats=spatial_feats_raw.detach(),
-            detach_features=detach_features,
-        )
-
-    compact_loss = compact_raw_loss + compact_reshaped_loss
-    compact_logs = {
-        "compactness_loss": float(raw_logs.get("compactness_loss", 0.0))
-        + float(reshaped_logs.get("compactness_loss", 0.0)),
-        "compactness_raw_loss": float(raw_logs.get("compactness_loss", 0.0)),
-        "compactness_reshaped_loss": float(reshaped_logs.get("compactness_loss", 0.0)),
-        "source_structure_detached": float(detach_features),
-        "source_structure_target_raw": float(structure_target in {"raw", "both"}),
-        "source_structure_target_reshaped": float(
-            structure_target in {"reshaped", "both"} and source_feature_reshaper is not None
-        ),
-    }
-    for key, value in raw_logs.items():
-        if key != "compactness_loss":
-            compact_logs[f"raw_{key}"] = value
-    for key, value in reshaped_logs.items():
-        if key != "compactness_loss":
-            compact_logs[f"reshaped_{key}"] = value
-    return compact_loss, compact_logs
-
-
-def _safe_macro_f1(labels, preds):
-    if len(labels) == 0:
-        return 0.0
-    return sklearn.metrics.f1_score(labels, preds, average="macro", zero_division=0)
-
-
-def _pseudo_label_stats(labels, preds, confs, mask, num_classes):
-    labels = np.asarray(labels)
-    preds = np.asarray(preds)
-    confs = np.asarray(confs, dtype=np.float64)
-    mask = np.asarray(mask, dtype=bool)
-    total = int(labels.shape[0])
-    masked_count = int(mask.sum())
-    stats = {
-        "total": total,
-        "masked_count": masked_count,
-        "coverage": masked_count / max(total, 1),
-        "all_f1": _safe_macro_f1(labels, preds),
-        "all_acc": float((labels == preds).mean()) if total > 0 else 0.0,
-        "mean_conf": float(confs.mean()) if total > 0 else 0.0,
-        "masked_f1": 0.0,
-        "masked_acc": 0.0,
-        "masked_mean_conf": 0.0,
-    }
-    if masked_count > 0:
-        stats["masked_f1"] = _safe_macro_f1(labels[mask], preds[mask])
-        stats["masked_acc"] = float((labels[mask] == preds[mask]).mean())
-        stats["masked_mean_conf"] = float(confs[mask].mean())
-    pred_counts = np.bincount(preds, minlength=num_classes).astype(np.float64)
-    pred_probs = pred_counts / max(pred_counts.sum(), 1.0)
-    pred_entropy = -np.sum(pred_probs * np.log(pred_probs + 1e-12))
-    stats["pred_entropy"] = float(pred_entropy)
-    return stats
-
-
-def _print_pseudo_summary(stage, epoch, shift, stats):
-    print(
-        "TIMEMATCH_PSEUDO_SUMMARY|"
-        f"stage={stage}|"
-        f"epoch={epoch}|"
-        f"shift={shift}|"
-        f"total={stats['total']}|"
-        f"masked_count={stats['masked_count']}|"
-        f"coverage={stats['coverage']:.6f}|"
-        f"all_f1={stats['all_f1']:.6f}|"
-        f"all_acc={stats['all_acc']:.6f}|"
-        f"masked_f1={stats['masked_f1']:.6f}|"
-        f"masked_acc={stats['masked_acc']:.6f}|"
-        f"mean_conf={stats['mean_conf']:.6f}|"
-        f"masked_mean_conf={stats['masked_mean_conf']:.6f}|"
-        f"pred_entropy={stats['pred_entropy']:.6f}"
-    )
-
-
-def _label_entropy(labels, num_classes):
-    labels = np.asarray(labels, dtype=np.int64)
-    if labels.size == 0:
-        return 0.0
-    counts = np.bincount(labels, minlength=num_classes).astype(np.float64)
-    probs = counts / max(counts.sum(), 1.0)
-    valid = probs > 0
-    return float(-(probs[valid] * np.log(probs[valid] + 1e-12)).sum())
-
-
-def _class_centroids(features, labels, num_classes):
-    centroids = []
-    valid = []
-    for class_id in range(num_classes):
-        group = features[labels == class_id]
-        if group.numel() == 0:
-            centroids.append(torch.zeros(features.shape[1], dtype=features.dtype))
-            valid.append(False)
-        else:
-            centroids.append(group.mean(dim=0))
-            valid.append(True)
-    return torch.stack(centroids, dim=0), torch.tensor(valid, dtype=torch.bool)
-
-
-def _within_class_trace(features, labels, num_classes):
-    total = 0.0
-    count = 0
-    for class_id in range(num_classes):
-        group = features[labels == class_id]
-        if group.shape[0] == 0:
-            continue
-        centered = group - group.mean(dim=0, keepdim=True)
-        total += float((centered ** 2).sum(dim=1).mean().item()) * group.shape[0]
-        count += int(group.shape[0])
-    return total / max(count, 1)
-
-
-def _mean_centroid_l2(current, current_valid, previous):
-    if previous is None:
-        return 0.0
-    prev_centroids = previous["centroids"]
-    prev_valid = previous["valid"]
-    valid = current_valid & prev_valid
-    if int(valid.sum().item()) == 0:
-        return 0.0
-    return float(torch.norm(current[valid] - prev_centroids[valid], dim=1).mean().item())
-
-
-def _mean_centroid_cosine_distance(current, current_valid, previous):
-    if previous is None:
-        return 0.0
-    prev_centroids = previous["centroids"]
-    prev_valid = previous["valid"]
-    valid = current_valid & prev_valid
-    if int(valid.sum().item()) == 0:
-        return 0.0
-    cosine = F.cosine_similarity(current[valid], prev_centroids[valid], dim=1)
-    return float((1.0 - cosine).mean().item())
-
-
-def _print_timematch_trajectory_summary(stage, epoch, shift, feature_kind, stats):
-    ordered = [
-        "count",
-        "pseudo_acc",
-        "pseudo_macro_f1",
-        "pseudo_mean_conf",
-        "pseudo_entropy",
-        "pseudo_flip_ratio",
-        "pseudo_centroid_shift",
-        "pseudo_centroid_cosine_distance",
-        "oracle_centroid_shift",
-        "oracle_centroid_cosine_distance",
-        "feature_mean_shift",
-        "pseudo_within_trace",
-        "oracle_within_trace",
-        "feature_cov_trace",
-        "feature_norm_mean",
-        "feature_norm_std",
-    ]
-    parts = [
-        "TIMEMATCH_TRAJECTORY_SUMMARY",
-        f"stage={stage}",
-        f"epoch={epoch}",
-        f"shift={shift}",
-        f"feature_kind={feature_kind}",
-    ]
-    for key in ordered:
-        value = stats.get(key, 0.0)
-        if isinstance(value, int):
-            parts.append(f"{key}={value}")
-        else:
-            parts.append(f"{key}={float(value):.6f}")
-    print("|".join(parts))
-
-
-@torch.no_grad()
-def _collect_timematch_trajectory_state(
-    model,
-    target_loader,
-    device,
-    shift,
-    num_classes,
-    feature_kind,
-    max_batches=64,
-    sample_seed=-1,
-):
-    model.eval()
-    features, labels, preds, confs = [], [], [], []
-    if sample_seed is not None and int(sample_seed) >= 0:
-        py_random_state = random.getstate()
-        np_random_state = np.random.get_state()
-        random.seed(int(sample_seed))
-        np.random.seed(int(sample_seed))
-    else:
-        py_random_state = np_random_state = None
-
-    try:
-        for batch_idx, sample in enumerate(target_loader):
-            if max_batches > 0 and batch_idx >= max_batches:
-                break
-            pixels, valid_pixels, positions, extra = to_cuda(sample, device)
-            targets = sample["label"].to(device=device, non_blocking=True)
-            _check_temporal_index_range(model, positions, shift, "target_trajectory")
-
-            spatial_feats = model.spatial_encoder(pixels, valid_pixels, extra)
-            temporal_feats = model.temporal_encoder(spatial_feats, positions + shift)
-            logits = model.decoder(temporal_feats)
-            probs = F.softmax(logits, dim=1)
-            batch_conf, batch_preds = torch.max(probs, dim=1)
-
-            if feature_kind == "raw_pooled":
-                batch_features = spatial_feats.mean(dim=1)
-            elif feature_kind == "final":
-                batch_features = temporal_feats
-            else:
-                raise ValueError(f"unsupported trajectory feature_kind: {feature_kind}")
-            if batch_features.ndim > 2:
-                batch_features = batch_features.reshape(batch_features.shape[0], -1)
-
-            features.append(batch_features.detach().cpu().float())
-            labels.append(targets.detach().cpu().long())
-            preds.append(batch_preds.detach().cpu().long())
-            confs.append(batch_conf.detach().cpu().float())
-    finally:
-        if py_random_state is not None:
-            random.setstate(py_random_state)
-            np.random.set_state(np_random_state)
-
-    if not features:
-        return None
-
-    features = torch.cat(features, dim=0)
-    labels = torch.cat(labels, dim=0)
-    preds = torch.cat(preds, dim=0)
-    confs = torch.cat(confs, dim=0)
-    pseudo_centroids, pseudo_valid = _class_centroids(features, preds, num_classes)
-    oracle_centroids, oracle_valid = _class_centroids(features, labels, num_classes)
-    feature_mean = features.mean(dim=0)
-    centered = features - feature_mean.unsqueeze(0)
-    return {
-        "features": features,
-        "labels": labels,
-        "preds": preds,
-        "confs": confs,
-        "pseudo": {"centroids": pseudo_centroids, "valid": pseudo_valid},
-        "oracle": {"centroids": oracle_centroids, "valid": oracle_valid},
-        "feature_mean": feature_mean,
-        "feature_cov_trace": float((centered ** 2).sum(dim=1).mean().item()),
-        "pseudo_within_trace": _within_class_trace(features, preds, num_classes),
-        "oracle_within_trace": _within_class_trace(features, labels, num_classes),
-        "feature_norm_mean": float(features.norm(dim=1).mean().item()),
-        "feature_norm_std": float(features.norm(dim=1).std(unbiased=False).item()),
-    }
-
-
-def _trajectory_stats_from_state(state, previous, num_classes):
-    labels = state["labels"].numpy()
-    preds = state["preds"].numpy()
-    confs = state["confs"].numpy()
-    stats = {
-        "count": int(state["labels"].shape[0]),
-        "pseudo_acc": float((state["labels"] == state["preds"]).float().mean().item()),
-        "pseudo_macro_f1": _safe_macro_f1(labels, preds),
-        "pseudo_mean_conf": float(confs.mean()) if confs.size > 0 else 0.0,
-        "pseudo_entropy": _label_entropy(preds, num_classes),
-        "pseudo_flip_ratio": 0.0,
-        "pseudo_centroid_shift": _mean_centroid_l2(
-            state["pseudo"]["centroids"],
-            state["pseudo"]["valid"],
-            None if previous is None else previous["pseudo"],
-        ),
-        "pseudo_centroid_cosine_distance": _mean_centroid_cosine_distance(
-            state["pseudo"]["centroids"],
-            state["pseudo"]["valid"],
-            None if previous is None else previous["pseudo"],
-        ),
-        "oracle_centroid_shift": _mean_centroid_l2(
-            state["oracle"]["centroids"],
-            state["oracle"]["valid"],
-            None if previous is None else previous["oracle"],
-        ),
-        "oracle_centroid_cosine_distance": _mean_centroid_cosine_distance(
-            state["oracle"]["centroids"],
-            state["oracle"]["valid"],
-            None if previous is None else previous["oracle"],
-        ),
-        "feature_mean_shift": 0.0,
-        "pseudo_within_trace": state["pseudo_within_trace"],
-        "oracle_within_trace": state["oracle_within_trace"],
-        "feature_cov_trace": state["feature_cov_trace"],
-        "feature_norm_mean": state["feature_norm_mean"],
-        "feature_norm_std": state["feature_norm_std"],
-    }
-    if previous is not None:
-        count = min(int(state["preds"].shape[0]), int(previous["preds"].shape[0]))
-        if count > 0:
-            stats["pseudo_flip_ratio"] = float((state["preds"][:count] != previous["preds"][:count]).float().mean().item())
-        stats["feature_mean_shift"] = float(torch.norm(state["feature_mean"] - previous["feature_mean"]).item())
-    return stats
-
-
-@torch.no_grad()
-def _run_timematch_trajectory_diagnostic(
-    model,
-    target_loader,
-    device,
-    shift,
-    num_classes,
-    feature_kinds,
-    previous_states,
-    stage,
-    epoch,
-    max_batches,
-    sample_seed,
-):
-    next_states = {}
-    for feature_kind in feature_kinds:
-        state = _collect_timematch_trajectory_state(
-            model,
-            target_loader,
-            device,
-            shift,
-            num_classes,
-            feature_kind=feature_kind,
-            max_batches=max_batches,
-            sample_seed=sample_seed,
-        )
-        if state is None:
-            continue
-        stats = _trajectory_stats_from_state(state, previous_states.get(feature_kind), num_classes)
-        _print_timematch_trajectory_summary(stage, epoch, shift, feature_kind, stats)
-        next_states[feature_kind] = state
-    return next_states
-
-
 def train_timematch(student, config, writer, val_loader, device, best_model_path, fold_num, splits):
-    assert not getattr(config, "with_shift_aug", False), (
-        "TimeMatch with source phase compactness / v2.3 phase-aware partition must not enable "
-        "RandomTemporalShift-style source-side augmentation, because compactness is defined on the original source time axis."
-    )
     source_loader, target_loader_no_aug, target_loader = get_data_loaders(splits, config, config.balance_source)
 
     # Setup model
     pretrained_path = f"{config.weights}/fold_{fold_num}"
-    pretrained_checkpoint = torch.load(f"{pretrained_path}/model.pt", weights_only=False)
-    pretrained_weights = pretrained_checkpoint["state_dict"]
+    pretrained_weights = torch.load(f"{pretrained_path}/model.pt", weights_only=False)["state_dict"]
     student.load_state_dict(pretrained_weights)
     teacher = deepcopy(student)
     student.to(device)
     teacher.to(device)
-
-    source_feature_reshaper = build_source_feature_reshaper(
-        kind=getattr(config, "source_feature_reshaper", "none"),
-        feature_dim=student.spatial_encoder.output_dim,
-        strength=getattr(config, "source_feature_reshaper_strength", 0.10),
-        kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
-        init_seed=getattr(config, "source_feature_reshaper_init_seed", -1),
-    )
-    if source_feature_reshaper is not None:
-        if not getattr(config, "source_feature_reshaper_trainable", True):
-            for param in source_feature_reshaper.parameters():
-                param.requires_grad_(False)
-        source_feature_reshaper.to(device)
-        if "source_feature_reshaper_state_dict" in pretrained_checkpoint:
-            source_feature_reshaper.load_state_dict(pretrained_checkpoint["source_feature_reshaper_state_dict"])
 
     # Training setup
     global_step, best_f1 = 0, 0
@@ -526,71 +62,17 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
     steps_per_epoch = config.steps_per_epoch
 
-    params = list(student.parameters())
-    if source_feature_reshaper is not None:
-        params += list(source_feature_reshaper.parameters())
-    optimizer = torch.optim.Adam(params, lr=config.lr, weight_decay=config.weight_decay)
+    optimizer = torch.optim.Adam(student.parameters(), lr=config.lr, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs * steps_per_epoch, eta_min=0)
-    source_phase_partition_spec = build_source_segment_partition_spec(
-        source_loader.dataset.date_positions,
-        dataset=source_loader.dataset,
-        mode=getattr(config, "source_segment_partition_mode", getattr(config, "source_phase_partition_mode", "uniform")),
-        segment_count=getattr(config, "source_segment_count", getattr(config, "source_phase_count", 5)),
-        gap_threshold=getattr(config, "source_phase_gap_threshold", 45),
-        min_points=getattr(config, "source_phase_min_points", 3),
-        max_points=getattr(config, "source_phase_max_points", 8),
-        max_span=getattr(config, "source_phase_max_span", 120),
-        semantic_quantile=getattr(config, "source_segment_semantic_quantile", 0.75),
-        semantic_max_samples_per_class=getattr(config, "source_segment_semantic_max_samples_per_class", 128),
-        semantic_curvature_trade_off=getattr(config, "source_segment_semantic_curvature_trade_off", 0.5),
-        semantic_energy_trade_off=getattr(config, "source_segment_semantic_energy_trade_off", 0.25),
-        semantic_similarity_trade_off=getattr(config, "source_segment_semantic_similarity_trade_off", 0.25),
-        semantic_max_extra_cuts_per_base=getattr(config, "source_segment_semantic_max_extra_cuts_per_base", 2),
-        semantic_merge_boundary_trade_off=getattr(config, "source_segment_semantic_merge_boundary_trade_off", 0.5),
-        semantic_aggl_min_points=getattr(config, "source_segment_semantic_aggl_min_points", 3),
-        semantic_aggl_target_slack=getattr(config, "source_segment_semantic_aggl_target_slack", 1),
-        semantic_aggl_merge_cost_tolerance=getattr(config, "source_segment_semantic_aggl_merge_cost_tolerance", 1.15),
-        semantic_aggl_dynamics_trade_off=getattr(config, "source_segment_semantic_aggl_dynamics_trade_off", 0.35),
-    )
-    print("source segment partition:", describe_source_segment_partition_spec(source_phase_partition_spec))
-    phase_weight_tracker = SourceSegmentWeightTracker(
-        phase_count=source_phase_partition_spec["phase_count"],
-        phase_partition_spec=source_phase_partition_spec,
-        min_sample_points_per_phase=getattr(config, "source_phase_min_sample_points", 2),
-    )
 
     source_iter = iter(cycle(source_loader))
     target_iter = iter(cycle(target_loader))
     min_shift, max_shift = -config.max_temporal_shift, config.max_temporal_shift
     target_to_source_shift = 0
+
     # To evaluate how well we estimate class distribution
     target_labels = target_loader_no_aug.dataset.get_labels()
     actual_class_distr = estimate_class_distribution(target_labels, config.num_classes)
-    trajectory_loader = None
-    trajectory_feature_kinds = []
-    trajectory_states = {}
-    if bool(getattr(config, "timematch_trajectory_diagnostic", False)):
-        feature_kind = str(getattr(config, "timematch_trajectory_feature_kind", "final")).lower()
-        if feature_kind == "both":
-            trajectory_feature_kinds = ["raw_pooled", "final"]
-        else:
-            trajectory_feature_kinds = [feature_kind]
-        trajectory_loader = data.DataLoader(
-            target_loader_no_aug.dataset,
-            num_workers=int(getattr(config, "timematch_trajectory_num_workers", 0)),
-            batch_size=config.batch_size,
-            shuffle=False,
-            pin_memory=True,
-        )
-        print(
-            "TIMEMATCH_TRAJECTORY_CONFIG|"
-            f"enabled=True|"
-            f"feature_kind={feature_kind}|"
-            f"max_batches={getattr(config, 'timematch_trajectory_max_batches', 64)}|"
-            f"every={getattr(config, 'timematch_trajectory_every', 1)}|"
-            f"num_workers={getattr(config, 'timematch_trajectory_num_workers', 0)}|"
-            f"sample_seed={getattr(config, 'timematch_trajectory_sample_seed', 1729)}"
-        )
 
     # estimate an initial guess for shift using Inception Score
     if config.estimate_shift:
@@ -604,41 +86,11 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         # Use estimated shift to get initial pseudo labels
         pseudo_softmaxes = get_pseudo_labels(teacher, target_loader_no_aug, device, target_to_source_shift, n=None)
         all_pseudo_labels = torch.max(pseudo_softmaxes, dim=1)[1]
-    else:
-        pseudo_softmaxes = get_pseudo_labels(teacher, target_loader_no_aug, device, target_to_source_shift, n=None)
-        all_pseudo_labels = torch.max(pseudo_softmaxes, dim=1)[1]
-
-    pseudo_conf, pseudo_preds = torch.max(pseudo_softmaxes, dim=1)
-    initial_pseudo_stats = _pseudo_label_stats(
-        target_labels,
-        pseudo_preds.cpu().numpy(),
-        pseudo_conf.cpu().numpy(),
-        pseudo_conf.cpu().numpy() > config.pseudo_threshold,
-        config.num_classes,
-    )
-    _print_pseudo_summary("initial", 0, target_to_source_shift, initial_pseudo_stats)
-    if trajectory_loader is not None:
-        trajectory_states = _run_timematch_trajectory_diagnostic(
-            teacher,
-            trajectory_loader,
-            device,
-            target_to_source_shift,
-            config.num_classes,
-            trajectory_feature_kinds,
-            trajectory_states,
-            stage="initial",
-            epoch=0,
-            max_batches=int(getattr(config, "timematch_trajectory_max_batches", 64)),
-            sample_seed=int(getattr(config, "timematch_trajectory_sample_seed", 1729)),
-        )
 
     source_to_target_shift = 0
     for epoch in range(config.epochs):
         progress_bar = tqdm(range(steps_per_epoch), desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}")
         loss_meter = AverageMeter()
-        compact_loss_meter = AverageMeter()
-        compact_raw_loss_meter = AverageMeter()
-        compact_reshaped_loss_meter = AverageMeter()
 
         if config.estimate_shift:
             estimated_class_distr = estimate_class_distribution(all_pseudo_labels, config.num_classes)
@@ -657,10 +109,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
         student.train()
         teacher.eval()  # don't update BN or use dropout for teacher
-        if source_feature_reshaper is not None:
-            source_feature_reshaper.train()
 
-        all_labels, all_pseudo_labels, all_pseudo_conf, all_pseudo_mask = [], [], [], []
+        all_labels, all_pseudo_labels, all_pseudo_mask = [], [], []
         for step in progress_bar:
             sample_source, (sample_target_weak, sample_target_strong) = next(source_iter), next(target_iter)
 
@@ -670,7 +120,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 teacher_preds = F.softmax(teacher.forward(pixels_t_weak, mask_t_weak, position_t_weak + target_to_source_shift, extra_t_weak), dim=1)
             pseudo_conf, pseudo_targets = torch.max(teacher_preds, dim=1)
             pseudo_mask = pseudo_conf > config.pseudo_threshold
-            target_update_count = int(pseudo_mask.sum().item())
 
             # Update student on shifted source data and pseudo-labeled target data
             pixels_s, mask_s, position_s, extra_s = to_cuda(sample_source, device)
@@ -678,126 +127,26 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             pixels_t, mask_t, position_t, extra_t = to_cuda(sample_target_strong, device)
             logits_target = None
             loss_target = 0.0
-            reshaper_loss = pixels_s.sum() * 0.0
-            reshaper_logs = {}
-            compact_loss = pixels_s.sum() * 0.0
-            compact_logs = {}
-            dual_relation_loss = pixels_s.sum() * 0.0
-            dual_relation_logs = {}
-            loss_source_reshaped = pixels_s.sum() * 0.0
             if config.domain_specific_bn:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
-                spatial_feats_source_raw = student.spatial_encoder(pixels_s, mask_s, extra_s)
-                temporal_feats_source_raw = student.temporal_encoder(
-                    spatial_feats_source_raw,
-                    position_s + source_to_target_shift,
-                )
-                logits_source_raw = student.decoder(temporal_feats_source_raw)
-                logits_source = logits_source_raw
-                spatial_feats_source = spatial_feats_source_raw
-                if source_feature_reshaper is not None:
-                    spatial_feats_source = source_feature_reshaper(
-                        spatial_feats_source_raw.detach(),
-                        positions=position_s,
-                        labels=source_labels,
-                    )
-                    reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
-                        spatial_feats_source_raw.detach(),
-                        spatial_feats_source,
-                    )
-                    temporal_feats_source = student.temporal_encoder(
-                        spatial_feats_source.detach(),
-                        position_s + source_to_target_shift,
-                    )
-                    logits_source = student.decoder(temporal_feats_source)
-                    loss_source_reshaped = criterion(logits_source, source_labels)
-                    if getattr(config, "source_feature_dual_path", False):
-                        dual_relation_loss, dual_relation_logs = compute_dual_path_relation_regularization(
-                            logits_source_raw,
-                            logits_source,
-                            raw_temporal_feats=temporal_feats_source_raw,
-                            reshaped_temporal_feats=temporal_feats_source,
-                        )
-                compact_loss, compact_logs = _compute_timematch_structure_loss(
-                    spatial_feats_source_raw,
-                    spatial_feats_source,
-                    position_s,
-                    source_labels,
-                    config,
-                    phase_weight_tracker,
-                    source_feature_reshaper,
-                )
-                if target_update_count >= 2:  # at least 2 examples required for BN
+                logits_source = student.forward(pixels_s, mask_s, position_s + source_to_target_shift, extra_s)
+                if len(torch.nonzero(pseudo_mask)) >= 2:  # at least 2 examples required for BN
                     _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
                     logits_target = student.forward(pixels_t[pseudo_mask], mask_t[pseudo_mask], position_t[pseudo_mask], extra_t[pseudo_mask])
             else:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
-                spatial_feats_source_raw = student.spatial_encoder(pixels_s, mask_s, extra_s)
-                temporal_feats_source_raw = student.temporal_encoder(
-                    spatial_feats_source_raw,
-                    position_s + source_to_target_shift,
-                )
-                logits_source_raw = student.decoder(temporal_feats_source_raw)
-                spatial_feats_source = spatial_feats_source_raw
-                temporal_feats_source = temporal_feats_source_raw
-                logits_source = logits_source_raw
-                if source_feature_reshaper is not None:
-                    spatial_feats_source = source_feature_reshaper(
-                        spatial_feats_source_raw.detach(),
-                        positions=position_s,
-                        labels=source_labels,
-                    )
-                    reshaper_loss, reshaper_logs = compute_source_feature_reshaper_regularization(
-                        spatial_feats_source_raw.detach(),
-                        spatial_feats_source,
-                    )
-                    temporal_feats_source = student.temporal_encoder(
-                        spatial_feats_source.detach(),
-                        position_s + source_to_target_shift,
-                    )
-                    logits_source = student.decoder(temporal_feats_source)
-                    loss_source_reshaped = criterion(logits_source, source_labels)
-                    if getattr(config, "source_feature_dual_path", False):
-                        dual_relation_loss, dual_relation_logs = compute_dual_path_relation_regularization(
-                            logits_source_raw,
-                            logits_source,
-                            raw_temporal_feats=temporal_feats_source_raw,
-                            reshaped_temporal_feats=temporal_feats_source,
-                        )
-                compact_loss, compact_logs = _compute_timematch_structure_loss(
-                    spatial_feats_source_raw,
-                    spatial_feats_source,
-                    position_s,
-                    source_labels,
-                    config,
-                    phase_weight_tracker,
-                    source_feature_reshaper,
-                )
+                _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
+                pixels = torch.cat([pixels_s, pixels_t[pseudo_mask]])
+                mask = torch.cat([mask_s, mask_t[pseudo_mask]])
+                position = torch.cat([position_s + source_to_target_shift, position_t[pseudo_mask]])
+                extra = torch.cat([extra_s, extra_t[pseudo_mask]])
+                logits = student.forward(pixels, mask, position, extra)
+                logits_source, logits_target = logits[:config.batch_size], logits[config.batch_size:]
 
-                if target_update_count > 0:
-                    _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
-                    logits_target = student.forward(
-                        pixels_t[pseudo_mask],
-                        mask_t[pseudo_mask],
-                        position_t[pseudo_mask],
-                        extra_t[pseudo_mask],
-                    )
-
-            loss_source_raw = criterion(logits_source_raw, source_labels)
-            if source_feature_reshaper is not None and getattr(config, "source_feature_dual_path", False):
-                loss_source = (
-                    loss_source_raw
-                    + getattr(config, "source_feature_dual_cls_trade_off", 1.0) * loss_source_reshaped
-                    + getattr(config, "source_feature_dual_relation_trade_off", 0.05) * dual_relation_loss
-                )
-            else:
-                loss_source = criterion(logits_source, source_labels)
+            loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
             loss = loss_source + config.trade_off * loss_target
-            loss = loss + compact_loss
-            if source_feature_reshaper is not None:
-                loss = loss + getattr(config, "source_feature_reshaper_reg_trade_off", 0.0) * reshaper_loss
 
             # compute loss and backprop
             optimizer.zero_grad()
@@ -809,162 +158,44 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
             # Metrics
             loss_meter.update(loss.item())
-            compact_loss_meter.update(float(compact_logs.get("compactness_loss", 0.0)))
-            compact_raw_loss_meter.update(float(compact_logs.get("compactness_raw_loss", 0.0)))
-            compact_reshaped_loss_meter.update(float(compact_logs.get("compactness_reshaped_loss", 0.0)))
-            progress_bar.set_postfix(loss=f"{loss_meter.avg:.3f}", compact=f"{compact_loss_meter.avg:.3f}")
+            progress_bar.set_postfix(loss=f"{loss_meter.avg:.3f}")
             all_labels.extend(sample_target_weak['label'].tolist())
-            all_pseudo_labels.extend(pseudo_targets.detach().cpu().tolist())
-            all_pseudo_conf.extend(pseudo_conf.detach().cpu().tolist())
-            all_pseudo_mask.extend(pseudo_mask.detach().cpu().tolist())
+            all_pseudo_labels.extend(pseudo_targets.tolist())
+            all_pseudo_mask.extend(pseudo_mask.tolist())
 
             if step % config.log_step == 0:
                 writer.add_scalar("train/loss", loss_meter.val, global_step)
                 writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
-                writer.add_scalar("train/target_updates", target_update_count, global_step)
-                writer.add_scalar(
-                    "train/source_phase_compactness_loss",
-                    float(compact_logs.get("compactness_loss", 0.0)),
-                    global_step,
-                )
-                writer.add_scalar(
-                    "train/source_structure_loss",
-                    float(compact_logs.get("structure_loss", compact_logs.get("compactness_loss", 0.0))),
-                    global_step,
-                )
-                writer.add_scalar(
-                    "train/source_cls_loss_raw",
-                    float(loss_source_raw.detach().item()),
-                    global_step,
-                )
-                if source_feature_reshaper is not None:
-                    writer.add_scalar(
-                        "train/source_feature_reshaper_reg_loss",
-                        float(reshaper_logs.get("source_reshaper_reg_loss", 0.0)),
-                        global_step,
-                    )
-                    writer.add_scalar(
-                        "train/source_cls_loss_reshaped",
-                        float(loss_source_reshaped.detach().item()),
-                        global_step,
-                    )
-                    if getattr(config, "source_feature_dual_path", False):
-                        writer.add_scalar(
-                            "train/source_dual_relation_loss",
-                            float(dual_relation_logs.get("source_dual_relation_loss", 0.0)),
-                            global_step,
-                        )
-                for name, value in reshaper_logs.items():
-                    writer.add_scalar(f"train/{name}", value, global_step)
-                for name, value in compact_logs.items():
-                    if name != "compactness_loss":
-                        writer.add_scalar(f"train/{name}", value, global_step)
-                for name, value in dual_relation_logs.items():
-                    writer.add_scalar(f"train/{name}", value, global_step)
+                writer.add_scalar("train/target_updates", len(torch.nonzero(pseudo_mask)), global_step)
 
             global_step += 1
 
         progress_bar.close()
 
         # Evaluate pseudo labels
-        pseudo_stats = _pseudo_label_stats(
-            all_labels,
-            all_pseudo_labels,
-            all_pseudo_conf,
-            all_pseudo_mask,
-            config.num_classes,
-        )
-        pseudo_count = pseudo_stats["masked_count"]
-        conf_pseudo_f1 = pseudo_stats["masked_f1"]
+        all_labels, all_pseudo_labels, all_pseudo_mask = np.array(all_labels), np.array(all_pseudo_labels), np.array(all_pseudo_mask)
+        pseudo_count = all_pseudo_mask.sum()
+        conf_pseudo_f1 = sklearn.metrics.f1_score(all_labels[all_pseudo_mask], all_pseudo_labels[all_pseudo_mask], average='macro', zero_division=0)
         print(f"Teacher pseudo label F1 {conf_pseudo_f1:.3f} (n={pseudo_count})")
-        _print_pseudo_summary("train_epoch", epoch + 1, target_to_source_shift, pseudo_stats)
         writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
         writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
-        writer.add_scalar("train/pseudo_all_f1", pseudo_stats["all_f1"], epoch)
-        writer.add_scalar("train/pseudo_all_acc", pseudo_stats["all_acc"], epoch)
-        writer.add_scalar("train/pseudo_coverage", pseudo_stats["coverage"], epoch)
-        writer.add_scalar("train/pseudo_masked_acc", pseudo_stats["masked_acc"], epoch)
-        writer.add_scalar("train/pseudo_mean_conf", pseudo_stats["mean_conf"], epoch)
-        print(
-            "TIMEMATCH_EPOCH_SUMMARY|"
-            f"epoch={epoch + 1}|"
-            f"shift={target_to_source_shift}|"
-            f"loss={loss_meter.avg:.6f}|"
-            f"compact={compact_loss_meter.avg:.6f}|"
-            f"compact_raw={compact_raw_loss_meter.avg:.6f}|"
-            f"compact_reshaped={compact_reshaped_loss_meter.avg:.6f}|"
-            f"target={_resolve_timematch_structure_feature_target(config, source_feature_reshaper)}|"
-            f"detached={bool(getattr(config, 'source_structure_detach_features', False))}|"
-            f"reshaper_enabled={source_feature_reshaper is not None}|"
-            f"target_updates={int(pseudo_count)}|"
-            f"pseudo_coverage={pseudo_stats['coverage']:.6f}|"
-            f"pseudo_all_f1={pseudo_stats['all_f1']:.6f}|"
-            f"pseudo_all_acc={pseudo_stats['all_acc']:.6f}|"
-            f"pseudo_masked_f1={pseudo_stats['masked_f1']:.6f}|"
-            f"pseudo_masked_acc={pseudo_stats['masked_acc']:.6f}|"
-            f"pseudo_mean_conf={pseudo_stats['mean_conf']:.6f}"
-        )
-        trajectory_every = max(int(getattr(config, "timematch_trajectory_every", 1)), 1)
-        if trajectory_loader is not None and ((epoch + 1) % trajectory_every == 0 or epoch + 1 == config.epochs):
-            trajectory_states = _run_timematch_trajectory_diagnostic(
-                teacher,
-                trajectory_loader,
-                device,
-                target_to_source_shift,
-                config.num_classes,
-                trajectory_feature_kinds,
-                trajectory_states,
-                stage="train_epoch",
-                epoch=epoch + 1,
-                max_batches=int(getattr(config, "timematch_trajectory_max_batches", 64)),
-                sample_seed=int(getattr(config, "timematch_trajectory_sample_seed", 1729)),
-            )
+
+        writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
+        writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
 
         if config.run_validation:
             if config.output_student:
                 student.eval()
-                if source_feature_reshaper is not None:
-                    source_feature_reshaper.eval()
-                best_f1 = validation(
-                    best_f1,
-                    None,
-                    config,
-                    criterion,
-                    device,
-                    epoch,
-                    student,
-                    val_loader,
-                    writer,
-                    source_feature_reshaper=source_feature_reshaper,
-                    apply_source_feature_reshaper=False,
-                )
+                best_f1 = validation(best_f1, None, config, criterion, device, epoch, student, val_loader, writer)
             else:
                 teacher.eval()
-                best_f1 = validation(
-                    best_f1,
-                    None,
-                    config,
-                    criterion,
-                    device,
-                    epoch,
-                    teacher,
-                    val_loader,
-                    writer,
-                    source_feature_reshaper=None,
-                    apply_source_feature_reshaper=False,
-                )
+                best_f1 = validation(best_f1, None, config, criterion, device, epoch, teacher, val_loader, writer)
 
     # Save model final model 
     if config.output_student:
-        checkpoint = {'state_dict': student.state_dict()}
-        if source_feature_reshaper is not None:
-            checkpoint['source_feature_reshaper_state_dict'] = source_feature_reshaper.state_dict()
-        torch.save(checkpoint, best_model_path)
+        torch.save({'state_dict': student.state_dict()}, best_model_path)
     else:
-        checkpoint = {'state_dict': teacher.state_dict()}
-        if source_feature_reshaper is not None:
-            checkpoint['source_feature_reshaper_state_dict'] = source_feature_reshaper.state_dict()
-        torch.save(checkpoint, best_model_path)
+        torch.save({'state_dict': teacher.state_dict()}, best_model_path)
 
 def estimate_class_distribution(labels, num_classes):
     return np.bincount(labels, minlength=num_classes) / len(labels)

@@ -6,10 +6,9 @@ import torch.nn.functional as F
 from tqdm import tqdm
 import sklearn.metrics
 from utils.train_utils import AverageMeter, to_cuda
-from ideas.source_feature_reshaper import forward_with_optional_source_reshaper
 
 
-def validation(best_f1, best_model_path, config, criterion, device, epoch, model, val_loader, writer, temporal_shift=None, source_feature_reshaper=None, apply_source_feature_reshaper=False):
+def validation(best_f1, best_model_path, config, criterion, device, epoch, model, val_loader, writer, temporal_shift=None):
     val_metrics = evaluation(
         model,
         val_loader,
@@ -18,8 +17,6 @@ def validation(best_f1, best_model_path, config, criterion, device, epoch, model
         criterion,
         mode='val',
         temporal_shift=temporal_shift,
-        source_feature_reshaper=source_feature_reshaper,
-        apply_source_feature_reshaper=apply_source_feature_reshaper,
     )
     val_loss, val_acc, val_f1, val_kappa = val_metrics['loss'], val_metrics['accuracy'], val_metrics['macro_f1'], val_metrics['kappa']
     writer.add_scalar('val/loss', val_loss, global_step=epoch)
@@ -33,8 +30,6 @@ def validation(best_f1, best_model_path, config, criterion, device, epoch, model
         if best_model_path is not None:
             print(f'Saving best model to {best_model_path}')
             checkpoint = {'epoch': epoch, 'state_dict': model.state_dict(), 'best_f1': best_f1}
-            if source_feature_reshaper is not None:
-                checkpoint['source_feature_reshaper_state_dict'] = source_feature_reshaper.state_dict()
             torch.save(checkpoint, best_model_path)
     else:
         print(f'Validation F1 did not improve from {best_f1:.4f}.')
@@ -50,8 +45,6 @@ def evaluation(
     criterion=None,
     mode='val',
     temporal_shift=None,
-    source_feature_reshaper=None,
-    apply_source_feature_reshaper=False,
 ):
     y_true, y_pred = [], []
 
@@ -65,25 +58,9 @@ def evaluation(
 
         pixels, valid_pixels, positions, extra = to_cuda(sample, device)
         if temporal_shift is not None:
-            logits = forward_with_optional_source_reshaper(
-                model,
-                pixels,
-                valid_pixels,
-                positions + temporal_shift,
-                extra,
-                source_feature_reshaper=source_feature_reshaper,
-                apply_source_feature_reshaper=apply_source_feature_reshaper,
-            )
+            logits = model.forward(pixels, valid_pixels, positions + temporal_shift, extra)
         else:
-            logits = forward_with_optional_source_reshaper(
-                model,
-                pixels,
-                valid_pixels,
-                positions,
-                extra,
-                source_feature_reshaper=source_feature_reshaper,
-                apply_source_feature_reshaper=apply_source_feature_reshaper,
-            )
+            logits = model.forward(pixels, valid_pixels, positions, extra)
 
         predictions = logits.argmax(dim=1)
 

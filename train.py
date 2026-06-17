@@ -35,12 +35,8 @@ from competitors.dann.dann import train_dann
 from competitors.jumbot.jumbot import train_jumbot
 from competitors.mmd.train_mmd import train_mmd
 from competitors.alda.train_alda import train_alda
-from dataset import PixelSetData, create_evaluation_loaders, create_train_loader
+from dataset import PixelSetData, count_pixelset_samples, create_evaluation_loaders, create_train_loader
 from evaluation import evaluation, validation
-from ideas.source_feature_reshaper import (
-    build_source_feature_reshaper,
-    forward_with_optional_source_reshaper,
-)
 from ideas.train_source_phase_compactness import train_supervised_source_phase_compactness
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
 from timematch import train_timematch
@@ -79,7 +75,12 @@ def main(config):
     # Randomly assign parcels to train/val/test
     indices = {
         config.source: len(source_data),
-        config.target: len(PixelSetData(config.data_root, config.target, source_classes, closed_set=config.closed_set))
+        config.target: count_pixelset_samples(
+            config.data_root,
+            config.target,
+            source_classes,
+            closed_set=config.closed_set,
+        ),
     }
     folds = create_train_val_test_folds([config.source, config.target], config.num_folds, indices, config.val_ratio, config.test_ratio)
 
@@ -143,11 +144,6 @@ def main(config):
         checkpoint = torch.load(best_model_path, weights_only=False)
         state_dict = checkpoint['state_dict']
         model.load_state_dict(state_dict)
-        source_feature_reshaper = maybe_build_source_feature_reshaper(model, config)
-        if source_feature_reshaper is not None:
-            source_feature_reshaper.to(device)
-            if 'source_feature_reshaper_state_dict' in checkpoint:
-                source_feature_reshaper.load_state_dict(checkpoint['source_feature_reshaper_state_dict'])
 
         test_metrics = evaluation(
             model,
@@ -155,8 +151,6 @@ def main(config):
             device,
             config.classes,
             mode='test',
-            source_feature_reshaper=source_feature_reshaper,
-            apply_source_feature_reshaper=False,
         )
 
         print(f"Test result for {config.experiment_name}: accuracy={test_metrics['accuracy']:.4f}, f1={test_metrics['macro_f1']:.4f}")
@@ -171,19 +165,6 @@ def get_num_trainable_params(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def maybe_build_source_feature_reshaper(model, config):
-    source_feature_reshaper = build_source_feature_reshaper(
-        kind=getattr(config, "source_feature_reshaper", "none"),
-        feature_dim=model.spatial_encoder.output_dim,
-        strength=getattr(config, "source_feature_reshaper_strength", 0.10),
-        kernel_size=getattr(config, "source_feature_reshaper_kernel_size", 3),
-        init_seed=getattr(config, "source_feature_reshaper_init_seed", -1),
-    )
-    if source_feature_reshaper is not None and not getattr(config, "source_feature_reshaper_trainable", True):
-        for param in source_feature_reshaper.parameters():
-            param.requires_grad_(False)
-    return source_feature_reshaper
-
 def get_dataset_size(data_root, dataset):
     dir = os.path.join(data_root, dataset)
     return len([name for name in os.listdir(os.path.join(dir, 'data')) if name.endswith('.zarr')])
@@ -196,12 +177,7 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
     if config.train_on_target:
         dataset_name = config.target
 
-    source_feature_reshaper = maybe_build_source_feature_reshaper(model, config)
-    params = list(model.parameters())
-    if source_feature_reshaper is not None:
-        source_feature_reshaper.to(device)
-        params += list(source_feature_reshaper.parameters())
-    optimizer = torch.optim.Adam(params, lr=config.lr, weight_decay=config.weight_decay)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
     train_transform = transforms.Compose([
         RandomSamplePixels(config.num_pixels),
@@ -237,16 +213,7 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
             targets = sample['label'].cuda(device=device, non_blocking=True)
 
             pixels, mask, positions, extra = to_cuda(sample, device)
-            outputs = forward_with_optional_source_reshaper(
-                model,
-                pixels,
-                mask,
-                positions,
-                extra,
-                labels=targets,
-                source_feature_reshaper=source_feature_reshaper,
-                apply_source_feature_reshaper=(source_feature_reshaper is not None and dataset_name == config.source),
-            )
+            outputs = model.forward(pixels, mask, positions, extra)
             loss = criterion(outputs, targets)
 
             optimizer.zero_grad()
@@ -275,8 +242,6 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
             model,
             val_loader,
             writer,
-            source_feature_reshaper=source_feature_reshaper,
-            apply_source_feature_reshaper=False,
         )
 
 
@@ -403,60 +368,6 @@ if __name__ == '__main__':
     parser.add_argument('--with_shift_aug', default=False, type=bool_flag, help='whether to apply random temporal shift augmentation')
     parser.add_argument('--shift_aug_p', default=1.0, type=float, help='probability to apply temporal shift augmentation')
     parser.add_argument('--max_shift_aug', default=60, type=int, help='highest shift to apply for temporal shift augmentation')
-    parser.add_argument(
-        '--source_feature_reshaper',
-        default='none',
-        choices=['none', 'residual_temporal_conv'],
-        help='source-only lightweight feature reshaper inserted between PSE and LTAE',
-    )
-    parser.add_argument(
-        '--source_feature_reshaper_strength',
-        default=0.10,
-        type=float,
-        help='initial residual strength for the source-only feature reshaper',
-    )
-    parser.add_argument(
-        '--source_feature_reshaper_kernel_size',
-        default=3,
-        type=int,
-        help='odd temporal kernel size used by the source-only feature reshaper',
-    )
-    parser.add_argument(
-        '--source_feature_reshaper_reg_trade_off',
-        default=0.05,
-        type=float,
-        help='weight for identity/stat-preserving regularization of the source-only feature reshaper',
-    )
-    parser.add_argument(
-        '--source_feature_reshaper_init_seed',
-        default=-1,
-        type=int,
-        help='optional independent random seed for source feature reshaper initialization',
-    )
-    parser.add_argument(
-        '--source_feature_reshaper_trainable',
-        default=True,
-        type=bool_flag,
-        help='whether source feature reshaper parameters are optimized',
-    )
-    parser.add_argument(
-        '--source_feature_dual_path',
-        default=False,
-        type=bool_flag,
-        help='use raw-source anchor + reshaped-source auxiliary dual-path training when source_feature_reshaper is enabled',
-    )
-    parser.add_argument(
-        '--source_feature_dual_cls_trade_off',
-        default=1.0,
-        type=float,
-        help='weight for reshaped-source classification loss in dual-path training',
-    )
-    parser.add_argument(
-        '--source_feature_dual_relation_trade_off',
-        default=0.05,
-        type=float,
-        help='weight for raw/reshaped source relation consistency in dual-path training',
-    )
     parser.add_argument(
         '--source_phase_partition_mode',
         default='uniform',
@@ -588,8 +499,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_feature_target',
         default='auto',
-        choices=['auto', 'raw', 'reshaped', 'both'],
-        help='feature stream used by source structure loss: auto keeps legacy behavior, raw shapes the encoder output, reshaped shapes reshaper output, both applies both losses',
+        choices=['auto', 'raw', 'none'],
+        help='feature stream used by source structure loss: auto/none disables TimeMatch-stage structure; raw shapes the encoder output',
     )
     parser.add_argument(
         '--source_structure_detach_features',
@@ -679,7 +590,7 @@ if __name__ == '__main__':
         '--source_structure_grad_diagnostic',
         default=False,
         type=bool_flag,
-        help='print source-stage gradient topology diagnostics for structure/reshaper mechanism analysis',
+        help='print source-stage gradient topology diagnostics for structure mechanism analysis',
     )
     parser.add_argument(
         '--source_structure_grad_diag_steps',

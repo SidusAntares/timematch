@@ -10,16 +10,7 @@ SOURCE="${SOURCE:?SOURCE is required}"
 TARGETS_BLOCK="${TARGETS_BLOCK:?TARGETS_BLOCK is required}"
 SOURCE_TILE="$(echo "$SOURCE" | cut -d'/' -f2)"
 
-RESHAPER_KIND="${SOURCE_FEATURE_RESHAPER:-residual_temporal_conv}"
-RESHAPER_STRENGTH="${SOURCE_FEATURE_RESHAPER_STRENGTH:-0.10}"
-RESHAPER_KERNEL_SIZE="${SOURCE_FEATURE_RESHAPER_KERNEL_SIZE:-3}"
-RESHAPER_REG_TRADE_OFF="${SOURCE_FEATURE_RESHAPER_REG_TRADE_OFF:-0.05}"
-RESHAPER_INIT_SEED="${SOURCE_FEATURE_RESHAPER_INIT_SEED:--1}"
-RESHAPER_TRAINABLE="${SOURCE_FEATURE_RESHAPER_TRAINABLE:-True}"
-DUAL_CLS_TRADE_OFF="${SOURCE_FEATURE_DUAL_CLS_TRADE_OFF:-1.00}"
-DUAL_REL_TRADE_OFF="${SOURCE_FEATURE_DUAL_RELATION_TRADE_OFF:-0.03}"
-DUAL_PATH="${SOURCE_FEATURE_DUAL_PATH:-True}"
-RESHAPER_TAG="${RESHAPER_TAG:-v223_current_s010_rel003}"
+RUN_TAG_SUFFIX="${RUN_TAG_SUFFIX:-source_structure}"
 SOURCE_PHASE_PARTITION_MODE="${SOURCE_PHASE_PARTITION_MODE:-uniform}"
 SOURCE_PHASE_COUNT="${SOURCE_PHASE_COUNT:-5}"
 SOURCE_SEGMENT_PARTITION_MODE="${SOURCE_SEGMENT_PARTITION_MODE:-$SOURCE_PHASE_PARTITION_MODE}"
@@ -75,7 +66,7 @@ TIMEMATCH_SOURCE_STRUCTURE_TREND_TRADE_OFF="${TIMEMATCH_SOURCE_STRUCTURE_TREND_T
 TIMEMATCH_SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF="${TIMEMATCH_SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF:-$SOURCE_STRUCTURE_SEGMENT_INTER_TRADE_OFF}"
 TIMEMATCH_SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF="${TIMEMATCH_SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF:-$SOURCE_STRUCTURE_BOUNDARY_WINDOW_TRADE_OFF}"
 
-SOURCE_MODEL="${SOURCE_MODEL:-pseltae_${SOURCE_TILE}_closedset_noshift_sourcephasecompact_p5_${RESHAPER_TAG}}"
+SOURCE_MODEL="${SOURCE_MODEL:-pseltae_${SOURCE_TILE}_closedset_noshift_sourcephasecompact_p5_${RUN_TAG_SUFFIX}}"
 
 cd "$ROOT_DIR"
 
@@ -83,15 +74,6 @@ python train.py \
   --data_root "$DATA_ROOT" \
   --closed_set True \
   --with_shift_aug False \
-  --source_feature_reshaper "$RESHAPER_KIND" \
-  --source_feature_reshaper_strength "$RESHAPER_STRENGTH" \
-  --source_feature_reshaper_kernel_size "$RESHAPER_KERNEL_SIZE" \
-  --source_feature_reshaper_reg_trade_off "$RESHAPER_REG_TRADE_OFF" \
-  --source_feature_reshaper_init_seed "$RESHAPER_INIT_SEED" \
-  --source_feature_reshaper_trainable "$RESHAPER_TRAINABLE" \
-  --source_feature_dual_path "$DUAL_PATH" \
-  --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
-  --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
   --source_phase_partition_mode "$SOURCE_PHASE_PARTITION_MODE" \
   --source_segment_partition_mode "$SOURCE_SEGMENT_PARTITION_MODE" \
   --source_phase_count "$SOURCE_PHASE_COUNT" \
@@ -144,21 +126,12 @@ while IFS= read -r TARGET; do
   fi
 
   TARGET_TILE="$(echo "$TARGET" | cut -d'/' -f2)"
-  TIMEMATCH_MODEL="timematch_${SOURCE_TILE}_to_${TARGET_TILE}_closedset_noshift_sourcephasecompact_p5_${RESHAPER_TAG}"
+  TIMEMATCH_MODEL="timematch_${SOURCE_TILE}_to_${TARGET_TILE}_closedset_noshift_sourcephasecompact_p5_${RUN_TAG_SUFFIX}"
 
   python train.py \
     --data_root "$DATA_ROOT" \
     --closed_set True \
     --with_shift_aug False \
-    --source_feature_reshaper "$RESHAPER_KIND" \
-    --source_feature_reshaper_strength "$RESHAPER_STRENGTH" \
-    --source_feature_reshaper_kernel_size "$RESHAPER_KERNEL_SIZE" \
-    --source_feature_reshaper_reg_trade_off "$RESHAPER_REG_TRADE_OFF" \
-    --source_feature_reshaper_init_seed "$RESHAPER_INIT_SEED" \
-    --source_feature_reshaper_trainable "$RESHAPER_TRAINABLE" \
-    --source_feature_dual_path "$DUAL_PATH" \
-    --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
-    --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
     --source_phase_partition_mode "$SOURCE_PHASE_PARTITION_MODE" \
     --source_segment_partition_mode "$SOURCE_SEGMENT_PARTITION_MODE" \
     --source_phase_count "$SOURCE_PHASE_COUNT" \
@@ -206,15 +179,6 @@ while IFS= read -r TARGET; do
     --data_root "$DATA_ROOT" \
     --closed_set True \
     --with_shift_aug False \
-    --source_feature_reshaper "$RESHAPER_KIND" \
-    --source_feature_reshaper_strength "$RESHAPER_STRENGTH" \
-    --source_feature_reshaper_kernel_size "$RESHAPER_KERNEL_SIZE" \
-    --source_feature_reshaper_reg_trade_off "$RESHAPER_REG_TRADE_OFF" \
-    --source_feature_reshaper_init_seed "$RESHAPER_INIT_SEED" \
-    --source_feature_reshaper_trainable "$RESHAPER_TRAINABLE" \
-    --source_feature_dual_path "$DUAL_PATH" \
-    --source_feature_dual_cls_trade_off "$DUAL_CLS_TRADE_OFF" \
-    --source_feature_dual_relation_trade_off "$DUAL_REL_TRADE_OFF" \
     --source_phase_partition_mode "$SOURCE_PHASE_PARTITION_MODE" \
     --source_segment_partition_mode "$SOURCE_SEGMENT_PARTITION_MODE" \
     --source_phase_count "$SOURCE_PHASE_COUNT" \

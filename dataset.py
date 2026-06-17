@@ -149,6 +149,29 @@ class PixelSetData(data.Dataset):
         date_positions = [interval_days(d, start_date) for d in dates]
         return date_positions
 
+
+def count_pixelset_samples(data_root, dataset_name, classes, closed_set=False, indices=None):
+    folder = os.path.join(data_root, dataset_name)
+    meta_folder = os.path.join(folder, "meta")
+    country = dataset_name.split("/")[-3]
+    metadata = pkl.load(open(os.path.join(meta_folder, "metadata.pkl"), "rb"))
+    class_to_idx = {cls: idx for idx, cls in enumerate(classes)}
+    code_to_class_name = label_utils.get_code_to_class(country)
+    count = 0
+
+    for parcel_idx, parcel in enumerate(metadata["parcels"]):
+        if indices is not None and parcel_idx not in indices:
+            continue
+        crop_code = parcel["label"]
+        if country == "austria":
+            crop_code = int(crop_code)
+        class_name = code_to_class_name.get(crop_code, "unknown")
+        if closed_set and class_name not in class_to_idx:
+            continue
+        if class_name in class_to_idx or "unknown" in class_to_idx:
+            count += 1
+    return count
+
     def get_unknown_labels(self):
         """
         Reports the categorization of crop codes for this dataset
