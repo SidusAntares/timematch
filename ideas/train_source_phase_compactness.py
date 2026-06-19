@@ -182,6 +182,7 @@ def _compute_source_structure_loss_on_features(
         return compute_source_raw_global_compactness_loss(
             structure_feats,
             targets,
+            version=getattr(config, "source_structure_loss_version", "compactness"),
             intra_trade_off=getattr(config, "source_structure_intra_trade_off", 1.0),
             compact_distance=getattr(config, "source_structure_compact_distance", "mse"),
             norm_preserve_trade_off=getattr(

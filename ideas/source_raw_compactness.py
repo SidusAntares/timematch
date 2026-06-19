@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn.functional as F
 
@@ -6,6 +8,18 @@ RAW_GLOBAL_COMPACTNESS_VERSIONS = {
     "v275_raw_global_compactness",
     "raw_global_compactness",
     "source_raw_global_compactness",
+    "v276_raw_timepoint_compactness",
+    "raw_timepoint_compactness",
+    "source_raw_timepoint_compactness",
+    "v276_raw_smoothed_timepoint_compactness",
+    "raw_smoothed_timepoint_compactness",
+    "source_raw_smoothed_timepoint_compactness",
+    "v276_raw_trimmed_global_compactness",
+    "raw_trimmed_global_compactness",
+    "source_raw_trimmed_global_compactness",
+    "v277_raw_lowfreq_dct_k2_compactness",
+    "v277_raw_lowfreq_dct_k4_compactness",
+    "v277_raw_lowfreq_dct_k8_compactness",
 }
 
 
@@ -41,9 +55,164 @@ def _class_norm_preserve_loss(class_feats, target="min_mean", value=1.0, eps=1e-
     raise ValueError(f"Unsupported raw compactness norm preserve target: {target}")
 
 
+def _trimmed_mean(class_feats, trim_ratio=0.10):
+    if class_feats.shape[0] < 3 or float(trim_ratio) <= 0.0:
+        return class_feats.mean(dim=0, keepdim=True)
+    trim_count = int(class_feats.shape[0] * float(trim_ratio))
+    if trim_count <= 0 or class_feats.shape[0] - 2 * trim_count < 1:
+        return class_feats.mean(dim=0, keepdim=True)
+    sorted_feats, _ = class_feats.sort(dim=0)
+    return sorted_feats[trim_count:-trim_count].mean(dim=0, keepdim=True)
+
+
+def _compute_global_compactness(
+    pooled_feats,
+    labels,
+    compact_distance="mse",
+    center_mode="mean",
+    eps=1e-6,
+):
+    zero = pooled_feats.sum() * 0.0
+    compact_loss = zero
+    valid_class_count = 0
+    valid_sample_count = 0
+
+    for class_id in labels.unique(sorted=True):
+        class_mask = labels == class_id
+        class_feats = pooled_feats[class_mask]
+        if class_feats.shape[0] < 2:
+            continue
+        if str(center_mode).lower() == "trimmed":
+            class_center = _trimmed_mean(class_feats)
+        else:
+            class_center = class_feats.mean(dim=0, keepdim=True)
+        compact_loss = compact_loss + _compactness_distance(
+            class_feats,
+            class_center,
+            mode=compact_distance,
+            eps=eps,
+        )
+        valid_class_count += 1
+        valid_sample_count += int(class_feats.shape[0])
+
+    if valid_class_count > 0:
+        compact_loss = compact_loss / (valid_class_count + eps)
+    return compact_loss, valid_class_count, valid_sample_count
+
+
+def _compute_timepoint_compactness(spatial_feats, labels, compact_distance="mse", eps=1e-6):
+    zero = spatial_feats.sum() * 0.0
+    compact_loss = zero
+    valid_class_count = 0
+    valid_sample_count = 0
+
+    for class_id in labels.unique(sorted=True):
+        class_mask = labels == class_id
+        class_feats = spatial_feats[class_mask]
+        if class_feats.shape[0] < 2:
+            continue
+        class_center = class_feats.mean(dim=0, keepdim=True)
+        if str(compact_distance or "mse").lower() in {
+            "normalized_mse",
+            "l2_normalized_mse",
+            "unit_mse",
+        }:
+            class_feats_cmp = F.normalize(class_feats, dim=2, eps=eps)
+            class_center_cmp = F.normalize(class_center, dim=2, eps=eps)
+            compact_loss = compact_loss + (class_feats_cmp - class_center_cmp).pow(2).sum(dim=2).mean()
+        else:
+            compact_loss = compact_loss + (class_feats - class_center).pow(2).sum(dim=2).mean()
+        valid_class_count += 1
+        valid_sample_count += int(class_feats.shape[0])
+
+    if valid_class_count > 0:
+        compact_loss = compact_loss / (valid_class_count + eps)
+    return compact_loss, valid_class_count, valid_sample_count
+
+
+def _dct_lowfreq_basis(time_steps, components, device, dtype):
+    components = max(1, min(int(components), int(time_steps)))
+    time_index = torch.arange(time_steps, device=device, dtype=dtype)
+    basis_rows = [torch.ones(time_steps, device=device, dtype=dtype) / float(time_steps)]
+    if components > 1:
+        scale = (2.0 ** 0.5) / float(time_steps)
+        for freq in range(1, components):
+            row = scale * torch.cos(
+                math.pi * (time_index + 0.5) * float(freq) / float(time_steps)
+            )
+            basis_rows.append(row)
+    return torch.stack(basis_rows, dim=0)
+
+
+def _lowfreq_dct_components(version):
+    version = str(version or "").lower()
+    if "lowfreq_dct_k2" in version:
+        return 2
+    if "lowfreq_dct_k4" in version:
+        return 4
+    if "lowfreq_dct_k8" in version:
+        return 8
+    return None
+
+
+def _compute_lowfreq_compactness(spatial_feats, labels, components, compact_distance="mse", eps=1e-6):
+    basis = _dct_lowfreq_basis(
+        spatial_feats.shape[1],
+        components,
+        device=spatial_feats.device,
+        dtype=spatial_feats.dtype,
+    )
+    lowfreq_feats = torch.einsum("kt,btd->bkd", basis, spatial_feats)
+    zero = spatial_feats.sum() * 0.0
+    compact_loss = zero
+    valid_class_count = 0
+    valid_sample_count = 0
+
+    for class_id in labels.unique(sorted=True):
+        class_mask = labels == class_id
+        class_feats = lowfreq_feats[class_mask]
+        if class_feats.shape[0] < 2:
+            continue
+        class_center = class_feats.mean(dim=0, keepdim=True)
+        if str(compact_distance or "mse").lower() in {
+            "normalized_mse",
+            "l2_normalized_mse",
+            "unit_mse",
+        }:
+            class_feats_cmp = F.normalize(class_feats, dim=2, eps=eps)
+            class_center_cmp = F.normalize(class_center, dim=2, eps=eps)
+            compact_loss = compact_loss + (
+                class_feats_cmp - class_center_cmp
+            ).pow(2).sum(dim=2).mean()
+        else:
+            compact_loss = compact_loss + (class_feats - class_center).pow(2).sum(dim=2).mean()
+        valid_class_count += 1
+        valid_sample_count += int(class_feats.shape[0])
+
+    if valid_class_count > 0:
+        compact_loss = compact_loss / (valid_class_count + eps)
+    return compact_loss, valid_class_count, valid_sample_count, lowfreq_feats
+
+
+def _smooth_time_axis(spatial_feats, kernel_size=3):
+    kernel_size = int(kernel_size)
+    if kernel_size <= 1:
+        return spatial_feats
+    if kernel_size % 2 == 0:
+        raise ValueError(f"time smoothing kernel_size must be odd, got {kernel_size}")
+    padding = kernel_size // 2
+    batch_size, time_steps, feat_dim = spatial_feats.shape
+    feats = spatial_feats.transpose(1, 2).reshape(batch_size * feat_dim, 1, time_steps)
+    feats = F.pad(feats, (padding, padding), mode="replicate")
+    kernel = spatial_feats.new_ones(1, 1, kernel_size) / float(kernel_size)
+    smoothed = F.conv1d(feats, kernel)
+    return smoothed.reshape(batch_size, feat_dim, time_steps).transpose(1, 2)
+
+
 def compute_source_raw_global_compactness_loss(
     spatial_feats,
     labels,
+    version="v275_raw_global_compactness",
     intra_trade_off=1.0,
     compact_distance="mse",
     norm_preserve_trade_off=0.0,
@@ -67,36 +236,68 @@ def compute_source_raw_global_compactness_loss(
     pooled_feats = spatial_feats.mean(dim=1)
     labels = labels.view(-1)
 
-    compact_loss = zero
-    norm_preserve_loss = zero
-    valid_class_count = 0
-    valid_sample_count = 0
-
-    for class_id in labels.unique(sorted=True):
-        class_mask = labels == class_id
-        class_feats = pooled_feats[class_mask]
-        if class_feats.shape[0] < 2:
-            continue
-        class_center = class_feats.mean(dim=0, keepdim=True)
-        compact_loss = compact_loss + _compactness_distance(
-            class_feats,
-            class_center,
-            mode=compact_distance,
+    version = str(version or "v275_raw_global_compactness").lower()
+    lowfreq_components = _lowfreq_dct_components(version)
+    if lowfreq_components is not None:
+        compact_loss, valid_class_count, valid_sample_count, _ = _compute_lowfreq_compactness(
+            spatial_feats,
+            labels,
+            lowfreq_components,
+            compact_distance=compact_distance,
             eps=eps,
         )
-        if float(norm_preserve_trade_off) != 0.0:
+        center_mode = "lowfreq_dct"
+    elif version in {
+        "v276_raw_smoothed_timepoint_compactness",
+        "raw_smoothed_timepoint_compactness",
+        "source_raw_smoothed_timepoint_compactness",
+    }:
+        compact_loss, valid_class_count, valid_sample_count = _compute_timepoint_compactness(
+            _smooth_time_axis(spatial_feats, kernel_size=3),
+            labels,
+            compact_distance=compact_distance,
+            eps=eps,
+        )
+        center_mode = "smoothed_timepoint"
+    elif version in {"v276_raw_timepoint_compactness", "raw_timepoint_compactness", "source_raw_timepoint_compactness"}:
+        compact_loss, valid_class_count, valid_sample_count = _compute_timepoint_compactness(
+            spatial_feats,
+            labels,
+            compact_distance=compact_distance,
+            eps=eps,
+        )
+        center_mode = "timepoint"
+    else:
+        center_mode = "trimmed" if version in {
+            "v276_raw_trimmed_global_compactness",
+            "raw_trimmed_global_compactness",
+            "source_raw_trimmed_global_compactness",
+        } else "mean"
+        compact_loss, valid_class_count, valid_sample_count = _compute_global_compactness(
+            pooled_feats,
+            labels,
+            compact_distance=compact_distance,
+            center_mode=center_mode,
+            eps=eps,
+        )
+
+    norm_preserve_loss = zero
+    if float(norm_preserve_trade_off) != 0.0:
+        norm_class_count = 0
+        for class_id in labels.unique(sorted=True):
+            class_mask = labels == class_id
+            class_feats = pooled_feats[class_mask]
+            if class_feats.shape[0] < 2:
+                continue
+            norm_class_count += 1
             norm_preserve_loss = norm_preserve_loss + _class_norm_preserve_loss(
                 class_feats,
                 target=norm_preserve_target,
                 value=norm_preserve_value,
                 eps=eps,
             )
-        valid_class_count += 1
-        valid_sample_count += int(class_feats.shape[0])
-
-    if valid_class_count > 0:
-        compact_loss = compact_loss / (valid_class_count + eps)
-        norm_preserve_loss = norm_preserve_loss / (valid_class_count + eps)
+        if norm_class_count > 0:
+            norm_preserve_loss = norm_preserve_loss / (norm_class_count + eps)
 
     weighted_compact_loss = float(intra_trade_off) * compact_loss
     weighted_norm_loss = float(norm_preserve_trade_off) * norm_preserve_loss
@@ -128,5 +329,9 @@ def compute_source_raw_global_compactness_loss(
             else 1.0
         ),
         "source_structure_version_v275_raw_global": 1.0,
+        "source_structure_raw_center_mode": (
+            5.0 if center_mode == "lowfreq_dct" else 4.0 if center_mode == "smoothed_timepoint" else 3.0 if center_mode == "timepoint" else 2.0 if center_mode == "trimmed" else 1.0
+        ),
+        "source_structure_raw_lowfreq_components": float(lowfreq_components or 0),
     }
     return total_loss, logs

@@ -72,6 +72,36 @@ add_manifest() {
         "$config" "sourcephasecompact" "v275_raw_global_compactness" "raw" "$V275_WEIGHT" "off" \
         "v2.7.5: source-stage raw encoder compactness only; TimeMatch DA-stage structure off."
       ;;
+    v276_timepoint_w1)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v276_raw_timepoint_compactness" "raw" "$V275_WEIGHT" "off" \
+        "v2.7.6 probe: source-stage per-timestep class prototype compactness; TimeMatch DA-stage structure off."
+      ;;
+    v276_smoothed_timepoint_w1)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v276_raw_smoothed_timepoint_compactness" "raw" "$V275_WEIGHT" "off" \
+        "v2.7.6 probe: source-stage smoothed per-timestep class prototype compactness; TimeMatch DA-stage structure off."
+      ;;
+    v276_trimmed_w1)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v276_raw_trimmed_global_compactness" "raw" "$V275_WEIGHT" "off" \
+        "v2.7.6 probe: source-stage raw global compactness with trimmed class center; TimeMatch DA-stage structure off."
+      ;;
+    v277_dct_k2_w1)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v277_raw_lowfreq_dct_k2_compactness" "raw" "$V275_WEIGHT" "off" \
+        "v2.7.7 probe: source-stage DCT low-frequency K=2 prototype compactness; TimeMatch DA-stage structure off."
+      ;;
+    v277_dct_k4_w1)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v277_raw_lowfreq_dct_k4_compactness" "raw" "$V275_WEIGHT" "off" \
+        "v2.7.7 probe: source-stage DCT low-frequency K=4 prototype compactness; TimeMatch DA-stage structure off."
+      ;;
+    v277_dct_k8_w1)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v277_raw_lowfreq_dct_k8_compactness" "raw" "$V275_WEIGHT" "off" \
+        "v2.7.7 probe: source-stage DCT low-frequency K=8 prototype compactness; TimeMatch DA-stage structure off."
+      ;;
   esac >> "$MANIFEST"
 }
 
@@ -91,7 +121,7 @@ for seed in $SEEDS; do
     for config in "${CONFIG_NAMES[@]}"; do
       config="$(echo "$config" | xargs)"
       case "$config" in
-        plain|v275_raw_w1) ;;
+        plain|v275_raw_w1|v276_timepoint_w1|v276_smoothed_timepoint_w1|v276_trimmed_w1|v277_dct_k2_w1|v277_dct_k4_w1|v277_dct_k8_w1) ;;
         *)
           echo "ERROR unknown config: $config" >&2
           exit 2
@@ -149,6 +179,16 @@ run_job() {
       --source "$source_dataset" \
       --target "$source_dataset" || return "$?"
   else
+    local loss_version
+    case "$config" in
+      v276_timepoint_w1) loss_version="v276_raw_timepoint_compactness" ;;
+      v276_smoothed_timepoint_w1) loss_version="v276_raw_smoothed_timepoint_compactness" ;;
+      v276_trimmed_w1) loss_version="v276_raw_trimmed_global_compactness" ;;
+      v277_dct_k2_w1) loss_version="v277_raw_lowfreq_dct_k2_compactness" ;;
+      v277_dct_k4_w1) loss_version="v277_raw_lowfreq_dct_k4_compactness" ;;
+      v277_dct_k8_w1) loss_version="v277_raw_lowfreq_dct_k8_compactness" ;;
+      *) loss_version="v275_raw_global_compactness" ;;
+    esac
     CUDA_VISIBLE_DEVICES="$gpu" python train.py \
       --data_root "$DATA_ROOT" \
       --closed_set "$CLOSED_SET" \
@@ -157,7 +197,7 @@ run_job() {
       --source_segment_partition_mode uniform \
       --source_phase_count 1 \
       --source_segment_count 1 \
-      --source_structure_loss_version v275_raw_global_compactness \
+      --source_structure_loss_version "$loss_version" \
       --source_structure_feature_target raw \
       --source_structure_detach_features False \
       --source_structure_intra_trade_off "$V275_WEIGHT" \
