@@ -1,0 +1,911 @@
+import argparse
+import csv
+import math
+import re
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+from torchvision.transforms import transforms
+from tqdm import tqdm
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from dataset import GroupByShapesBatchSampler, PixelSetData
+from models.stclassifier import PseLTae
+from transforms import Normalize, ToTensor
+from utils import label_utils
+
+
+TAG_TO_DATASET = {
+    "FR1": "france/30TXT/2017",
+    "FR2": "france/31TCJ/2017",
+    "DK1": "denmark/32VNH/2017",
+    "AT1": "austria/33UVP/2017",
+}
+
+SOURCE_TILE = {
+    "FR1": "30TXT",
+    "FR2": "31TCJ",
+    "DK1": "32VNH",
+    "AT1": "33UVP",
+}
+
+
+DETAIL_FIELDS = [
+    "task",
+    "source_tag",
+    "target_tag",
+    "seed",
+    "config",
+    "row_config",
+    "compact_weight",
+    "source_self_f1",
+    "source_on_target_f1",
+    "da_f1",
+    "da_gain",
+    "checkpoint",
+    "status",
+    "num_source_samples",
+    "num_target_samples",
+    "num_classes",
+    "pooled_norm_mean",
+    "pooled_cov_trace",
+    "pooled_within_var",
+    "pooled_between_dist",
+    "pooled_fisher",
+    "pooled_unit_within_var",
+    "pooled_unit_between_dist",
+    "pooled_unit_fisher",
+    "pooled_unit_center_cosine_dist",
+    "pooled_unit_cov_effective_rank",
+    "timepoint_norm_mean",
+    "timepoint_cov_trace",
+    "timepoint_within_var",
+    "smoothed_timepoint_within_var",
+    "timepoint_unit_within_var",
+    "timepoint_unit_between_dist",
+    "timepoint_unit_fisher",
+    "smoothed_timepoint_unit_within_var",
+    "smoothed_timepoint_unit_between_dist",
+    "smoothed_timepoint_unit_fisher",
+    "temporal_shape_unit_within_var",
+    "temporal_shape_unit_between_dist",
+    "temporal_shape_unit_fisher",
+    "temporal_variance",
+    "smoothed_temporal_variance",
+    "smooth_to_raw_timepoint_within_ratio",
+    "smoothed_temporal_retention_ratio",
+    "target_mean_conf",
+    "target_entropy_mean",
+    "target_margin_mean",
+    "target_pseudo_ratio_0p9",
+    "target_class_balance_entropy",
+]
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Offline stiffness diagnostics for existing v2.7.5/v2.7.6 source checkpoints."
+    )
+    parser.add_argument(
+        "--run",
+        action="append",
+        default=[],
+        help=(
+            "Run spec: rows_tsv::log_root[::config_alias]. If config_alias is set, "
+            "all rows from that file use it as the diagnostic config."
+        ),
+    )
+    parser.add_argument("--data_root", default="/data/user/DBL/timematch_data")
+    parser.add_argument("--outputs_root", default="outputs")
+    parser.add_argument("--output_dir", default="logs/v276_stiffness_diagnostic_existing")
+    parser.add_argument(
+        "--tasks",
+        default="",
+        help="Comma-separated task filter, e.g. FR2_to_DK1,DK1_to_FR1. Empty means all.",
+    )
+    parser.add_argument(
+        "--configs",
+        default="plain,raw_global_w0p50_source_only,raw_global_w0p75_source_only,v275_raw_w1,smooth_w0p5,smooth_w1p0",
+        help="Comma-separated diagnostic config filter. Empty means all.",
+    )
+    parser.add_argument("--closed_set", default="True")
+    parser.add_argument("--batch_size", default=128, type=int)
+    parser.add_argument("--num_workers", default=8, type=int)
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--max_source_batches", default=0, type=int)
+    parser.add_argument("--max_target_batches", default=0, type=int)
+    parser.add_argument("--shard_index", default=0, type=int)
+    parser.add_argument("--num_shards", default=1, type=int)
+    parser.add_argument("--merge_detail_tsvs", default="")
+    return parser.parse_args()
+
+
+def bool_value(text):
+    return str(text).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def safe_float(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text == "" or text.lower() in {"nan", "none"}:
+        return None
+    return float(text)
+
+
+def format_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return ""
+        return f"{value:.6f}"
+    return str(value)
+
+
+def read_tsv(path):
+    with Path(path).open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle, delimiter="\t"))
+
+
+def write_tsv(path, rows, fields):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, delimiter="\t", fieldnames=fields)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: format_value(row.get(field)) for field in fields})
+
+
+def parse_task(task):
+    source_tag, target_tag = task.split("_to_")
+    return source_tag, target_tag
+
+
+def normalize_config(row_config, alias):
+    if alias:
+        return alias
+    config = str(row_config)
+    if config == "v275_raw_w1":
+        return "raw_w1"
+    return config
+
+
+def load_candidate_rows(run_specs, task_filter, config_filter):
+    rows = []
+    for spec in run_specs:
+        parts = spec.split("::")
+        if len(parts) < 2:
+            raise ValueError(f"Bad --run spec: {spec}")
+        rows_tsv = Path(parts[0])
+        log_root = Path(parts[1])
+        alias = parts[2] if len(parts) >= 3 else ""
+        for row in read_tsv(rows_tsv):
+            if row.get("status", "ok") != "ok":
+                continue
+            task = row["task"]
+            config = normalize_config(row.get("config", ""), alias)
+            if task_filter and task not in task_filter:
+                continue
+            if config_filter and config not in config_filter and row.get("config", "") not in config_filter:
+                continue
+            source_tag, target_tag = parse_task(task)
+            rows.append(
+                {
+                    **row,
+                    "task": task,
+                    "source_tag": source_tag,
+                    "target_tag": target_tag,
+                    "config": config,
+                    "row_config": row.get("config", ""),
+                    "log_root_name": log_root.name,
+                    "log_path": str(log_root / row["log"]),
+                }
+            )
+    rows.sort(key=lambda r: (r["task"], int(r["seed"]), r["config"]))
+    return rows
+
+
+def find_checkpoint_from_log(log_path):
+    log_path = Path(log_path)
+    if not log_path.exists():
+        return None
+    save_pattern = re.compile(r"Saving best model to (outputs/.+?/fold_0/model\.pt)")
+    output_pattern = re.compile(r"output_dir='([^']+)'")
+    fallback_output = None
+    with log_path.open(encoding="utf-8", errors="ignore") as handle:
+        for line in handle:
+            match = save_pattern.search(line)
+            if match:
+                return match.group(1)
+            if fallback_output is None:
+                out_match = output_pattern.search(line)
+                if out_match and "/timematch_" not in out_match.group(1):
+                    fallback_output = f"{out_match.group(1)}/fold_0/model.pt"
+    return fallback_output
+
+
+def fallback_checkpoint_from_row(row):
+    source_tile = SOURCE_TILE[row["source_tag"]]
+    task = row["task"]
+    seed = row["seed"]
+    row_config = row.get("row_config") or row.get("config")
+    log_root_name = row.get("log_root_name", "")
+    if not log_root_name:
+        return None
+    if row.get("config") in {"plain", "raw_w1"} or row_config in {"plain", "v275_raw_w1"}:
+        return (
+            f"outputs/pseltae_{source_tile}_closedset_noshift_"
+            f"{log_root_name}_{task}_seed{seed}_{row_config}_source/fold_0/model.pt"
+        )
+    if str(row_config).startswith("raw_global_"):
+        return (
+            f"outputs/pseltae_{source_tile}_closedset_noshift_sourcephasecompact_p5_v275_clean_"
+            f"{log_root_name}_{task}_seed{seed}_{row_config}/fold_0/model.pt"
+        )
+    if str(row_config).startswith("v276_"):
+        weight = "w0p5" if row.get("config") == "smooth_w0p5" else "w1p0"
+        master = log_root_name
+        if master in {"w0p5", "w1p0"}:
+            master = Path(row.get("log_path", "")).parent.parent.name
+        return (
+            f"outputs/pseltae_{source_tile}_closedset_noshift_"
+            f"{master}_{weight}_{task}_seed{seed}_{row_config}_source/fold_0/model.pt"
+        )
+    return None
+
+
+def get_task_classes(data_root, source_dataset, closed_set):
+    source_country = source_dataset.split("/")[0]
+    source_classes = label_utils.get_classes(source_country, combine_spring_and_winter=False)
+    source_data = PixelSetData(data_root, source_dataset, source_classes, closed_set=closed_set)
+    labels, counts = np.unique(source_data.get_labels(), return_counts=True)
+    source_classes = [source_classes[i] for i in labels[counts >= 200]]
+    if closed_set:
+        source_classes = [class_name for class_name in source_classes if class_name != "unknown"]
+    return source_classes
+
+
+def build_loader(data_root, dataset_name, classes, closed_set, batch_size, num_workers):
+    dataset = PixelSetData(
+        data_root=data_root,
+        dataset_name=dataset_name,
+        classes=classes,
+        transform=transforms.Compose([Normalize(), ToTensor()]),
+        closed_set=closed_set,
+    )
+    loader = DataLoader(
+        dataset,
+        num_workers=num_workers,
+        batch_sampler=GroupByShapesBatchSampler(dataset, batch_size),
+        pin_memory=torch.cuda.is_available(),
+    )
+    return loader
+
+
+def build_model(num_classes, device):
+    model = PseLTae(input_dim=10, num_classes=num_classes, with_extra=False)
+    model.to(device)
+    model.eval()
+    return model
+
+
+def load_checkpoint(model, checkpoint_path, device):
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    model.load_state_dict(checkpoint["state_dict"])
+
+
+def smooth_time_axis(features, kernel_size=3):
+    if kernel_size <= 1:
+        return features
+    padding = kernel_size // 2
+    batch_size, time_steps, feat_dim = features.shape
+    reshaped = features.transpose(1, 2).reshape(batch_size * feat_dim, 1, time_steps)
+    reshaped = F.pad(reshaped, (padding, padding), mode="replicate")
+    kernel = features.new_ones(1, 1, kernel_size) / float(kernel_size)
+    smoothed = F.conv1d(reshaped, kernel)
+    return smoothed.reshape(batch_size, feat_dim, time_steps).transpose(1, 2)
+
+
+def trace_from_sums(sum_vec, sq_sum, count):
+    if count < 2:
+        return float("nan")
+    return float((sq_sum / count - sum_vec.pow(2).sum() / (count * count)).item())
+
+
+def class_structure_from_stats(class_sums, class_sq_sums, class_counts, eps=1e-8):
+    valid = class_counts >= 2
+    if int(valid.sum().item()) < 2:
+        return float("nan"), float("nan"), float("nan")
+    sums = class_sums[valid]
+    sq_sums = class_sq_sums[valid]
+    counts = class_counts[valid].float()
+    centers = sums / counts.unsqueeze(1)
+    within_per_class = sq_sums / counts - centers.pow(2).sum(dim=1)
+    within = within_per_class.mean()
+    global_mean = sums.sum(dim=0, keepdim=True) / counts.sum()
+    between = (centers - global_mean).pow(2).sum(dim=1).mean()
+    fisher = between / (within + eps)
+    return float(within.item()), float(between.item()), float(fisher.item())
+
+
+def class_center_cosine_distance_from_stats(class_sums, class_counts, eps=1e-8):
+    valid = class_counts >= 2
+    if int(valid.sum().item()) < 2:
+        return float("nan")
+    centers = class_sums[valid] / class_counts[valid].float().unsqueeze(1)
+    centers = centers / centers.norm(dim=1, keepdim=True).clamp_min(eps)
+    sim = centers @ centers.t()
+    class_count = centers.shape[0]
+    upper = torch.triu_indices(class_count, class_count, offset=1)
+    if upper.shape[1] == 0:
+        return float("nan")
+    return float((1.0 - sim[upper[0], upper[1]]).mean().item())
+
+
+def covariance_effective_rank_from_sums(sum_vec, outer_sum, count, eps=1e-12):
+    if count < 2:
+        return float("nan")
+    mean = sum_vec / count
+    cov = outer_sum / count - torch.outer(mean, mean)
+    cov = 0.5 * (cov + cov.t())
+    trace = torch.trace(cov).clamp_min(0.0)
+    fro_sq = cov.pow(2).sum().clamp_min(eps)
+    return float((trace.pow(2) / fro_sq).item())
+
+
+def l2_normalize_rows(features, eps=1e-8):
+    return features / features.norm(dim=1, keepdim=True).clamp_min(eps)
+
+
+def class_structure(flat_features, labels, eps=1e-8):
+    classes = labels.unique(sorted=True)
+    global_mean = flat_features.mean(dim=0, keepdim=True)
+    within = []
+    centers = []
+    counts = []
+    for class_id in classes:
+        feats = flat_features[labels == class_id]
+        if feats.shape[0] < 2:
+            continue
+        center = feats.mean(dim=0, keepdim=True)
+        centers.append(center.squeeze(0))
+        counts.append(feats.shape[0])
+        within.append((feats - center).pow(2).sum(dim=1).mean())
+    if not within or len(centers) < 2:
+        return float("nan"), float("nan"), float("nan")
+    within_value = torch.stack(within).mean()
+    center_tensor = torch.stack(centers, dim=0)
+    between = (center_tensor - global_mean).pow(2).sum(dim=1).mean()
+    fisher = between / (within_value + eps)
+    return float(within_value.item()), float(between.item()), float(fisher.item())
+
+
+@torch.no_grad()
+def extract_source_metrics_streaming(model, loader, device, num_classes, max_batches=0):
+    pooled_sum = pooled_sq_sum = None
+    time_sum = time_sq_sum = None
+    smoothed_sum = smoothed_sq_sum = None
+    pooled_unit_sum = pooled_unit_outer_sum = None
+    pooled_class_sums = pooled_class_sq_sums = None
+    time_class_sums = time_class_sq_sums = None
+    smoothed_class_sums = smoothed_class_sq_sums = None
+    pooled_unit_class_sums = pooled_unit_class_sq_sums = None
+    time_unit_class_sums = time_unit_class_sq_sums = None
+    smoothed_unit_class_sums = smoothed_unit_class_sq_sums = None
+    temporal_shape_class_sums = temporal_shape_class_sq_sums = None
+    class_counts = torch.zeros(num_classes, dtype=torch.long)
+    sample_count = 0
+    pooled_norm_sum = 0.0
+    timepoint_norm_sum = 0.0
+    timepoint_count = 0
+    temporal_var_sum = 0.0
+    smoothed_temporal_var_sum = 0.0
+
+    for batch_idx, sample in enumerate(tqdm(loader, desc="diagnose-source", leave=False)):
+        if max_batches and batch_idx >= max_batches:
+            break
+        labels = sample["label"].to(device=device, non_blocking=True)
+        pixels = sample["pixels"].to(device=device, non_blocking=True)
+        mask = sample["valid_pixels"].to(device=device, non_blocking=True)
+        extra = sample["extra"].to(device=device, non_blocking=True)
+        feats = model.spatial_encoder(pixels, mask, extra).detach().cpu().float()
+        labels_cpu = labels.detach().cpu().long()
+        smoothed = smooth_time_axis(feats)
+        pooled = feats.mean(dim=1)
+        flat_time = feats.flatten(start_dim=1)
+        flat_smoothed = smoothed.flatten(start_dim=1)
+        pooled_unit = l2_normalize_rows(pooled)
+        flat_time_unit = l2_normalize_rows(flat_time)
+        flat_smoothed_unit = l2_normalize_rows(flat_smoothed)
+        temporal_shape = feats - feats.mean(dim=1, keepdim=True)
+        flat_temporal_shape_unit = l2_normalize_rows(temporal_shape.flatten(start_dim=1))
+
+        if pooled_sum is None:
+            pooled_dim = pooled.shape[1]
+            time_dim = flat_time.shape[1]
+            pooled_sum = torch.zeros(pooled_dim)
+            pooled_sq_sum = torch.tensor(0.0)
+            pooled_unit_sum = torch.zeros(pooled_dim)
+            pooled_unit_outer_sum = torch.zeros(pooled_dim, pooled_dim)
+            time_sum = torch.zeros(time_dim)
+            time_sq_sum = torch.tensor(0.0)
+            smoothed_sum = torch.zeros(time_dim)
+            smoothed_sq_sum = torch.tensor(0.0)
+            pooled_class_sums = torch.zeros(num_classes, pooled_dim)
+            pooled_class_sq_sums = torch.zeros(num_classes)
+            time_class_sums = torch.zeros(num_classes, time_dim)
+            time_class_sq_sums = torch.zeros(num_classes)
+            smoothed_class_sums = torch.zeros(num_classes, time_dim)
+            smoothed_class_sq_sums = torch.zeros(num_classes)
+            pooled_unit_class_sums = torch.zeros(num_classes, pooled_dim)
+            pooled_unit_class_sq_sums = torch.zeros(num_classes)
+            time_unit_class_sums = torch.zeros(num_classes, time_dim)
+            time_unit_class_sq_sums = torch.zeros(num_classes)
+            smoothed_unit_class_sums = torch.zeros(num_classes, time_dim)
+            smoothed_unit_class_sq_sums = torch.zeros(num_classes)
+            temporal_shape_class_sums = torch.zeros(num_classes, time_dim)
+            temporal_shape_class_sq_sums = torch.zeros(num_classes)
+
+        batch_n = pooled.shape[0]
+        sample_count += int(batch_n)
+        pooled_sum += pooled.sum(dim=0)
+        pooled_sq_sum += pooled.pow(2).sum()
+        pooled_unit_sum += pooled_unit.sum(dim=0)
+        pooled_unit_outer_sum += pooled_unit.t() @ pooled_unit
+        time_sum += flat_time.sum(dim=0)
+        time_sq_sum += flat_time.pow(2).sum()
+        smoothed_sum += flat_smoothed.sum(dim=0)
+        smoothed_sq_sum += flat_smoothed.pow(2).sum()
+        pooled_norm_sum += float(pooled.norm(dim=1).sum().item())
+        timepoint_norm_sum += float(feats.norm(dim=2).sum().item())
+        timepoint_count += int(feats.shape[0] * feats.shape[1])
+        temporal_var_sum += float(
+            (feats - feats.mean(dim=1, keepdim=True)).pow(2).sum(dim=2).mean(dim=1).sum().item()
+        )
+        smoothed_temporal_var_sum += float(
+            (smoothed - smoothed.mean(dim=1, keepdim=True)).pow(2).sum(dim=2).mean(dim=1).sum().item()
+        )
+
+        for class_id in labels_cpu.unique(sorted=True):
+            mask_c = labels_cpu == class_id
+            idx = int(class_id.item())
+            class_counts[idx] += int(mask_c.sum().item())
+            pooled_c = pooled[mask_c]
+            time_c = flat_time[mask_c]
+            smoothed_c = flat_smoothed[mask_c]
+            pooled_unit_c = pooled_unit[mask_c]
+            time_unit_c = flat_time_unit[mask_c]
+            smoothed_unit_c = flat_smoothed_unit[mask_c]
+            temporal_shape_c = flat_temporal_shape_unit[mask_c]
+            pooled_class_sums[idx] += pooled_c.sum(dim=0)
+            pooled_class_sq_sums[idx] += pooled_c.pow(2).sum()
+            time_class_sums[idx] += time_c.sum(dim=0)
+            time_class_sq_sums[idx] += time_c.pow(2).sum()
+            smoothed_class_sums[idx] += smoothed_c.sum(dim=0)
+            smoothed_class_sq_sums[idx] += smoothed_c.pow(2).sum()
+            pooled_unit_class_sums[idx] += pooled_unit_c.sum(dim=0)
+            pooled_unit_class_sq_sums[idx] += pooled_unit_c.pow(2).sum()
+            time_unit_class_sums[idx] += time_unit_c.sum(dim=0)
+            time_unit_class_sq_sums[idx] += time_unit_c.pow(2).sum()
+            smoothed_unit_class_sums[idx] += smoothed_unit_c.sum(dim=0)
+            smoothed_unit_class_sq_sums[idx] += smoothed_unit_c.pow(2).sum()
+            temporal_shape_class_sums[idx] += temporal_shape_c.sum(dim=0)
+            temporal_shape_class_sq_sums[idx] += temporal_shape_c.pow(2).sum()
+
+    if sample_count == 0:
+        return {"num_source_samples": 0, "num_classes": 0}
+
+    pooled_within, pooled_between, pooled_fisher = class_structure_from_stats(
+        pooled_class_sums, pooled_class_sq_sums, class_counts
+    )
+    time_within, _, _ = class_structure_from_stats(
+        time_class_sums, time_class_sq_sums, class_counts
+    )
+    smooth_within, _, _ = class_structure_from_stats(
+        smoothed_class_sums, smoothed_class_sq_sums, class_counts
+    )
+    pooled_unit_within, pooled_unit_between, pooled_unit_fisher = class_structure_from_stats(
+        pooled_unit_class_sums, pooled_unit_class_sq_sums, class_counts
+    )
+    time_unit_within, time_unit_between, time_unit_fisher = class_structure_from_stats(
+        time_unit_class_sums, time_unit_class_sq_sums, class_counts
+    )
+    smoothed_unit_within, smoothed_unit_between, smoothed_unit_fisher = class_structure_from_stats(
+        smoothed_unit_class_sums, smoothed_unit_class_sq_sums, class_counts
+    )
+    temporal_shape_within, temporal_shape_between, temporal_shape_fisher = class_structure_from_stats(
+        temporal_shape_class_sums, temporal_shape_class_sq_sums, class_counts
+    )
+    temporal_variance = temporal_var_sum / sample_count
+    smoothed_temporal_variance = smoothed_temporal_var_sum / sample_count
+    return {
+        "num_source_samples": int(sample_count),
+        "num_classes": int((class_counts > 0).sum().item()),
+        "pooled_norm_mean": pooled_norm_sum / sample_count,
+        "pooled_cov_trace": trace_from_sums(pooled_sum, pooled_sq_sum, sample_count),
+        "pooled_within_var": pooled_within,
+        "pooled_between_dist": pooled_between,
+        "pooled_fisher": pooled_fisher,
+        "pooled_unit_within_var": pooled_unit_within,
+        "pooled_unit_between_dist": pooled_unit_between,
+        "pooled_unit_fisher": pooled_unit_fisher,
+        "pooled_unit_center_cosine_dist": class_center_cosine_distance_from_stats(
+            pooled_unit_class_sums, class_counts
+        ),
+        "pooled_unit_cov_effective_rank": covariance_effective_rank_from_sums(
+            pooled_unit_sum, pooled_unit_outer_sum, sample_count
+        ),
+        "timepoint_norm_mean": timepoint_norm_sum / max(timepoint_count, 1),
+        "timepoint_cov_trace": trace_from_sums(time_sum, time_sq_sum, sample_count),
+        "timepoint_within_var": time_within,
+        "smoothed_timepoint_within_var": smooth_within,
+        "timepoint_unit_within_var": time_unit_within,
+        "timepoint_unit_between_dist": time_unit_between,
+        "timepoint_unit_fisher": time_unit_fisher,
+        "smoothed_timepoint_unit_within_var": smoothed_unit_within,
+        "smoothed_timepoint_unit_between_dist": smoothed_unit_between,
+        "smoothed_timepoint_unit_fisher": smoothed_unit_fisher,
+        "temporal_shape_unit_within_var": temporal_shape_within,
+        "temporal_shape_unit_between_dist": temporal_shape_between,
+        "temporal_shape_unit_fisher": temporal_shape_fisher,
+        "temporal_variance": temporal_variance,
+        "smoothed_temporal_variance": smoothed_temporal_variance,
+        "smooth_to_raw_timepoint_within_ratio": smooth_within / time_within
+        if time_within and not math.isnan(time_within)
+        else float("nan"),
+        "smoothed_temporal_retention_ratio": smoothed_temporal_variance / (temporal_variance + 1e-8),
+    }
+
+
+@torch.no_grad()
+def extract_features(model, loader, device, max_batches=0, collect_target=False, collect_features=True):
+    feature_batches = []
+    label_batches = []
+    conf_values = []
+    entropy_values = []
+    margin_values = []
+    pseudo_values = []
+    pred_counts = None
+    total = 0
+    for batch_idx, sample in enumerate(tqdm(loader, desc="diagnose", leave=False)):
+        if max_batches and batch_idx >= max_batches:
+            break
+        labels = sample["label"].to(device=device, non_blocking=True)
+        pixels = sample["pixels"].to(device=device, non_blocking=True)
+        mask = sample["valid_pixels"].to(device=device, non_blocking=True)
+        positions = sample["positions"].to(device=device, non_blocking=True)
+        extra = sample["extra"].to(device=device, non_blocking=True)
+        spatial_feats = model.spatial_encoder(pixels, mask, extra)
+        if collect_features:
+            feature_batches.append(spatial_feats.detach().cpu())
+        label_batches.append(labels.detach().cpu())
+        if collect_target:
+            logits = model.decoder(model.temporal_encoder(spatial_feats, positions))
+            probs = torch.softmax(logits, dim=1)
+            top2 = torch.topk(probs, k=min(2, probs.shape[1]), dim=1).values
+            conf = top2[:, 0]
+            margin = top2[:, 0] - top2[:, 1] if top2.shape[1] > 1 else top2[:, 0]
+            entropy = -(probs * (probs + 1e-8).log()).sum(dim=1)
+            preds = probs.argmax(dim=1)
+            if pred_counts is None:
+                pred_counts = torch.zeros(probs.shape[1], device=device)
+            pred_counts += torch.bincount(preds, minlength=probs.shape[1]).float()
+            total += probs.shape[0]
+            conf_values.append(conf.detach().cpu())
+            margin_values.append(margin.detach().cpu())
+            entropy_values.append(entropy.detach().cpu())
+            pseudo_values.append((conf >= 0.9).float().detach().cpu())
+    features = torch.cat(feature_batches, dim=0).float() if collect_features else None
+    labels = torch.cat(label_batches, dim=0).long()
+    target_stats = {}
+    if collect_target and conf_values:
+        conf = torch.cat(conf_values)
+        margin = torch.cat(margin_values)
+        entropy = torch.cat(entropy_values)
+        pseudo = torch.cat(pseudo_values)
+        pred_probs = (pred_counts / max(float(total), 1.0)).detach().cpu()
+        class_balance_entropy = -(pred_probs * (pred_probs + 1e-8).log()).sum()
+        class_balance_entropy = class_balance_entropy / math.log(max(len(pred_probs), 2))
+        target_stats = {
+            "target_mean_conf": float(conf.mean().item()),
+            "target_entropy_mean": float(entropy.mean().item()),
+            "target_margin_mean": float(margin.mean().item()),
+            "target_pseudo_ratio_0p9": float(pseudo.mean().item()),
+            "target_class_balance_entropy": float(class_balance_entropy.item()),
+        }
+    return features, labels, target_stats
+
+
+def compute_source_metrics(features, labels):
+    pooled = features.mean(dim=1)
+    smoothed = smooth_time_axis(features)
+    flat_time = features.flatten(start_dim=1)
+    flat_smoothed = smoothed.flatten(start_dim=1)
+    pooled_within, pooled_between, pooled_fisher = class_structure(pooled, labels)
+    time_within, _, _ = class_structure(flat_time, labels)
+    smooth_within, _, _ = class_structure(flat_smoothed, labels)
+    temporal_variance = (features - features.mean(dim=1, keepdim=True)).pow(2).sum(dim=2).mean()
+    smoothed_temporal_variance = (
+        smoothed - smoothed.mean(dim=1, keepdim=True)
+    ).pow(2).sum(dim=2).mean()
+    return {
+        "num_source_samples": int(features.shape[0]),
+        "num_classes": int(labels.unique().numel()),
+        "pooled_norm_mean": float(pooled.norm(dim=1).mean().item()),
+        "pooled_cov_trace": cov_trace(pooled),
+        "pooled_within_var": pooled_within,
+        "pooled_between_dist": pooled_between,
+        "pooled_fisher": pooled_fisher,
+        "timepoint_norm_mean": float(features.norm(dim=2).mean().item()),
+        "timepoint_cov_trace": cov_trace(flat_time),
+        "timepoint_within_var": time_within,
+        "smoothed_timepoint_within_var": smooth_within,
+        "temporal_variance": float(temporal_variance.item()),
+        "smoothed_temporal_variance": float(smoothed_temporal_variance.item()),
+        "smooth_to_raw_timepoint_within_ratio": smooth_within / time_within
+        if time_within and not math.isnan(time_within)
+        else float("nan"),
+        "smoothed_temporal_retention_ratio": float(
+            smoothed_temporal_variance.div(temporal_variance + 1e-8).item()
+        ),
+    }
+
+
+def diagnose_row(row, args, device):
+    checkpoint = find_checkpoint_from_log(row["log_path"])
+    if not checkpoint:
+        checkpoint = fallback_checkpoint_from_row(row)
+    if not checkpoint:
+        return {**base_output_row(row), "status": "missing_checkpoint_in_log"}
+    checkpoint_path = Path(checkpoint)
+    if not checkpoint_path.is_absolute():
+        if checkpoint_path.parts and checkpoint_path.parts[0] == "outputs":
+            checkpoint_path = Path(args.outputs_root).joinpath(*checkpoint_path.parts[1:])
+            if not checkpoint_path.is_absolute():
+                checkpoint_path = ROOT_DIR / checkpoint_path
+        else:
+            checkpoint_path = ROOT_DIR / checkpoint_path
+    if not checkpoint_path.exists():
+        return {
+            **base_output_row(row),
+            "checkpoint": str(checkpoint),
+            "status": "missing_checkpoint_file",
+        }
+
+    source_dataset = TAG_TO_DATASET[row["source_tag"]]
+    target_dataset = TAG_TO_DATASET[row["target_tag"]]
+    classes = get_task_classes(args.data_root, source_dataset, bool_value(args.closed_set))
+    source_loader = build_loader(
+        args.data_root,
+        source_dataset,
+        classes,
+        bool_value(args.closed_set),
+        args.batch_size,
+        args.num_workers,
+    )
+    target_loader = build_loader(
+        args.data_root,
+        target_dataset,
+        classes,
+        bool_value(args.closed_set),
+        args.batch_size,
+        args.num_workers,
+    )
+    model = build_model(len(classes), device)
+    load_checkpoint(model, checkpoint_path, device)
+    metrics = extract_source_metrics_streaming(
+        model, source_loader, device, len(classes), max_batches=args.max_source_batches
+    )
+    _, target_labels, target_stats = extract_features(
+        model,
+        target_loader,
+        device,
+        max_batches=args.max_target_batches,
+        collect_target=True,
+        collect_features=False,
+    )
+    return {
+        **base_output_row(row),
+        "checkpoint": str(checkpoint),
+        "status": "ok",
+        **metrics,
+        "num_target_samples": int(target_labels.shape[0]),
+        **target_stats,
+    }
+
+
+def base_output_row(row):
+    return {
+        "task": row.get("task", ""),
+        "source_tag": row.get("source_tag", ""),
+        "target_tag": row.get("target_tag", ""),
+        "seed": row.get("seed", ""),
+        "config": row.get("config", ""),
+        "row_config": row.get("row_config", ""),
+        "compact_weight": row.get("compact_weight", ""),
+        "source_self_f1": row.get("source_self_f1", ""),
+        "source_on_target_f1": row.get("source_on_target_f1", ""),
+        "da_f1": row.get("da_f1", ""),
+        "da_gain": row.get("da_gain", ""),
+        "checkpoint": "",
+        "status": "",
+    }
+
+
+def mean(values):
+    vals = [safe_float(v) for v in values]
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return None
+    return sum(vals) / len(vals)
+
+
+def summarize(rows, output_dir):
+    ok_rows = [row for row in rows if row.get("status") == "ok"]
+    numeric_fields = [
+        field
+        for field in DETAIL_FIELDS
+        if field
+        not in {
+            "task",
+            "source_tag",
+            "target_tag",
+            "seed",
+            "config",
+            "row_config",
+            "checkpoint",
+            "status",
+        }
+    ]
+    by_config = defaultdict(list)
+    for row in ok_rows:
+        by_config[row["config"]].append(row)
+    config_rows = []
+    for config, group in sorted(by_config.items()):
+        out = {"config": config, "n": len(group)}
+        for field in numeric_fields:
+            out[f"{field}_mean"] = mean(row.get(field) for row in group)
+        config_rows.append(out)
+    config_fields = ["config", "n"] + [f"{field}_mean" for field in numeric_fields]
+    write_tsv(Path(output_dir) / "stiffness_summary_by_config.tsv", config_rows, config_fields)
+
+    plain_by_task_seed = {
+        (row["task"], row["seed"]): row
+        for row in ok_rows
+        if row.get("config") == "plain"
+    }
+    delta_rows = []
+    ratio_fields = [
+        "pooled_cov_trace",
+        "pooled_within_var",
+        "pooled_between_dist",
+        "pooled_unit_within_var",
+        "pooled_unit_between_dist",
+        "pooled_unit_fisher",
+        "pooled_unit_center_cosine_dist",
+        "pooled_unit_cov_effective_rank",
+        "timepoint_within_var",
+        "smoothed_timepoint_within_var",
+        "timepoint_unit_within_var",
+        "timepoint_unit_between_dist",
+        "timepoint_unit_fisher",
+        "smoothed_timepoint_unit_within_var",
+        "smoothed_timepoint_unit_between_dist",
+        "smoothed_timepoint_unit_fisher",
+        "temporal_shape_unit_within_var",
+        "temporal_shape_unit_between_dist",
+        "temporal_shape_unit_fisher",
+        "temporal_variance",
+        "target_mean_conf",
+        "target_pseudo_ratio_0p9",
+        "target_class_balance_entropy",
+    ]
+    for row in ok_rows:
+        if row.get("config") == "plain":
+            continue
+        plain = plain_by_task_seed.get((row["task"], row["seed"]))
+        if not plain:
+            continue
+        out = {
+            "task": row["task"],
+            "seed": row["seed"],
+            "config": row["config"],
+            "delta_da_f1": safe_float(row.get("da_f1")) - safe_float(plain.get("da_f1")),
+            "delta_source_on_target_f1": safe_float(row.get("source_on_target_f1"))
+            - safe_float(plain.get("source_on_target_f1")),
+            "delta_da_gain": safe_float(row.get("da_gain")) - safe_float(plain.get("da_gain")),
+        }
+        for field in ratio_fields:
+            value = safe_float(row.get(field))
+            base = safe_float(plain.get(field))
+            out[f"{field}_ratio_vs_plain"] = value / base if value is not None and base else None
+            out[f"{field}_delta_vs_plain"] = value - base if value is not None and base is not None else None
+        delta_rows.append(out)
+    delta_fields = [
+        "task",
+        "seed",
+        "config",
+        "delta_da_f1",
+        "delta_source_on_target_f1",
+        "delta_da_gain",
+    ]
+    for field in ratio_fields:
+        delta_fields.append(f"{field}_ratio_vs_plain")
+        delta_fields.append(f"{field}_delta_vs_plain")
+    write_tsv(Path(output_dir) / "stiffness_delta_vs_plain.tsv", delta_rows, delta_fields)
+
+    by_delta_config = defaultdict(list)
+    for row in delta_rows:
+        by_delta_config[row["config"]].append(row)
+    delta_summary = []
+    for config, group in sorted(by_delta_config.items()):
+        out = {"config": config, "n": len(group)}
+        for field in delta_fields:
+            if field in {"task", "seed", "config"}:
+                continue
+            out[f"{field}_mean"] = mean(row.get(field) for row in group)
+        delta_summary.append(out)
+    delta_summary_fields = ["config", "n"] + [
+        f"{field}_mean" for field in delta_fields if field not in {"task", "seed", "config"}
+    ]
+    write_tsv(
+        Path(output_dir) / "stiffness_delta_vs_plain_summary.tsv",
+        delta_summary,
+        delta_summary_fields,
+    )
+
+
+def merge_details(paths, output_dir):
+    rows = []
+    for path in paths:
+        if not path:
+            continue
+        rows.extend(read_tsv(path))
+    rows.sort(key=lambda r: (r.get("task", ""), r.get("seed", ""), r.get("config", "")))
+    write_tsv(Path(output_dir) / "stiffness_diagnostic_rows.tsv", rows, DETAIL_FIELDS)
+    summarize(rows, output_dir)
+
+
+def main():
+    args = parse_args()
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if args.merge_detail_tsvs:
+        merge_details([p for p in args.merge_detail_tsvs.split(",") if p], output_dir)
+        print(f"Wrote merged diagnostics to {output_dir}")
+        return
+
+    task_filter = {item.strip() for item in args.tasks.split(",") if item.strip()}
+    config_filter = {item.strip() for item in args.configs.split(",") if item.strip()}
+    candidates = load_candidate_rows(args.run, task_filter, config_filter)
+    if args.num_shards > 1:
+        candidates = [
+            row for idx, row in enumerate(candidates) if idx % args.num_shards == args.shard_index
+        ]
+    device_name = args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu"
+    device = torch.device(device_name)
+    rows = []
+    for row in tqdm(candidates, desc=f"shard {args.shard_index}/{args.num_shards}"):
+        rows.append(diagnose_row(row, args, device))
+    detail_path = output_dir / "stiffness_diagnostic_rows.tsv"
+    write_tsv(detail_path, rows, DETAIL_FIELDS)
+    summarize(rows, output_dir)
+    print(f"Wrote diagnostics to {detail_path}")
+
+
+if __name__ == "__main__":
+    main()
