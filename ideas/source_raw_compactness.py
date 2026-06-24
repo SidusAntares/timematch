@@ -20,6 +20,9 @@ RAW_GLOBAL_COMPACTNESS_VERSIONS = {
     "v277_raw_lowfreq_dct_k2_compactness",
     "v277_raw_lowfreq_dct_k4_compactness",
     "v277_raw_lowfreq_dct_k8_compactness",
+    "v283a_umsc_dual_075_025_compactness",
+    "v283a_umsc_dual_050_050_compactness",
+    "v283b_umsc_triscale_060_020_020_compactness",
 }
 
 
@@ -155,6 +158,17 @@ def _lowfreq_dct_components(version):
     return None
 
 
+def _umsc_weights(version):
+    version = str(version or "").lower()
+    if version == "v283a_umsc_dual_075_025_compactness":
+        return {"l3": 0.75, "l5": 0.0, "linf": 0.25}
+    if version == "v283a_umsc_dual_050_050_compactness":
+        return {"l3": 0.50, "l5": 0.0, "linf": 0.50}
+    if version == "v283b_umsc_triscale_060_020_020_compactness":
+        return {"l3": 0.60, "l5": 0.20, "linf": 0.20}
+    return None
+
+
 def _compute_lowfreq_compactness(spatial_feats, labels, components, compact_distance="mse", eps=1e-6):
     basis = _dct_lowfreq_basis(
         spatial_feats.shape[1],
@@ -215,6 +229,7 @@ def compute_source_raw_global_compactness_loss(
     version="v275_raw_global_compactness",
     intra_trade_off=1.0,
     compact_distance="mse",
+    time_smooth_kernel_size=3,
     norm_preserve_trade_off=0.0,
     norm_preserve_target="min_mean",
     norm_preserve_value=1.0,
@@ -238,7 +253,48 @@ def compute_source_raw_global_compactness_loss(
 
     version = str(version or "v275_raw_global_compactness").lower()
     lowfreq_components = _lowfreq_dct_components(version)
-    if lowfreq_components is not None:
+    umsc_weights = _umsc_weights(version)
+    umsc_component_losses = {}
+    if umsc_weights is not None:
+        compact_loss = zero
+        valid_class_count = 0
+        valid_sample_count = 0
+        if umsc_weights["l3"] != 0.0:
+            l3_loss, l3_classes, l3_samples = _compute_timepoint_compactness(
+                _smooth_time_axis(spatial_feats, kernel_size=3),
+                labels,
+                compact_distance=compact_distance,
+                eps=eps,
+            )
+            compact_loss = compact_loss + float(umsc_weights["l3"]) * l3_loss
+            valid_class_count = max(valid_class_count, l3_classes)
+            valid_sample_count = max(valid_sample_count, l3_samples)
+            umsc_component_losses["l3"] = l3_loss
+        if umsc_weights["l5"] != 0.0:
+            l5_loss, l5_classes, l5_samples = _compute_timepoint_compactness(
+                _smooth_time_axis(spatial_feats, kernel_size=5),
+                labels,
+                compact_distance=compact_distance,
+                eps=eps,
+            )
+            compact_loss = compact_loss + float(umsc_weights["l5"]) * l5_loss
+            valid_class_count = max(valid_class_count, l5_classes)
+            valid_sample_count = max(valid_sample_count, l5_samples)
+            umsc_component_losses["l5"] = l5_loss
+        if umsc_weights["linf"] != 0.0:
+            linf_loss, linf_classes, linf_samples = _compute_global_compactness(
+                pooled_feats,
+                labels,
+                compact_distance=compact_distance,
+                center_mode="mean",
+                eps=eps,
+            )
+            compact_loss = compact_loss + float(umsc_weights["linf"]) * linf_loss
+            valid_class_count = max(valid_class_count, linf_classes)
+            valid_sample_count = max(valid_sample_count, linf_samples)
+            umsc_component_losses["linf"] = linf_loss
+        center_mode = "umsc"
+    elif lowfreq_components is not None:
         compact_loss, valid_class_count, valid_sample_count, _ = _compute_lowfreq_compactness(
             spatial_feats,
             labels,
@@ -253,7 +309,7 @@ def compute_source_raw_global_compactness_loss(
         "source_raw_smoothed_timepoint_compactness",
     }:
         compact_loss, valid_class_count, valid_sample_count = _compute_timepoint_compactness(
-            _smooth_time_axis(spatial_feats, kernel_size=3),
+            _smooth_time_axis(spatial_feats, kernel_size=time_smooth_kernel_size),
             labels,
             compact_distance=compact_distance,
             eps=eps,
@@ -330,8 +386,21 @@ def compute_source_raw_global_compactness_loss(
         ),
         "source_structure_version_v275_raw_global": 1.0,
         "source_structure_raw_center_mode": (
-            5.0 if center_mode == "lowfreq_dct" else 4.0 if center_mode == "smoothed_timepoint" else 3.0 if center_mode == "timepoint" else 2.0 if center_mode == "trimmed" else 1.0
+            6.0 if center_mode == "umsc" else 5.0 if center_mode == "lowfreq_dct" else 4.0 if center_mode == "smoothed_timepoint" else 3.0 if center_mode == "timepoint" else 2.0 if center_mode == "trimmed" else 1.0
         ),
         "source_structure_raw_lowfreq_components": float(lowfreq_components or 0),
+        "source_structure_time_smooth_kernel_size": float(time_smooth_kernel_size),
+        "source_structure_umsc_l3_weight": float(umsc_weights["l3"] if umsc_weights else 0.0),
+        "source_structure_umsc_l5_weight": float(umsc_weights["l5"] if umsc_weights else 0.0),
+        "source_structure_umsc_linf_weight": float(umsc_weights["linf"] if umsc_weights else 0.0),
+        "source_structure_umsc_l3_loss": float(
+            umsc_component_losses.get("l3", zero).detach().item()
+        ),
+        "source_structure_umsc_l5_loss": float(
+            umsc_component_losses.get("l5", zero).detach().item()
+        ),
+        "source_structure_umsc_linf_loss": float(
+            umsc_component_losses.get("linf", zero).detach().item()
+        ),
     }
     return total_loss, logs

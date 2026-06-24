@@ -77,10 +77,27 @@ add_manifest() {
         "$config" "sourcephasecompact" "v276_raw_timepoint_compactness" "raw" "$V275_WEIGHT" "off" \
         "v2.7.6 probe: source-stage per-timestep class prototype compactness; TimeMatch DA-stage structure off."
       ;;
+    v276_timepoint_w0p5)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v276_raw_timepoint_compactness" "raw" "0.5" "off" \
+        "A1: ordinary per-timestep compactness with lambda=0.5; TimeMatch DA-stage structure off."
+      ;;
     v276_smoothed_timepoint_w1)
       printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
         "$config" "sourcephasecompact" "v276_raw_smoothed_timepoint_compactness" "raw" "$V275_WEIGHT" "off" \
         "v2.7.6 probe: source-stage smoothed per-timestep class prototype compactness; TimeMatch DA-stage structure off."
+      ;;
+    v276_smooth_k1_w1|v276_smooth_k3_w1|v276_smooth_k5_w1|v276_smooth_k7_w1)
+      local kernel_size
+      kernel_size="$(echo "$config" | sed -E 's/^v276_smooth_k([0-9]+)_w1$/\1/')"
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v276_raw_smoothed_timepoint_compactness" "raw" "1.0" "off" \
+        "A3: smoothed timepoint compactness kernel=${kernel_size}, lambda=1.0; TimeMatch DA-stage structure off."
+      ;;
+    v276_smooth_k3_w1_detach)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v276_raw_smoothed_timepoint_compactness" "raw-detached" "1.0" "off" \
+        "A2: smoothed timepoint compactness kernel=3, lambda=1.0, detached features; TimeMatch DA-stage structure off."
       ;;
     v276_trimmed_w1)
       printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
@@ -102,6 +119,21 @@ add_manifest() {
         "$config" "sourcephasecompact" "v277_raw_lowfreq_dct_k8_compactness" "raw" "$V275_WEIGHT" "off" \
         "v2.7.7 probe: source-stage DCT low-frequency K=8 prototype compactness; TimeMatch DA-stage structure off."
       ;;
+    v283a_umsc_075l3_025linf_w1)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v283a_umsc_dual_075_025_compactness" "raw" "1.0" "off" \
+        "v2.8.3a: unified multi-scale compactness, L=1.0*(0.75*L3 + 0.25*Linf); TimeMatch DA-stage structure off."
+      ;;
+    v283a_umsc_050l3_050linf_w1)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v283a_umsc_dual_050_050_compactness" "raw" "1.0" "off" \
+        "v2.8.3a: unified multi-scale compactness, L=1.0*(0.50*L3 + 0.50*Linf); TimeMatch DA-stage structure off."
+      ;;
+    v283b_umsc_060l3_020l5_020linf_w1)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v283b_umsc_triscale_060_020_020_compactness" "raw" "1.0" "off" \
+        "v2.8.3b: unified multi-scale compactness, L=1.0*(0.60*L3 + 0.20*L5 + 0.20*Linf); TimeMatch DA-stage structure off."
+      ;;
   esac >> "$MANIFEST"
 }
 
@@ -121,7 +153,7 @@ for seed in $SEEDS; do
     for config in "${CONFIG_NAMES[@]}"; do
       config="$(echo "$config" | xargs)"
       case "$config" in
-        plain|v275_raw_w1|v276_timepoint_w1|v276_smoothed_timepoint_w1|v276_trimmed_w1|v277_dct_k2_w1|v277_dct_k4_w1|v277_dct_k8_w1) ;;
+        plain|v275_raw_w1|v276_timepoint_w0p5|v276_timepoint_w1|v276_smoothed_timepoint_w1|v276_smooth_k1_w1|v276_smooth_k3_w1|v276_smooth_k5_w1|v276_smooth_k7_w1|v276_smooth_k3_w1_detach|v276_trimmed_w1|v277_dct_k2_w1|v277_dct_k4_w1|v277_dct_k8_w1|v283a_umsc_075l3_025linf_w1|v283a_umsc_050l3_050linf_w1|v283b_umsc_060l3_020l5_020linf_w1) ;;
         *)
           echo "ERROR unknown config: $config" >&2
           exit 2
@@ -179,14 +211,59 @@ run_job() {
       --source "$source_dataset" \
       --target "$source_dataset" || return "$?"
   else
-    local loss_version
+    local loss_version compact_weight detach_features smooth_kernel
+    compact_weight="$V275_WEIGHT"
+    detach_features="False"
+    smooth_kernel="3"
     case "$config" in
+      v276_timepoint_w0p5)
+        loss_version="v276_raw_timepoint_compactness"
+        compact_weight="0.5"
+        ;;
       v276_timepoint_w1) loss_version="v276_raw_timepoint_compactness" ;;
       v276_smoothed_timepoint_w1) loss_version="v276_raw_smoothed_timepoint_compactness" ;;
+      v276_smooth_k1_w1)
+        loss_version="v276_raw_smoothed_timepoint_compactness"
+        compact_weight="1.0"
+        smooth_kernel="1"
+        ;;
+      v276_smooth_k3_w1)
+        loss_version="v276_raw_smoothed_timepoint_compactness"
+        compact_weight="1.0"
+        smooth_kernel="3"
+        ;;
+      v276_smooth_k5_w1)
+        loss_version="v276_raw_smoothed_timepoint_compactness"
+        compact_weight="1.0"
+        smooth_kernel="5"
+        ;;
+      v276_smooth_k7_w1)
+        loss_version="v276_raw_smoothed_timepoint_compactness"
+        compact_weight="1.0"
+        smooth_kernel="7"
+        ;;
+      v276_smooth_k3_w1_detach)
+        loss_version="v276_raw_smoothed_timepoint_compactness"
+        compact_weight="1.0"
+        detach_features="True"
+        smooth_kernel="3"
+        ;;
       v276_trimmed_w1) loss_version="v276_raw_trimmed_global_compactness" ;;
       v277_dct_k2_w1) loss_version="v277_raw_lowfreq_dct_k2_compactness" ;;
       v277_dct_k4_w1) loss_version="v277_raw_lowfreq_dct_k4_compactness" ;;
       v277_dct_k8_w1) loss_version="v277_raw_lowfreq_dct_k8_compactness" ;;
+      v283a_umsc_075l3_025linf_w1)
+        loss_version="v283a_umsc_dual_075_025_compactness"
+        compact_weight="1.0"
+        ;;
+      v283a_umsc_050l3_050linf_w1)
+        loss_version="v283a_umsc_dual_050_050_compactness"
+        compact_weight="1.0"
+        ;;
+      v283b_umsc_060l3_020l5_020linf_w1)
+        loss_version="v283b_umsc_triscale_060_020_020_compactness"
+        compact_weight="1.0"
+        ;;
       *) loss_version="v275_raw_global_compactness" ;;
     esac
     CUDA_VISIBLE_DEVICES="$gpu" python train.py \
@@ -199,8 +276,9 @@ run_job() {
       --source_segment_count 1 \
       --source_structure_loss_version "$loss_version" \
       --source_structure_feature_target raw \
-      --source_structure_detach_features False \
-      --source_structure_intra_trade_off "$V275_WEIGHT" \
+      --source_structure_detach_features "$detach_features" \
+      --source_structure_intra_trade_off "$compact_weight" \
+      --source_structure_time_smooth_kernel_size "$smooth_kernel" \
       --source_structure_amplitude_trade_off 0.0 \
       --source_structure_interphase_trade_off 0.0 \
       --source_structure_shape_trade_off 0.0 \

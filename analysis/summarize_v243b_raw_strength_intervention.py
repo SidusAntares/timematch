@@ -8,7 +8,7 @@ from pathlib import Path
 
 TEST_RE = re.compile(r"Test result for ([^:]+): accuracy=([0-9.]+), f1=([0-9.]+)")
 NAME_RE = re.compile(r"gpu\d+_(.+)_seed(\d+)_(.+)\.log$")
-WEIGHT_RE = re.compile(r"_w([0-9p]+)_")
+WEIGHT_RE = re.compile(r"_w([0-9p]+)(?:_|$)")
 
 
 def parse_kv_line(line, prefix):

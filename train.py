@@ -493,7 +493,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v275_raw_global_compactness', 'v276_raw_timepoint_compactness', 'v276_raw_smoothed_timepoint_compactness', 'v276_raw_trimmed_global_compactness', 'v277_raw_lowfreq_dct_k2_compactness', 'v277_raw_lowfreq_dct_k4_compactness', 'v277_raw_lowfreq_dct_k8_compactness'],
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v275_raw_global_compactness', 'v276_raw_timepoint_compactness', 'v276_raw_smoothed_timepoint_compactness', 'v276_raw_trimmed_global_compactness', 'v277_raw_lowfreq_dct_k2_compactness', 'v277_raw_lowfreq_dct_k4_compactness', 'v277_raw_lowfreq_dct_k8_compactness', 'v283a_umsc_dual_075_025_compactness', 'v283a_umsc_dual_050_050_compactness', 'v283b_umsc_triscale_060_020_020_compactness'],
         help='source-side structural loss version: compactness, legacy multi-component losses, v2.7.5 raw global encoder compactness, or v2.7.6 raw compactness variants',
     )
     parser.add_argument(
@@ -567,6 +567,12 @@ if __name__ == '__main__':
         default='mse',
         choices=['mse', 'normalized_mse'],
         help='distance used for intra compactness: mse keeps legacy Euclidean scale, normalized_mse applies MSE after L2-normalizing features',
+    )
+    parser.add_argument(
+        '--source_structure_time_smooth_kernel_size',
+        default=3,
+        type=int,
+        help='odd temporal smoothing kernel size for v276_raw_smoothed_timepoint_compactness; 1 disables smoothing',
     )
     parser.add_argument(
         '--source_structure_norm_preserve_trade_off',
