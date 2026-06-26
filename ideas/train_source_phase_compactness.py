@@ -188,6 +188,14 @@ def _compute_source_structure_loss_on_features(
             time_smooth_kernel_size=getattr(
                 config, "source_structure_time_smooth_kernel_size", 3
             ),
+            elastic_radius=getattr(config, "source_structure_elastic_radius", 0),
+            elastic_eta=getattr(config, "source_structure_elastic_eta", 0.1),
+            elastic_softmin_tau=getattr(
+                config, "source_structure_elastic_softmin_tau", 0.1
+            ),
+            elastic_detach_center=getattr(
+                config, "source_structure_elastic_detach_center", False
+            ),
             norm_preserve_trade_off=getattr(
                 config, "source_structure_norm_preserve_trade_off", 0.0
             ),
@@ -359,6 +367,13 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         cls_loss_meter = AverageMeter()
         compact_loss_meter = AverageMeter()
         compact_raw_loss_meter = AverageMeter()
+        elastic_metric_meters = {
+            "mean_abs_offset": AverageMeter(),
+            "center_weight": AverageMeter(),
+            "boundary_weight": AverageMeter(),
+            "distance_scale": AverageMeter(),
+            "struct_loss": AverageMeter(),
+        }
 
         progress_bar = tqdm(enumerate(data_loader), total=len(data_loader), desc=f'Epoch {epoch + 1}/{config.epochs}')
         global_step = epoch * len(data_loader)
@@ -423,6 +438,26 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             cls_loss_meter.update(cls_loss_raw.item(), n=config.batch_size)
             compact_loss_meter.update(compact_logs["compactness_loss"], n=config.batch_size)
             compact_raw_loss_meter.update(compact_logs.get("compactness_raw_loss", 0.0), n=config.batch_size)
+            elastic_metric_meters["mean_abs_offset"].update(
+                compact_logs.get("raw_elastic_mean_abs_offset", 0.0),
+                n=config.batch_size,
+            )
+            elastic_metric_meters["center_weight"].update(
+                compact_logs.get("raw_elastic_center_weight", 0.0),
+                n=config.batch_size,
+            )
+            elastic_metric_meters["boundary_weight"].update(
+                compact_logs.get("raw_elastic_boundary_weight", 0.0),
+                n=config.batch_size,
+            )
+            elastic_metric_meters["distance_scale"].update(
+                compact_logs.get("raw_elastic_distance_scale", 0.0),
+                n=config.batch_size,
+            )
+            elastic_metric_meters["struct_loss"].update(
+                compact_logs.get("raw_elastic_struct_loss", 0.0),
+                n=config.batch_size,
+            )
 
             if step % config.log_step == 0:
                 lr = optimizer.param_groups[0]["lr"]
@@ -455,7 +490,16 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             f"compact_distance={getattr(config, 'source_structure_compact_distance', 'mse')}|"
             f"norm_preserve={float(getattr(config, 'source_structure_norm_preserve_trade_off', 0.0)):.6f}|"
             f"norm_target={getattr(config, 'source_structure_norm_preserve_target', 'min_mean')}|"
-            f"norm_value={float(getattr(config, 'source_structure_norm_preserve_value', 1.0)):.6f}"
+            f"norm_value={float(getattr(config, 'source_structure_norm_preserve_value', 1.0)):.6f}|"
+            f"elastic_radius={int(getattr(config, 'source_structure_elastic_radius', 0))}|"
+            f"elastic_eta={float(getattr(config, 'source_structure_elastic_eta', 0.1)):.6f}|"
+            f"elastic_softmin_tau={float(getattr(config, 'source_structure_elastic_softmin_tau', 0.1)):.6f}|"
+            f"elastic_detach_center={bool(getattr(config, 'source_structure_elastic_detach_center', False))}|"
+            f"elastic_mean_abs_offset={elastic_metric_meters['mean_abs_offset'].avg:.6f}|"
+            f"elastic_center_weight={elastic_metric_meters['center_weight'].avg:.6f}|"
+            f"elastic_boundary_weight={elastic_metric_meters['boundary_weight'].avg:.6f}|"
+            f"elastic_distance_scale={elastic_metric_meters['distance_scale'].avg:.6f}|"
+            f"elastic_struct_loss={elastic_metric_meters['struct_loss'].avg:.6f}"
         )
 
         model.eval()

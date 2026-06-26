@@ -493,7 +493,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v275_raw_global_compactness', 'v276_raw_timepoint_compactness', 'v276_raw_smoothed_timepoint_compactness', 'v276_raw_trimmed_global_compactness', 'v277_raw_lowfreq_dct_k2_compactness', 'v277_raw_lowfreq_dct_k4_compactness', 'v277_raw_lowfreq_dct_k8_compactness', 'v283a_umsc_dual_075_025_compactness', 'v283a_umsc_dual_050_050_compactness', 'v283b_umsc_triscale_060_020_020_compactness'],
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v275_raw_global_compactness', 'v276_raw_timepoint_compactness', 'v276_raw_smoothed_timepoint_compactness', 'v276_raw_trimmed_global_compactness', 'v277_raw_lowfreq_dct_k2_compactness', 'v277_raw_lowfreq_dct_k4_compactness', 'v277_raw_lowfreq_dct_k8_compactness', 'v283a_umsc_dual_075_025_compactness', 'v283a_umsc_dual_050_050_compactness', 'v283b_umsc_triscale_060_020_020_compactness', 'v284_elastic_smoothed_timepoint_compactness'],
         help='source-side structural loss version: compactness, legacy multi-component losses, v2.7.5 raw global encoder compactness, or v2.7.6 raw compactness variants',
     )
     parser.add_argument(
@@ -573,6 +573,30 @@ if __name__ == '__main__':
         default=3,
         type=int,
         help='odd temporal smoothing kernel size for v276_raw_smoothed_timepoint_compactness; 1 disables smoothing',
+    )
+    parser.add_argument(
+        '--source_structure_elastic_radius',
+        default=0,
+        type=int,
+        help='local temporal matching radius for v284 elastic smoothed-timepoint compactness',
+    )
+    parser.add_argument(
+        '--source_structure_elastic_eta',
+        default=0.1,
+        type=float,
+        help='relative temporal-offset penalty weight for v284 elastic smoothed-timepoint compactness',
+    )
+    parser.add_argument(
+        '--source_structure_elastic_softmin_tau',
+        default=0.1,
+        type=float,
+        help='relative softmin temperature for v284 elastic smoothed-timepoint compactness',
+    )
+    parser.add_argument(
+        '--source_structure_elastic_detach_center',
+        default=False,
+        type=bool_flag,
+        help='detach class temporal prototype in v284 elastic smoothed-timepoint compactness',
     )
     parser.add_argument(
         '--source_structure_norm_preserve_trade_off',

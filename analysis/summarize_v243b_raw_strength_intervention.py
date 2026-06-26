@@ -54,6 +54,23 @@ def write_tsv(path, rows, fields):
             handle.write("\t".join(fmt(row.get(field)) for field in fields) + "\n")
 
 
+def fmt_md(value):
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    return str(value)
+
+
+def write_md_table(handle, rows, fields, headers=None):
+    headers = headers or fields
+    handle.write("| " + " | ".join(headers) + " |\n")
+    handle.write("|" + "|".join("---" for _ in headers) + "|\n")
+    for row in rows:
+        handle.write("| " + " | ".join(fmt_md(row.get(field)) for field in fields) + " |\n")
+    handle.write("\n")
+
+
 def read_rows_tsv(path):
     numeric_fields = {
         "seed",
@@ -68,6 +85,14 @@ def read_rows_tsv(path):
         "source_compact_raw_loss",
         "source_spatial_delta",
         "source_temporal_delta",
+        "elastic_radius",
+        "elastic_eta",
+        "elastic_softmin_tau",
+        "elastic_mean_abs_offset",
+        "elastic_center_weight",
+        "elastic_boundary_weight",
+        "elastic_distance_scale",
+        "elastic_struct_loss",
         "initial_shift",
         "initial_all_f1",
         "initial_masked_f1",
@@ -218,6 +243,15 @@ def parse_log(path):
         "source_compact_raw_loss": safe_float(final_source.get("compact_raw")),
         "source_spatial_delta": safe_float(final_source.get("spatial_delta")),
         "source_temporal_delta": safe_float(final_source.get("temporal_delta")),
+        "elastic_radius": safe_float(final_source.get("elastic_radius")),
+        "elastic_eta": safe_float(final_source.get("elastic_eta")),
+        "elastic_softmin_tau": safe_float(final_source.get("elastic_softmin_tau")),
+        "elastic_detach_center": final_source.get("elastic_detach_center"),
+        "elastic_mean_abs_offset": safe_float(final_source.get("elastic_mean_abs_offset")),
+        "elastic_center_weight": safe_float(final_source.get("elastic_center_weight")),
+        "elastic_boundary_weight": safe_float(final_source.get("elastic_boundary_weight")),
+        "elastic_distance_scale": safe_float(final_source.get("elastic_distance_scale")),
+        "elastic_struct_loss": safe_float(final_source.get("elastic_struct_loss")),
         "initial_shift": safe_int(initial.get("shift")),
         "initial_all_f1": safe_float(initial.get("all_f1")),
         "initial_masked_f1": safe_float(initial.get("masked_f1")),
@@ -265,6 +299,11 @@ def build_deltas(rows):
         "best_epoch_all_f1",
         "best_epoch_masked_f1",
         "best_epoch_coverage",
+        "elastic_mean_abs_offset",
+        "elastic_center_weight",
+        "elastic_boundary_weight",
+        "elastic_distance_scale",
+        "elastic_struct_loss",
     ]
     out = []
     for row in rows:
@@ -307,6 +346,338 @@ def summarize(rows, group_fields, value_fields):
             out[f"{field}_pos"] = sum(value > 0 for value in vals)
         out_rows.append(out)
     return out_rows
+
+
+def summarize_mean(rows, group_fields, value_fields):
+    grouped = {}
+    for row in rows:
+        key = tuple(row.get(field) for field in group_fields)
+        grouped.setdefault(key, []).append(row)
+    out_rows = []
+    for key, group in sorted(grouped.items()):
+        out = {field: value for field, value in zip(group_fields, key)}
+        out["n"] = len(group)
+        for field in value_fields:
+            out[field] = mean([row.get(field) for row in group])
+            out[f"{field}_std"] = stdev([row.get(field) for row in group])
+        out_rows.append(out)
+    return out_rows
+
+
+def short_config(config):
+    if config is None:
+        return ""
+    match = re.search(r"_r([0-9]+)_", config)
+    if match:
+        return f"r{match.group(1)}"
+    return config
+
+
+def build_delta_vs_config(rows, base_config):
+    ok_rows = [row for row in rows if row.get("status") == "ok"]
+    base = {
+        (row.get("task"), row.get("seed")): row
+        for row in ok_rows
+        if row.get("config") == base_config
+    }
+    out = []
+    for row in ok_rows:
+        if row.get("config") == base_config:
+            continue
+        base_row = base.get((row.get("task"), row.get("seed")))
+        if base_row is None:
+            continue
+        out.append(
+            {
+                "task": row.get("task"),
+                "seed": row.get("seed"),
+                "config": row.get("config"),
+                "delta_da_f1": delta(row.get("da_f1"), base_row.get("da_f1")),
+                "delta_da_gain": delta(row.get("da_gain"), base_row.get("da_gain")),
+                "delta_source_on_target_f1": delta(
+                    row.get("source_on_target_f1"),
+                    base_row.get("source_on_target_f1"),
+                ),
+            }
+        )
+    return out
+
+
+def write_elastic_summary_md(root, rows):
+    ok_rows = [row for row in rows if row.get("status") == "ok"]
+    if not rows:
+        return
+
+    config_order = sorted({row.get("config") for row in rows})
+    r0_config = next((config for config in config_order if "_r0_" in str(config)), None)
+    delta_rows = build_delta_vs_config(rows, r0_config) if r0_config else []
+
+    value_fields = [
+        "source_self_f1",
+        "source_on_target_f1",
+        "da_f1",
+        "da_gain",
+        "elastic_mean_abs_offset",
+        "elastic_center_weight",
+        "elastic_boundary_weight",
+        "elastic_struct_loss",
+    ]
+    config_summary = summarize_mean(ok_rows, ["config"], value_fields)
+    task_summary = summarize_mean(ok_rows, ["task", "config"], value_fields)
+
+    status_rows = []
+    for status in sorted({row.get("status") for row in rows}):
+        status_rows.append(
+            {
+                "status": status,
+                "n": sum(1 for row in rows if row.get("status") == status),
+            }
+        )
+    completion = {
+        "tasks": len({row.get("task") for row in rows}),
+        "seeds": len({row.get("seed") for row in rows}),
+        "configs": len({row.get("config") for row in rows}),
+        "total": len(rows),
+        "ok": len(ok_rows),
+        "failed_or_missing": len(rows) - len(ok_rows),
+    }
+
+    delta_task_rows = []
+    if delta_rows:
+        for row in summarize_mean(
+            delta_rows,
+            ["task", "config"],
+            ["delta_da_f1", "delta_da_gain", "delta_source_on_target_f1"],
+        ):
+            group = [
+                item for item in delta_rows
+                if item.get("task") == row.get("task") and item.get("config") == row.get("config")
+            ]
+            row["positive_seeds"] = sum(
+                1 for item in group
+                if item.get("delta_da_f1") is not None and item["delta_da_f1"] > 0
+            )
+            delta_task_rows.append(row)
+
+    positive_rows = []
+    if delta_rows:
+        for row in summarize_mean(
+            delta_rows,
+            ["config"],
+            ["delta_da_f1", "delta_da_gain", "delta_source_on_target_f1"],
+        ):
+            group = [item for item in delta_rows if item.get("config") == row.get("config")]
+            task_means = summarize_mean(group, ["task"], ["delta_da_f1"])
+            row["positive_tasks_vs_r0"] = sum(
+                1 for item in task_means
+                if item.get("delta_da_f1") is not None and item["delta_da_f1"] > 0
+            )
+            row["positive_seeds_vs_r0"] = sum(
+                1 for item in group
+                if item.get("delta_da_f1") is not None and item["delta_da_f1"] > 0
+            )
+            positive_rows.append(row)
+
+    seed_rows = []
+    if r0_config:
+        by_task_seed = {}
+        for row in ok_rows:
+            key = (row.get("task"), row.get("seed"))
+            by_task_seed.setdefault(key, {})[short_config(row.get("config"))] = row.get("da_f1")
+        for (task, seed), values in sorted(by_task_seed.items()):
+            seed_rows.append(
+                {
+                    "task": task,
+                    "seed": seed,
+                    "r0": values.get("r0"),
+                    "r1": values.get("r1"),
+                    "r2": values.get("r2"),
+                }
+            )
+
+    behavior_rows = summarize_mean(
+        ok_rows,
+        ["config"],
+        [
+            "elastic_mean_abs_offset",
+            "elastic_center_weight",
+            "elastic_boundary_weight",
+            "elastic_struct_loss",
+        ],
+    )
+
+    best_da = max(config_summary, key=lambda row: row.get("da_f1") or float("-inf"), default={})
+    best_gain = max(config_summary, key=lambda row: row.get("da_gain") or float("-inf"), default={})
+    decision_rows = [
+        {"item": "best_config_by_DA_F1", "value": best_da.get("config"), "metric": best_da.get("da_f1")},
+        {"item": "best_config_by_DA_gain", "value": best_gain.get("config"), "metric": best_gain.get("da_gain")},
+    ]
+    for row in positive_rows:
+        label = short_config(row.get("config"))
+        decision_rows.extend(
+            [
+                {
+                    "item": f"{label}_vs_r0_mean_delta_DA",
+                    "value": row.get("config"),
+                    "metric": row.get("delta_da_f1"),
+                },
+                {
+                    "item": f"{label}_positive_tasks",
+                    "value": row.get("config"),
+                    "metric": row.get("positive_tasks_vs_r0"),
+                },
+                {
+                    "item": f"{label}_positive_seeds",
+                    "value": row.get("config"),
+                    "metric": row.get("positive_seeds_vs_r0"),
+                },
+            ]
+        )
+
+    with (root / "summary.md").open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write("# v2.8.4 elastic smooth full12 summary\n\n")
+        handle.write("## 完成情况\n\n")
+        write_md_table(
+            handle,
+            [completion],
+            ["tasks", "seeds", "configs", "total", "ok", "failed_or_missing"],
+        )
+        write_md_table(handle, status_rows, ["status", "n"])
+
+        handle.write("## 配置级均值\n\n")
+        write_md_table(
+            handle,
+            config_summary,
+            [
+                "config",
+                "n",
+                "source_self_f1",
+                "source_on_target_f1",
+                "da_f1",
+                "da_gain",
+                "elastic_mean_abs_offset",
+                "elastic_center_weight",
+                "elastic_boundary_weight",
+                "elastic_struct_loss",
+            ],
+            [
+                "config",
+                "n",
+                "source self",
+                "source-on-target",
+                "DA F1",
+                "DA gain",
+                "elastic offset",
+                "center weight",
+                "boundary weight",
+                "elastic loss",
+            ],
+        )
+
+        handle.write("## 任务级均值\n\n")
+        write_md_table(
+            handle,
+            task_summary,
+            [
+                "task",
+                "config",
+                "n",
+                "source_on_target_f1",
+                "da_f1",
+                "da_gain",
+                "elastic_mean_abs_offset",
+                "elastic_center_weight",
+                "elastic_boundary_weight",
+                "elastic_struct_loss",
+            ],
+            [
+                "task",
+                "config",
+                "n",
+                "source-on-target",
+                "DA F1",
+                "DA gain",
+                "elastic offset",
+                "center weight",
+                "boundary weight",
+                "elastic loss",
+            ],
+        )
+
+        handle.write("## 相对 r0 的 DA F1 变化\n\n")
+        if delta_task_rows:
+            write_md_table(
+                handle,
+                delta_task_rows,
+                ["task", "config", "n", "delta_da_f1", "positive_seeds"],
+                ["task", "config", "n", "Δ DA F1 vs r0", "positive seeds"],
+            )
+        else:
+            handle.write("未找到 r0 对照，无法计算。\n\n")
+
+        handle.write("## seed 级 DA F1\n\n")
+        if seed_rows:
+            write_md_table(handle, seed_rows, ["task", "seed", "r0", "r1", "r2"])
+        else:
+            handle.write("未找到 r0/r1/r2 完整对照。\n\n")
+
+        handle.write("## config 级 positive 统计\n\n")
+        if positive_rows:
+            write_md_table(
+                handle,
+                positive_rows,
+                [
+                    "config",
+                    "delta_da_f1",
+                    "delta_da_gain",
+                    "delta_source_on_target_f1",
+                    "positive_tasks_vs_r0",
+                    "positive_seeds_vs_r0",
+                ],
+                [
+                    "config",
+                    "mean ΔDA vs r0",
+                    "mean Δgain vs r0",
+                    "mean Δsource-on-target vs r0",
+                    "positive tasks",
+                    "positive seeds",
+                ],
+            )
+        else:
+            handle.write("未找到 r0 对照，无法计算。\n\n")
+
+        handle.write("## elastic 行为统计\n\n")
+        write_md_table(
+            handle,
+            behavior_rows,
+            [
+                "config",
+                "n",
+                "elastic_mean_abs_offset",
+                "elastic_mean_abs_offset_std",
+                "elastic_center_weight",
+                "elastic_center_weight_std",
+                "elastic_boundary_weight",
+                "elastic_boundary_weight_std",
+                "elastic_struct_loss",
+                "elastic_struct_loss_std",
+            ],
+            [
+                "config",
+                "n",
+                "offset mean",
+                "offset std",
+                "center mean",
+                "center std",
+                "boundary mean",
+                "boundary std",
+                "loss mean",
+                "loss std",
+            ],
+        )
+
+        handle.write("## 自动判定辅助\n\n")
+        write_md_table(handle, decision_rows, ["item", "value", "metric"])
 
 
 def build_dose_response(rows):
@@ -406,6 +777,15 @@ def main():
         "source_compact_raw_loss",
         "source_spatial_delta",
         "source_temporal_delta",
+        "elastic_radius",
+        "elastic_eta",
+        "elastic_softmin_tau",
+        "elastic_detach_center",
+        "elastic_mean_abs_offset",
+        "elastic_center_weight",
+        "elastic_boundary_weight",
+        "elastic_distance_scale",
+        "elastic_struct_loss",
         "initial_shift",
         "initial_all_f1",
         "initial_masked_f1",
@@ -448,6 +828,11 @@ def main():
         "delta_best_epoch_all_f1",
         "delta_best_epoch_masked_f1",
         "delta_best_epoch_coverage",
+        "config_elastic_mean_abs_offset",
+        "config_elastic_center_weight",
+        "config_elastic_boundary_weight",
+        "config_elastic_distance_scale",
+        "config_elastic_struct_loss",
     ]
     write_tsv(
         root / "raw_strength_summary_by_task.tsv",
@@ -515,6 +900,7 @@ def main():
     write_tsv(root / "dose_response_curve.tsv", dose_curves, dose_curve_fields)
     dose_response_fields = list(dose_response[0].keys()) if dose_response else []
     write_tsv(root / "dose_response_attribution.tsv", dose_response, dose_response_fields)
+    write_elastic_summary_md(root, rows)
 
     print("Wrote:", root / "raw_strength_rows.tsv")
     print("Wrote:", root / "raw_strength_delta_vs_plain.tsv")
@@ -524,6 +910,7 @@ def main():
     print("Wrote:", root / "pseudolabel_divergence.tsv")
     print("Wrote:", root / "dose_response_curve.tsv")
     print("Wrote:", root / "dose_response_attribution.tsv")
+    print("Wrote:", root / "summary.md")
 
 
 if __name__ == "__main__":

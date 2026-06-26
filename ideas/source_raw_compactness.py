@@ -23,6 +23,7 @@ RAW_GLOBAL_COMPACTNESS_VERSIONS = {
     "v283a_umsc_dual_075_025_compactness",
     "v283a_umsc_dual_050_050_compactness",
     "v283b_umsc_triscale_060_020_020_compactness",
+    "v284_elastic_smoothed_timepoint_compactness",
 }
 
 
@@ -223,6 +224,109 @@ def _smooth_time_axis(spatial_feats, kernel_size=3):
     return smoothed.reshape(batch_size, feat_dim, time_steps).transpose(1, 2)
 
 
+def _compute_elastic_smoothed_timepoint_compactness(
+    spatial_feats,
+    labels,
+    kernel_size=3,
+    radius=0,
+    eta=0.1,
+    softmin_tau=0.1,
+    detach_center=False,
+    compact_distance="mse",
+    eps=1e-6,
+):
+    smoothed_feats = _smooth_time_axis(spatial_feats, kernel_size=kernel_size)
+    radius = int(radius)
+    if radius <= 0:
+        compact_loss, valid_class_count, valid_sample_count = _compute_timepoint_compactness(
+            smoothed_feats,
+            labels,
+            compact_distance=compact_distance,
+            eps=eps,
+        )
+        return compact_loss, valid_class_count, valid_sample_count, {
+            "mean_abs_offset": 0.0,
+            "center_weight": 1.0 if valid_class_count > 0 else 0.0,
+            "boundary_weight": 0.0,
+            "scale": float(compact_loss.detach().clamp_min(eps).item()),
+        }
+
+    zero = spatial_feats.sum() * 0.0
+    compact_loss = zero
+    valid_class_count = 0
+    valid_sample_count = 0
+    mean_abs_offset_sum = 0.0
+    center_weight_sum = 0.0
+    boundary_weight_sum = 0.0
+    scale_sum = 0.0
+    offsets = torch.arange(
+        -radius,
+        radius + 1,
+        device=spatial_feats.device,
+        dtype=torch.long,
+    )
+    offset_abs = offsets.abs().to(dtype=spatial_feats.dtype)
+    offset_norm = offset_abs / float(max(radius, 1))
+    center_offset_index = int(radius)
+    boundary_mask = offset_abs == float(radius)
+    time_index = torch.arange(
+        smoothed_feats.shape[1],
+        device=spatial_feats.device,
+        dtype=torch.long,
+    )
+    normalized_distance = str(compact_distance or "mse").lower() in {
+        "normalized_mse",
+        "l2_normalized_mse",
+        "unit_mse",
+    }
+
+    for class_id in labels.unique(sorted=True):
+        class_mask = labels == class_id
+        class_feats = smoothed_feats[class_mask]
+        if class_feats.shape[0] < 2:
+            continue
+        class_center = class_feats.mean(dim=0, keepdim=True)
+        if detach_center:
+            class_center = class_center.detach()
+        compare_feats = F.normalize(class_feats, dim=2, eps=eps) if normalized_distance else class_feats
+        compare_center = (
+            F.normalize(class_center, dim=2, eps=eps) if normalized_distance else class_center
+        )
+
+        dist_terms = []
+        for offset in offsets:
+            shifted_index = (time_index + int(offset.item())).clamp(
+                min=0,
+                max=smoothed_feats.shape[1] - 1,
+            )
+            center_shift = compare_center[:, shifted_index, :]
+            dist_terms.append((compare_feats - center_shift).pow(2).sum(dim=2))
+        dist_stack = torch.stack(dist_terms, dim=-1)
+        scale = dist_stack.detach().mean().clamp_min(eps)
+        penalty = float(eta) * scale * offset_norm.pow(2)
+        cost_stack = dist_stack + penalty.view(1, 1, -1)
+        temperature = (float(softmin_tau) * scale).clamp_min(eps)
+        weights = torch.softmax(-cost_stack / temperature, dim=-1)
+        elastic_dist = (weights * cost_stack).sum(dim=-1)
+        compact_loss = compact_loss + elastic_dist.mean()
+        valid_class_count += 1
+        valid_sample_count += int(class_feats.shape[0])
+        with torch.no_grad():
+            mean_abs_offset_sum += float((weights * offset_abs.view(1, 1, -1)).sum(dim=-1).mean().item())
+            center_weight_sum += float(weights[..., center_offset_index].mean().item())
+            boundary_weight_sum += float(weights[..., boundary_mask].sum(dim=-1).mean().item())
+            scale_sum += float(scale.item())
+
+    if valid_class_count > 0:
+        compact_loss = compact_loss / (valid_class_count + eps)
+    return compact_loss, valid_class_count, valid_sample_count, {
+        "mean_abs_offset": mean_abs_offset_sum / max(valid_class_count, 1),
+        "center_weight": center_weight_sum / max(valid_class_count, 1),
+        "boundary_weight": boundary_weight_sum / max(valid_class_count, 1),
+        "scale": scale_sum / max(valid_class_count, 1),
+    }
+
+
 def compute_source_raw_global_compactness_loss(
     spatial_feats,
     labels,
@@ -230,6 +334,10 @@ def compute_source_raw_global_compactness_loss(
     intra_trade_off=1.0,
     compact_distance="mse",
     time_smooth_kernel_size=3,
+    elastic_radius=0,
+    elastic_eta=0.1,
+    elastic_softmin_tau=0.1,
+    elastic_detach_center=False,
     norm_preserve_trade_off=0.0,
     norm_preserve_target="min_mean",
     norm_preserve_value=1.0,
@@ -255,7 +363,28 @@ def compute_source_raw_global_compactness_loss(
     lowfreq_components = _lowfreq_dct_components(version)
     umsc_weights = _umsc_weights(version)
     umsc_component_losses = {}
-    if umsc_weights is not None:
+    elastic_logs = {
+        "mean_abs_offset": 0.0,
+        "center_weight": 0.0,
+        "boundary_weight": 0.0,
+        "scale": 0.0,
+    }
+    if version == "v284_elastic_smoothed_timepoint_compactness":
+        compact_loss, valid_class_count, valid_sample_count, elastic_logs = (
+            _compute_elastic_smoothed_timepoint_compactness(
+                spatial_feats,
+                labels,
+                kernel_size=time_smooth_kernel_size,
+                radius=elastic_radius,
+                eta=elastic_eta,
+                softmin_tau=elastic_softmin_tau,
+                detach_center=elastic_detach_center,
+                compact_distance=compact_distance,
+                eps=eps,
+            )
+        )
+        center_mode = "elastic_smoothed_timepoint"
+    elif umsc_weights is not None:
         compact_loss = zero
         valid_class_count = 0
         valid_sample_count = 0
@@ -386,7 +515,7 @@ def compute_source_raw_global_compactness_loss(
         ),
         "source_structure_version_v275_raw_global": 1.0,
         "source_structure_raw_center_mode": (
-            6.0 if center_mode == "umsc" else 5.0 if center_mode == "lowfreq_dct" else 4.0 if center_mode == "smoothed_timepoint" else 3.0 if center_mode == "timepoint" else 2.0 if center_mode == "trimmed" else 1.0
+            7.0 if center_mode == "elastic_smoothed_timepoint" else 6.0 if center_mode == "umsc" else 5.0 if center_mode == "lowfreq_dct" else 4.0 if center_mode == "smoothed_timepoint" else 3.0 if center_mode == "timepoint" else 2.0 if center_mode == "trimmed" else 1.0
         ),
         "source_structure_raw_lowfreq_components": float(lowfreq_components or 0),
         "source_structure_time_smooth_kernel_size": float(time_smooth_kernel_size),
@@ -402,5 +531,16 @@ def compute_source_raw_global_compactness_loss(
         "source_structure_umsc_linf_loss": float(
             umsc_component_losses.get("linf", zero).detach().item()
         ),
+        "source_structure_elastic_radius": float(elastic_radius),
+        "source_structure_elastic_eta": float(elastic_eta),
+        "source_structure_elastic_softmin_tau": float(elastic_softmin_tau),
+        "source_structure_elastic_detach_center": 1.0 if elastic_detach_center else 0.0,
+        "elastic_mean_abs_offset": float(elastic_logs["mean_abs_offset"]),
+        "elastic_center_weight": float(elastic_logs["center_weight"]),
+        "elastic_boundary_weight": float(elastic_logs["boundary_weight"]),
+        "elastic_distance_scale": float(elastic_logs["scale"]),
+        "elastic_struct_loss": float(compact_loss.detach().item())
+        if center_mode == "elastic_smoothed_timepoint"
+        else 0.0,
     }
     return total_loss, logs
