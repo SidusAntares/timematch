@@ -515,6 +515,42 @@ if __name__ == '__main__':
         help='component weight for intra-phase compactness in source structure loss',
     )
     parser.add_argument(
+        '--source_structure_lambda_schedule',
+        default='constant',
+        choices=['constant', 'linear_decay', 'warmup_then_constant', 'cosine_decay'],
+        help='source-stage schedule for source_structure_intra_trade_off; default constant preserves legacy behavior',
+    )
+    parser.add_argument(
+        '--source_structure_lambda_base',
+        default=-1.0,
+        type=float,
+        help='base source-structure lambda for scheduled source-stage training; negative falls back to source_structure_intra_trade_off',
+    )
+    parser.add_argument(
+        '--source_structure_lambda_final',
+        default=-1.0,
+        type=float,
+        help='final source-structure lambda for decay schedules; negative falls back to base lambda',
+    )
+    parser.add_argument(
+        '--source_structure_lambda_decay_start_epoch',
+        default=0,
+        type=int,
+        help='1-based epoch where linear decay starts; used by source_structure_lambda_schedule=linear_decay',
+    )
+    parser.add_argument(
+        '--source_structure_lambda_warmup_epochs',
+        default=0,
+        type=int,
+        help='number of initial source epochs with lambda=0 for warmup_then_constant schedule',
+    )
+    parser.add_argument(
+        '--source_structure_lambda_max_epoch',
+        default=0,
+        type=int,
+        help='max epoch used by source-structure lambda schedules; 0 falls back to total source epochs',
+    )
+    parser.add_argument(
         '--source_structure_amplitude_trade_off',
         default=0.25,
         type=float,
@@ -689,6 +725,38 @@ if __name__ == '__main__':
     timematch.add_argument("--max_temporal_shift", type=int, default=60, help='maximum temporal shift to consider')
     timematch.add_argument("--domain_specific_bn", type=bool_flag, default=True, help='whether to use domain specific batch normalization')
     timematch.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT'])
+    timematch.add_argument(
+        "--timematch_shift_policy",
+        type=str,
+        default="original_timematch",
+        choices=[
+            "original",
+            "original_timematch",
+            "no_shift",
+            "fixed_initial_shift",
+            "oracle_scalar_shift_diagnostic",
+            "topk_shift_ensemble_diagnostic",
+        ],
+        help="diagnostic-only shift policy; default preserves original TimeMatch behavior",
+    )
+    timematch.add_argument(
+        "--timematch_topk_shifts",
+        type=int,
+        default=3,
+        help="top-k shifts used only by topk_shift_ensemble_diagnostic",
+    )
+    timematch.add_argument(
+        "--timematch_diagnostic_log_path",
+        default="",
+        type=str,
+        help="optional TSV path for TimeMatch shift trajectory diagnostics",
+    )
+    timematch.add_argument(
+        "--timematch_diagnostic_task",
+        default="",
+        type=str,
+        help="optional human-readable task id for diagnostic TSV rows",
+    )
     timematch.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
     timematch.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
     timematch.add_argument(

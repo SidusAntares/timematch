@@ -230,6 +230,89 @@ def _compute_source_structure_loss_on_features(
     )
 
 
+def _resolve_source_structure_lambda_config(config):
+    base = float(getattr(config, "source_structure_lambda_base", -1.0))
+    if base < 0.0:
+        base = float(getattr(config, "source_structure_intra_trade_off", 1.0))
+    final = float(getattr(config, "source_structure_lambda_final", -1.0))
+    if final < 0.0:
+        final = base
+    max_epoch = int(getattr(config, "source_structure_lambda_max_epoch", 0))
+    if max_epoch <= 0:
+        max_epoch = int(getattr(config, "epochs", 1))
+    return {
+        "schedule": str(getattr(config, "source_structure_lambda_schedule", "constant")).lower(),
+        "base": base,
+        "final": final,
+        "decay_start": int(getattr(config, "source_structure_lambda_decay_start_epoch", 0)),
+        "warmup_epochs": int(getattr(config, "source_structure_lambda_warmup_epochs", 0)),
+        "max_epoch": max(1, max_epoch),
+    }
+
+
+def _source_structure_lambda_for_epoch(epoch, config):
+    spec = _resolve_source_structure_lambda_config(config)
+    schedule = spec["schedule"]
+    base = spec["base"]
+    final = spec["final"]
+    max_epoch = spec["max_epoch"]
+    epoch_1based = int(epoch) + 1
+
+    if schedule == "constant":
+        return base
+    if schedule == "linear_decay":
+        decay_start = max(0, int(spec["decay_start"]))
+        if decay_start <= 0:
+            decay_start = 1
+        if epoch_1based <= decay_start:
+            return base
+        denom = max(1, max_epoch - decay_start)
+        progress = min(1.0, max(0.0, (epoch_1based - decay_start) / float(denom)))
+        return base + progress * (final - base)
+    if schedule == "warmup_then_constant":
+        return 0.0 if epoch_1based <= int(spec["warmup_epochs"]) else base
+    if schedule == "cosine_decay":
+        progress = min(1.0, max(0.0, epoch_1based / float(max_epoch)))
+        return final + 0.5 * (base - final) * (1.0 + torch.cos(torch.tensor(progress * torch.pi)).item())
+    raise ValueError(f"Unsupported source_structure_lambda_schedule: {schedule}")
+
+
+def _write_source_lambda_curve(config):
+    spec = _resolve_source_structure_lambda_config(config)
+    curve_path = os.path.join(config.fold_dir, "source_structure_lambda_curve.tsv")
+    os.makedirs(config.fold_dir, exist_ok=True)
+    values = []
+    with open(curve_path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(
+            "epoch\tlambda_value\tschedule_type\tlambda_base\tlambda_final\t"
+            "decay_start_epoch\twarmup_epochs\tmax_epoch\n"
+        )
+        for epoch in range(int(getattr(config, "epochs", 1))):
+            value = float(_source_structure_lambda_for_epoch(epoch, config))
+            values.append(value)
+            handle.write(
+                f"{epoch + 1}\t{value:.8f}\t{spec['schedule']}\t{spec['base']:.8f}\t"
+                f"{spec['final']:.8f}\t{spec['decay_start']}\t"
+                f"{spec['warmup_epochs']}\t{spec['max_epoch']}\n"
+            )
+    if values:
+        print(
+            "SOURCE_LAMBDA_CURVE|"
+            f"schedule={spec['schedule']}|"
+            f"base={spec['base']:.8f}|"
+            f"final={spec['final']:.8f}|"
+            f"decay_start_epoch={spec['decay_start']}|"
+            f"warmup_epochs={spec['warmup_epochs']}|"
+            f"max_epoch={spec['max_epoch']}|"
+            f"min={min(values):.8f}|"
+            f"max={max(values):.8f}|"
+            f"mean={sum(values) / len(values):.8f}|"
+            f"final_value={values[-1]:.8f}|"
+            f"path={curve_path}"
+        )
+    return curve_path
+
+
 def _print_source_grad_diagnostics(losses, param_groups, epoch, step, global_step_1based):
     grad_maps = {
         loss_name: _component_grads_by_group(loss, param_groups)
@@ -330,6 +413,7 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         semantic_aggl_dynamics_trade_off=getattr(config, "source_segment_semantic_aggl_dynamics_trade_off", 0.35),
     )
     print("source segment partition:", describe_source_segment_partition_spec(phase_partition_spec))
+    _write_source_lambda_curve(config)
 
     criterion = FocalLoss(gamma=config.focal_loss_gamma)
     steps_per_epoch = len(data_loader)
@@ -362,6 +446,7 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
 
     best_f1 = 0
     for epoch in range(config.epochs):
+        scheduled_lambda = float(_source_structure_lambda_for_epoch(epoch, config))
         model.train()
         loss_meter = AverageMeter()
         cls_loss_meter = AverageMeter()
@@ -394,6 +479,8 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                 compact_raw_loss = spatial_feats_raw.sum() * 0.0
                 raw_logs = {}
                 if structure_target == "raw":
+                    original_intra_trade_off = getattr(config, "source_structure_intra_trade_off", 1.0)
+                    config.source_structure_intra_trade_off = scheduled_lambda
                     compact_raw_loss, raw_logs = _compute_source_structure_loss_on_features(
                         spatial_feats_raw,
                         positions,
@@ -403,6 +490,7 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                         spatial_feats_raw,
                         detach_features=detach_structure_features,
                     )
+                    config.source_structure_intra_trade_off = original_intra_trade_off
                 compact_loss = compact_raw_loss
                 compact_logs = {
                     "compactness_loss": float(raw_logs.get("compactness_loss", 0.0)),
@@ -481,6 +569,8 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         print(
             "SOURCE_EPOCH_SUMMARY|"
             f"epoch={epoch + 1}|"
+            f"source_structure_lambda={scheduled_lambda:.8f}|"
+            f"schedule={getattr(config, 'source_structure_lambda_schedule', 'constant')}|"
             f"loss={loss_meter.avg:.6f}|"
             f"cls={cls_loss_meter.avg:.6f}|"
             f"compact={compact_loss_meter.avg:.6f}|"
