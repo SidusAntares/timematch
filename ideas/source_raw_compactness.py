@@ -14,6 +14,9 @@ RAW_GLOBAL_COMPACTNESS_VERSIONS = {
     "v276_raw_smoothed_timepoint_compactness",
     "raw_smoothed_timepoint_compactness",
     "source_raw_smoothed_timepoint_compactness",
+    "v303_time_permuted_smoothed_timepoint_compactness",
+    "time_permuted_smoothed_timepoint_compactness",
+    "source_time_permuted_smoothed_timepoint_compactness",
     "v276_raw_trimmed_global_compactness",
     "raw_trimmed_global_compactness",
     "source_raw_trimmed_global_compactness",
@@ -224,6 +227,18 @@ def _smooth_time_axis(spatial_feats, kernel_size=3):
     return smoothed.reshape(batch_size, feat_dim, time_steps).transpose(1, 2)
 
 
+def _time_permuted_smooth_time_axis(spatial_feats, kernel_size=3, permutation_seed=0):
+    time_steps = spatial_feats.shape[1]
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(permutation_seed) + 1009 * int(time_steps))
+    perm = torch.randperm(time_steps, generator=generator).to(spatial_feats.device)
+    inv_perm = torch.empty_like(perm)
+    inv_perm[perm] = torch.arange(time_steps, device=spatial_feats.device)
+    permuted = spatial_feats[:, perm, :]
+    smoothed = _smooth_time_axis(permuted, kernel_size=kernel_size)
+    return smoothed[:, inv_perm, :]
+
+
 def _compute_elastic_smoothed_timepoint_compactness(
     spatial_feats,
     labels,
@@ -334,6 +349,7 @@ def compute_source_raw_global_compactness_loss(
     intra_trade_off=1.0,
     compact_distance="mse",
     time_smooth_kernel_size=3,
+    time_permutation_seed=0,
     elastic_radius=0,
     elastic_eta=0.1,
     elastic_softmin_tau=0.1,
@@ -444,6 +460,22 @@ def compute_source_raw_global_compactness_loss(
             eps=eps,
         )
         center_mode = "smoothed_timepoint"
+    elif version in {
+        "v303_time_permuted_smoothed_timepoint_compactness",
+        "time_permuted_smoothed_timepoint_compactness",
+        "source_time_permuted_smoothed_timepoint_compactness",
+    }:
+        compact_loss, valid_class_count, valid_sample_count = _compute_timepoint_compactness(
+            _time_permuted_smooth_time_axis(
+                spatial_feats,
+                kernel_size=time_smooth_kernel_size,
+                permutation_seed=time_permutation_seed,
+            ),
+            labels,
+            compact_distance=compact_distance,
+            eps=eps,
+        )
+        center_mode = "time_permuted_smoothed_timepoint"
     elif version in {"v276_raw_timepoint_compactness", "raw_timepoint_compactness", "source_raw_timepoint_compactness"}:
         compact_loss, valid_class_count, valid_sample_count = _compute_timepoint_compactness(
             spatial_feats,
@@ -515,10 +547,11 @@ def compute_source_raw_global_compactness_loss(
         ),
         "source_structure_version_v275_raw_global": 1.0,
         "source_structure_raw_center_mode": (
-            7.0 if center_mode == "elastic_smoothed_timepoint" else 6.0 if center_mode == "umsc" else 5.0 if center_mode == "lowfreq_dct" else 4.0 if center_mode == "smoothed_timepoint" else 3.0 if center_mode == "timepoint" else 2.0 if center_mode == "trimmed" else 1.0
+            8.0 if center_mode == "time_permuted_smoothed_timepoint" else 7.0 if center_mode == "elastic_smoothed_timepoint" else 6.0 if center_mode == "umsc" else 5.0 if center_mode == "lowfreq_dct" else 4.0 if center_mode == "smoothed_timepoint" else 3.0 if center_mode == "timepoint" else 2.0 if center_mode == "trimmed" else 1.0
         ),
         "source_structure_raw_lowfreq_components": float(lowfreq_components or 0),
         "source_structure_time_smooth_kernel_size": float(time_smooth_kernel_size),
+        "source_structure_time_permutation_seed": float(time_permutation_seed),
         "source_structure_umsc_l3_weight": float(umsc_weights["l3"] if umsc_weights else 0.0),
         "source_structure_umsc_l5_weight": float(umsc_weights["l5"] if umsc_weights else 0.0),
         "source_structure_umsc_linf_weight": float(umsc_weights["linf"] if umsc_weights else 0.0),

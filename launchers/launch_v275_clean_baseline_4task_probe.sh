@@ -12,6 +12,7 @@ TASKS="${TASKS:-FR1_to_FR2,FR1_to_AT1,FR2_to_DK1,AT1_to_DK1}"
 SEEDS="${SEEDS:-1 2 3}"
 CONFIGS="${CONFIGS:-plain,v275_raw_w1}"
 DRY_RUN="${DRY_RUN:-False}"
+QUEUE_SCHEDULE="${QUEUE_SCHEDULE:-size_desc}"
 
 DATA_ROOT="${DATA_ROOT:-/data/user/DBL/timematch_data}"
 CLOSED_SET="${CLOSED_SET:-True}"
@@ -19,6 +20,7 @@ SOURCE_EPOCHS="${SOURCE_EPOCHS:-50}"
 DA_EPOCHS="${DA_EPOCHS:-20}"
 STEPS_PER_EPOCH="${STEPS_PER_EPOCH:-500}"
 NUM_WORKERS="${NUM_WORKERS:-16}"
+DATA_LOADER_TIMEOUT="${DATA_LOADER_TIMEOUT:-0}"
 V275_WEIGHT="${V275_WEIGHT:-1.0}"
 
 mkdir -p "$LOG_DIR"
@@ -99,6 +101,11 @@ add_manifest() {
         "$config" "sourcephasecompact" "v276_raw_smoothed_timepoint_compactness" "raw-detached" "1.0" "off" \
         "A2: smoothed timepoint compactness kernel=3, lambda=1.0, detached features; TimeMatch DA-stage structure off."
       ;;
+    v303_time_permuted_smooth_k3_w1)
+      printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$config" "sourcephasecompact" "v303_time_permuted_smoothed_timepoint_compactness" "raw" "1.0" "off" \
+        "v3.0.3 control: smoothed timepoint compactness kernel=3, lambda=1.0, but source structure smoothing uses a fixed pseudo-time permutation."
+      ;;
     v276_trimmed_w1)
       printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
         "$config" "sourcephasecompact" "v276_raw_trimmed_global_compactness" "raw" "$V275_WEIGHT" "off" \
@@ -152,31 +159,57 @@ add_job() {
 IFS=',' read -r -a TASK_NAMES <<< "$TASKS"
 IFS=',' read -r -a CONFIG_NAMES <<< "$CONFIGS"
 
-for seed in $SEEDS; do
-  for task in "${TASK_NAMES[@]}"; do
-    task="$(echo "$task" | xargs)"
-    spec="$(task_spec "$task")" || exit 2
-    read -r source_dataset target_dataset est_weight <<< "$spec"
-    for config in "${CONFIG_NAMES[@]}"; do
-      config="$(echo "$config" | xargs)"
-      case "$config" in
-        plain|v275_raw_w1|v276_timepoint_w0p5|v276_timepoint_w1|v276_smoothed_timepoint_w1|v276_smooth_k1_w1|v276_smooth_k3_w1|v276_smooth_k5_w1|v276_smooth_k7_w1|v276_smooth_k3_w1_detach|v276_trimmed_w1|v277_dct_k2_w1|v277_dct_k4_w1|v277_dct_k8_w1|v283a_umsc_075l3_025linf_w1|v283a_umsc_050l3_050linf_w1|v283b_umsc_060l3_020l5_020linf_w1|v284_elastic_k3_r0_w1|v284_elastic_k3_r1_w1|v284_elastic_k3_r2_w1) ;;
-        *)
-          echo "ERROR unknown config: $config" >&2
-          exit 2
-          ;;
-      esac
-      add_manifest "$config"
-      add_job "$task" "$source_dataset" "$target_dataset" "$seed" "$config" "$est_weight" "$RUN_TAG"
+enqueue_job() {
+  local task="$1"
+  local seed="$2"
+  local config="$3"
+  local spec source_dataset target_dataset est_weight
+
+  task="$(echo "$task" | xargs)"
+  config="$(echo "$config" | xargs)"
+  spec="$(task_spec "$task")" || exit 2
+  read -r source_dataset target_dataset est_weight <<< "$spec"
+  case "$config" in
+    plain|v275_raw_w1|v276_timepoint_w0p5|v276_timepoint_w1|v276_smoothed_timepoint_w1|v276_smooth_k1_w1|v276_smooth_k3_w1|v276_smooth_k5_w1|v276_smooth_k7_w1|v276_smooth_k3_w1_detach|v303_time_permuted_smooth_k3_w1|v276_trimmed_w1|v277_dct_k2_w1|v277_dct_k4_w1|v277_dct_k8_w1|v283a_umsc_075l3_025linf_w1|v283a_umsc_050l3_050linf_w1|v283b_umsc_060l3_020l5_020linf_w1|v284_elastic_k3_r0_w1|v284_elastic_k3_r1_w1|v284_elastic_k3_r2_w1) ;;
+    *)
+      echo "ERROR unknown config: $config" >&2
+      exit 2
+      ;;
+  esac
+  add_manifest "$config"
+  add_job "$task" "$source_dataset" "$target_dataset" "$seed" "$config" "$est_weight" "$RUN_TAG"
+}
+
+case "$QUEUE_SCHEDULE" in
+  interleave_configs)
+    for seed in $SEEDS; do
+      for config in "${CONFIG_NAMES[@]}"; do
+        for task in "${TASK_NAMES[@]}"; do
+          enqueue_job "$task" "$seed" "$config"
+        done
+      done
     done
-  done
-done
+    ;;
+  *)
+    for seed in $SEEDS; do
+      for task in "${TASK_NAMES[@]}"; do
+        for config in "${CONFIG_NAMES[@]}"; do
+          enqueue_job "$task" "$seed" "$config"
+        done
+      done
+    done
+    ;;
+esac
 
 for gpu in "${GPU_IDS[@]}"; do
   : > "$LOG_DIR/queue_gpu${gpu}.tsv"
 done
 
-sort -t $'\t' -k6,6nr "$JOBS" > "$SORTED_JOBS"
+if [ "$QUEUE_SCHEDULE" = "interleave_configs" ]; then
+  cp "$JOBS" "$SORTED_JOBS"
+else
+  sort -t $'\t' -k6,6nr "$JOBS" > "$SORTED_JOBS"
+fi
 job_index=0
 while IFS= read -r line; do
   gpu="${GPU_IDS[$((job_index % ${#GPU_IDS[@]}))]}"
@@ -213,12 +246,13 @@ run_job() {
       --with_shift_aug False \
       --epochs "$SOURCE_EPOCHS" \
       --num_workers "$NUM_WORKERS" \
+      --data_loader_timeout "$DATA_LOADER_TIMEOUT" \
       --seed "$seed" \
       -e "$source_model" \
       --source "$source_dataset" \
       --target "$source_dataset" || return "$?"
   else
-    local loss_version compact_weight detach_features smooth_kernel elastic_radius elastic_eta elastic_softmin_tau elastic_detach_center
+    local loss_version compact_weight detach_features smooth_kernel elastic_radius elastic_eta elastic_softmin_tau elastic_detach_center time_permutation_seed
     compact_weight="$V275_WEIGHT"
     detach_features="False"
     smooth_kernel="3"
@@ -226,6 +260,7 @@ run_job() {
     elastic_eta="0.1"
     elastic_softmin_tau="0.1"
     elastic_detach_center="False"
+    time_permutation_seed="$seed"
     case "$config" in
       v276_timepoint_w0p5)
         loss_version="v276_raw_timepoint_compactness"
@@ -258,6 +293,20 @@ run_job() {
         compact_weight="1.0"
         detach_features="True"
         smooth_kernel="3"
+        ;;
+      v303_time_permuted_smooth_k3_w1)
+        loss_version="v303_time_permuted_smoothed_timepoint_compactness"
+        compact_weight="1.0"
+        smooth_kernel="3"
+        case "$task" in
+          FR1_to_FR2) time_permutation_seed=$((seed + 101)) ;;
+          AT1_to_DK1) time_permutation_seed=$((seed + 211)) ;;
+          FR2_to_AT1) time_permutation_seed=$((seed + 307)) ;;
+          DK1_to_AT1) time_permutation_seed=$((seed + 401)) ;;
+          FR2_to_FR1) time_permutation_seed=$((seed + 503)) ;;
+          AT1_to_FR2) time_permutation_seed=$((seed + 601)) ;;
+          *) time_permutation_seed="$seed" ;;
+        esac
         ;;
       v276_trimmed_w1) loss_version="v276_raw_trimmed_global_compactness" ;;
       v277_dct_k2_w1) loss_version="v277_raw_lowfreq_dct_k2_compactness" ;;
@@ -308,6 +357,7 @@ run_job() {
       --source_structure_detach_features "$detach_features" \
       --source_structure_intra_trade_off "$compact_weight" \
       --source_structure_time_smooth_kernel_size "$smooth_kernel" \
+      --source_structure_time_permutation_seed "$time_permutation_seed" \
       --source_structure_elastic_radius "$elastic_radius" \
       --source_structure_elastic_eta "$elastic_eta" \
       --source_structure_elastic_softmin_tau "$elastic_softmin_tau" \
@@ -322,6 +372,7 @@ run_job() {
       --source_structure_compact_distance mse \
       --epochs "$SOURCE_EPOCHS" \
       --num_workers "$NUM_WORKERS" \
+      --data_loader_timeout "$DATA_LOADER_TIMEOUT" \
       --seed "$seed" \
       -e "$source_model" \
       --source "$source_dataset" \
@@ -334,6 +385,7 @@ run_job() {
     --closed_set "$CLOSED_SET" \
     --with_shift_aug False \
     --num_workers "$NUM_WORKERS" \
+    --data_loader_timeout "$DATA_LOADER_TIMEOUT" \
     --seed "$seed" \
     -e "$source_model" \
     --source "$source_dataset" \
@@ -345,6 +397,7 @@ run_job() {
     --closed_set "$CLOSED_SET" \
     --with_shift_aug False \
     --num_workers "$NUM_WORKERS" \
+    --data_loader_timeout "$DATA_LOADER_TIMEOUT" \
     --seed "$seed" \
     -e "$timematch_model" \
     --source "$source_dataset" \
@@ -388,7 +441,9 @@ echo "SOURCE_EPOCHS=$SOURCE_EPOCHS"
 echo "DA_EPOCHS=$DA_EPOCHS"
 echo "STEPS_PER_EPOCH=$STEPS_PER_EPOCH"
 echo "NUM_WORKERS=$NUM_WORKERS"
+echo "DATA_LOADER_TIMEOUT=$DATA_LOADER_TIMEOUT"
 echo "V275_WEIGHT=$V275_WEIGHT"
+echo "QUEUE_SCHEDULE=$QUEUE_SCHEDULE"
 echo "JOBS=$(wc -l < "$JOBS")"
 echo "MANIFEST=$MANIFEST"
 

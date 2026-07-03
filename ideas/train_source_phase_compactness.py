@@ -1,5 +1,7 @@
 import torch
 import os
+import sys
+import time
 from torchvision import transforms
 from tqdm import tqdm
 
@@ -187,6 +189,9 @@ def _compute_source_structure_loss_on_features(
             compact_distance=getattr(config, "source_structure_compact_distance", "mse"),
             time_smooth_kernel_size=getattr(
                 config, "source_structure_time_smooth_kernel_size", 3
+            ),
+            time_permutation_seed=getattr(
+                config, "source_structure_time_permutation_seed", 0
             ),
             elastic_radius=getattr(config, "source_structure_elastic_radius", 0),
             elastic_eta=getattr(config, "source_structure_elastic_eta", 0.1),
@@ -389,8 +394,25 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         splits[dataset_name]['train'],
         closed_set=config.closed_set,
     )
-    data_loader = create_train_loader(dataset, config.batch_size, config.num_workers)
+    data_loader = create_train_loader(
+        dataset,
+        config.batch_size,
+        config.num_workers,
+        timeout=getattr(config, "data_loader_timeout", 0),
+    )
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
+    print(
+        "SOURCE_TRAIN_START|"
+        f"method=sourcephasecompact|"
+        f"dataset={dataset_name}|"
+        f"samples={len(dataset)}|"
+        f"batches={len(data_loader)}|"
+        f"batch_size={config.batch_size}|"
+        f"num_workers={config.num_workers}|"
+        f"data_loader_timeout={getattr(config, 'data_loader_timeout', 0)}|"
+        f"epochs={config.epochs}",
+        flush=True,
+    )
     phase_partition_spec = build_source_segment_partition_spec(
         dataset.date_positions,
         dataset=dataset,
@@ -460,7 +482,18 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             "struct_loss": AverageMeter(),
         }
 
-        progress_bar = tqdm(enumerate(data_loader), total=len(data_loader), desc=f'Epoch {epoch + 1}/{config.epochs}')
+        epoch_start_time = time.time()
+        speed_probe_steps = {
+            step for step in (10, 50, 100, 200, 500)
+            if step <= len(data_loader)
+        }
+        speed_probe_steps.add(len(data_loader))
+        progress_bar = tqdm(
+            enumerate(data_loader),
+            total=len(data_loader),
+            desc=f'Epoch {epoch + 1}/{config.epochs}',
+            disable=not sys.stderr.isatty(),
+        )
         global_step = epoch * len(data_loader)
         for step, sample in progress_bar:
             targets = sample['label'].cuda(device=device, non_blocking=True)
@@ -564,8 +597,25 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                 for key, value in compact_logs.items():
                     if key != "compactness_loss":
                         writer.add_scalar(f"train/{key}", value, global_step + step)
+            if epoch == 0 and (step + 1) in speed_probe_steps:
+                elapsed = time.time() - epoch_start_time
+                print(
+                    "SOURCE_SPEED_PROBE|"
+                    f"method=sourcephasecompact|"
+                    f"epoch={epoch + 1}|"
+                    f"batches={step + 1}|"
+                    f"samples={loss_meter.count}|"
+                    f"seconds={elapsed:.3f}|"
+                    f"batches_per_sec={(step + 1) / max(elapsed, 1e-9):.3f}|"
+                    f"seconds_per_batch={elapsed / max(step + 1, 1):.3f}|"
+                    f"loss={loss_meter.avg:.6f}|"
+                    f"cls={cls_loss_meter.avg:.6f}|"
+                    f"compact={compact_loss_meter.avg:.6f}",
+                    flush=True,
+                )
 
         progress_bar.close()
+        epoch_elapsed = time.time() - epoch_start_time
         print(
             "SOURCE_EPOCH_SUMMARY|"
             f"epoch={epoch + 1}|"
@@ -589,7 +639,10 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             f"elastic_center_weight={elastic_metric_meters['center_weight'].avg:.6f}|"
             f"elastic_boundary_weight={elastic_metric_meters['boundary_weight'].avg:.6f}|"
             f"elastic_distance_scale={elastic_metric_meters['distance_scale'].avg:.6f}|"
-            f"elastic_struct_loss={elastic_metric_meters['struct_loss'].avg:.6f}"
+            f"elastic_struct_loss={elastic_metric_meters['struct_loss'].avg:.6f}|"
+            f"seconds={epoch_elapsed:.3f}|"
+            f"batches_per_sec={len(data_loader) / max(epoch_elapsed, 1e-9):.3f}",
+            flush=True,
         )
 
         model.eval()

@@ -6,6 +6,8 @@ import json
 import os
 import pickle as pkl
 import random
+import sys
+import time
 
 import numpy as np
 import torch
@@ -195,8 +197,25 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
         splits[dataset_name]['train'],
         closed_set=config.closed_set,
     )
-    data_loader = create_train_loader(dataset, config.batch_size, config.num_workers)
+    data_loader = create_train_loader(
+        dataset,
+        config.batch_size,
+        config.num_workers,
+        timeout=getattr(config, "data_loader_timeout", 0),
+    )
     print(f'training dataset: {dataset_name}, n={len(dataset)}, batches={len(data_loader)}')
+    print(
+        "SOURCE_TRAIN_START|"
+        f"method=supervised|"
+        f"dataset={dataset_name}|"
+        f"samples={len(dataset)}|"
+        f"batches={len(data_loader)}|"
+        f"batch_size={config.batch_size}|"
+        f"num_workers={config.num_workers}|"
+        f"data_loader_timeout={getattr(config, 'data_loader_timeout', 0)}|"
+        f"epochs={config.epochs}",
+        flush=True,
+    )
 
     criterion = FocalLoss(gamma=config.focal_loss_gamma)
     steps_per_epoch = len(data_loader)
@@ -206,8 +225,19 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
     for epoch in range(config.epochs):
         model.train()
         loss_meter = AverageMeter()
+        epoch_start_time = time.time()
+        speed_probe_steps = {
+            step for step in (10, 50, 100, 200, 500)
+            if step <= len(data_loader)
+        }
+        speed_probe_steps.add(len(data_loader))
 
-        progress_bar = tqdm(enumerate(data_loader), total=len(data_loader), desc=f'Epoch {epoch + 1}/{config.epochs}')
+        progress_bar = tqdm(
+            enumerate(data_loader),
+            total=len(data_loader),
+            desc=f'Epoch {epoch + 1}/{config.epochs}',
+            disable=not sys.stderr.isatty(),
+        )
         global_step = epoch * len(data_loader)
         for step, sample in progress_bar:
             targets = sample['label'].cuda(device=device, non_blocking=True)
@@ -228,8 +258,32 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
                 progress_bar.set_postfix(lr=f'{lr:.1E}', loss=f"{loss_meter.avg:.3f}")
                 writer.add_scalar("train/loss", loss_meter.val, global_step + step)
                 writer.add_scalar("train/lr", lr, global_step + step)
+            if epoch == 0 and (step + 1) in speed_probe_steps:
+                elapsed = time.time() - epoch_start_time
+                print(
+                    "SOURCE_SPEED_PROBE|"
+                    f"method=supervised|"
+                    f"epoch={epoch + 1}|"
+                    f"batches={step + 1}|"
+                    f"samples={loss_meter.count}|"
+                    f"seconds={elapsed:.3f}|"
+                    f"batches_per_sec={(step + 1) / max(elapsed, 1e-9):.3f}|"
+                    f"seconds_per_batch={elapsed / max(step + 1, 1):.3f}|"
+                    f"loss={loss_meter.avg:.6f}",
+                    flush=True,
+                )
 
         progress_bar.close()
+        epoch_elapsed = time.time() - epoch_start_time
+        print(
+            "SOURCE_EPOCH_RUNTIME|"
+            f"method=supervised|"
+            f"epoch={epoch + 1}|"
+            f"batches={len(data_loader)}|"
+            f"seconds={epoch_elapsed:.3f}|"
+            f"batches_per_sec={len(data_loader) / max(epoch_elapsed, 1e-9):.3f}",
+            flush=True,
+        )
 
         model.eval()
         best_f1 = validation(
@@ -337,6 +391,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', default='outputs', help='Path to the folder where the results should be stored')
     parser.add_argument('-e', '--experiment_name', default=None, help='Name of the experiment')
     parser.add_argument('--num_workers', default=8, type=int, help='Number of data loading workers')
+    parser.add_argument('--data_loader_timeout', default=0, type=int, help='Seconds before a DataLoader worker timeout; 0 disables timeout')
     parser.add_argument('--seed', default=1, type=int, help='Random seed')
     parser.add_argument('--device', default='cuda', type=str, help='Name of device to use for tensor computations')
     parser.add_argument('--log_step', default=10, type=int, help='Interval in batches between display of training metrics')
@@ -493,7 +548,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--source_structure_loss_version',
         default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v275_raw_global_compactness', 'v276_raw_timepoint_compactness', 'v276_raw_smoothed_timepoint_compactness', 'v276_raw_trimmed_global_compactness', 'v277_raw_lowfreq_dct_k2_compactness', 'v277_raw_lowfreq_dct_k4_compactness', 'v277_raw_lowfreq_dct_k8_compactness', 'v283a_umsc_dual_075_025_compactness', 'v283a_umsc_dual_050_050_compactness', 'v283b_umsc_triscale_060_020_020_compactness', 'v284_elastic_smoothed_timepoint_compactness'],
+        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v275_raw_global_compactness', 'v276_raw_timepoint_compactness', 'v276_raw_smoothed_timepoint_compactness', 'v303_time_permuted_smoothed_timepoint_compactness', 'v276_raw_trimmed_global_compactness', 'v277_raw_lowfreq_dct_k2_compactness', 'v277_raw_lowfreq_dct_k4_compactness', 'v277_raw_lowfreq_dct_k8_compactness', 'v283a_umsc_dual_075_025_compactness', 'v283a_umsc_dual_050_050_compactness', 'v283b_umsc_triscale_060_020_020_compactness', 'v284_elastic_smoothed_timepoint_compactness'],
         help='source-side structural loss version: compactness, legacy multi-component losses, v2.7.5 raw global encoder compactness, or v2.7.6 raw compactness variants',
     )
     parser.add_argument(
@@ -609,6 +664,12 @@ if __name__ == '__main__':
         default=3,
         type=int,
         help='odd temporal smoothing kernel size for v276_raw_smoothed_timepoint_compactness; 1 disables smoothing',
+    )
+    parser.add_argument(
+        '--source_structure_time_permutation_seed',
+        default=0,
+        type=int,
+        help='fixed pseudo-time permutation seed for v303 time-permuted smoothed-timepoint compactness diagnostic',
     )
     parser.add_argument(
         '--source_structure_elastic_radius',

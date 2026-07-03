@@ -1,4 +1,6 @@
 import os
+import sys
+import time
 import numpy as np
 import torch
 import torch.backends.cudnn
@@ -51,7 +53,9 @@ def evaluation(
     loss_meter = AverageMeter()
 
     model.eval()
-    for sample in tqdm(data_loader, desc='Validating' if mode == 'val' else 'Testing'):
+    label = 'Validating' if mode == 'val' else 'Testing'
+    start_time = time.time()
+    for sample in tqdm(data_loader, desc=label, disable=not sys.stderr.isatty()):
         target = sample['label']
         y_true.extend(target.tolist())
         target = target.cuda(device=device, non_blocking=True)
@@ -81,4 +85,14 @@ def evaluation(
         'confusion_matrix': sklearn.metrics.confusion_matrix(y_true, y_pred, labels=list(range(len(class_names)))),
    }
 
+    elapsed = time.time() - start_time
+    print(
+        "EVAL_RUNTIME|"
+        f"mode={mode}|"
+        f"batches={len(data_loader)}|"
+        f"samples={len(y_true)}|"
+        f"seconds={elapsed:.3f}|"
+        f"batches_per_sec={len(data_loader) / max(elapsed, 1e-9):.3f}",
+        flush=True,
+    )
     return metrics

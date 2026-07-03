@@ -2,6 +2,7 @@ from torch.utils.data.sampler import WeightedRandomSampler
 import csv
 import json
 import os
+import sys
 import sklearn.metrics
 from collections import Counter
 from copy import deepcopy
@@ -211,7 +212,11 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
     source_to_target_shift = 0
     for epoch in range(config.epochs):
-        progress_bar = tqdm(range(steps_per_epoch), desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}")
+        progress_bar = tqdm(
+            range(steps_per_epoch),
+            desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}",
+            disable=not sys.stderr.isatty(),
+        )
         loss_meter = AverageMeter()
 
         if config.estimate_shift and shift_policy not in {"no_shift", "fixed_initial_shift", "oracle_scalar_shift_diagnostic"}:
@@ -469,7 +474,11 @@ def collect_shift_softmaxes(model, target_loader, device, min_shift=-60, max_shi
 
     target_iter = iter(target_loader)
     shift_softmaxes, labels = [], []
-    for _ in tqdm(range(sample_size), desc=f'Estimating shift between [{min_shift}, {max_shift}]'):
+    for _ in tqdm(
+        range(sample_size),
+        desc=f'Estimating shift between [{min_shift}, {max_shift}]',
+        disable=not sys.stderr.isatty(),
+    ):
         try:
             sample = next(target_iter)
         except StopIteration:
@@ -783,7 +792,7 @@ def get_pseudo_labels(model, data_loader, device, best_shift, n=500):
     model.eval()
     pseudo_softmaxes = []
     indices = []
-    for i, sample in enumerate(tqdm(data_loader, "computing pseudo labels")):
+    for i, sample in enumerate(tqdm(data_loader, "computing pseudo labels", disable=not sys.stderr.isatty())):
         if n is not None and i == n:
             break
         indices.extend(sample["index"].tolist())

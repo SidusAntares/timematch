@@ -223,7 +223,7 @@ def worker_init_fn(worker_id):
     np.random.seed(np.random.get_state()[1][0] + worker_id)
 
 
-def create_train_loader(ds, batch_size, num_workers):
+def create_train_loader(ds, batch_size, num_workers, timeout=0):
     return DataLoader(
         dataset=ds,
         batch_size=batch_size,
@@ -232,6 +232,7 @@ def create_train_loader(ds, batch_size, num_workers):
         drop_last=True,
         pin_memory=torch.cuda.is_available(),
         worker_init_fn=worker_init_fn,
+        timeout=timeout if num_workers > 0 else 0,
     )
 
 
@@ -264,6 +265,7 @@ def create_evaluation_loaders(dataset_name, splits, config, sample_pixels_val=Fa
         batch_sampler=GroupByShapesBatchSampler(
             val_dataset, config.batch_size, by_pixel_dim=not sample_pixels_val
         ),
+        timeout=getattr(config, "data_loader_timeout", 0) if config.num_workers > 0 else 0,
     )
 
     # Test dataset
@@ -286,6 +288,7 @@ def create_evaluation_loaders(dataset_name, splits, config, sample_pixels_val=Fa
         test_dataset,
         num_workers=config.num_workers,
         batch_sampler=GroupByShapesBatchSampler(test_dataset, config.batch_size),
+        timeout=getattr(config, "data_loader_timeout", 0) if config.num_workers > 0 else 0,
     )
 
     print(f"evaluation dataset:", dataset_name)
