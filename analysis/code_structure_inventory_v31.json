@@ -1,0 +1,253 @@
+{
+  "version": "v3.1_stage_contrast_inventory",
+  "scope": "code structure audit only; no training logic or loss implementation changed",
+  "entry_points": {
+    "main_cli": {
+      "file": "train.py",
+      "command_pattern": "python train.py ... {method}",
+      "dispatch": {
+        "timematch": "timematch.train_timematch",
+        "sourcephasecompact": "ideas.train_source_phase_compactness.train_supervised_source_phase_compactness",
+        "default_supervised": "train.train_supervised"
+      }
+    },
+    "source_pretrain": {
+      "method": "sourcephasecompact",
+      "function": "ideas.train_source_phase_compactness.train_supervised_source_phase_compactness",
+      "key_parameters": [
+        "source_structure_loss_version",
+        "source_structure_feature_target",
+        "source_structure_detach_features",
+        "source_structure_intra_trade_off",
+        "source_structure_lambda_schedule",
+        "source_structure_lambda_base",
+        "source_structure_lambda_final",
+        "source_structure_time_smooth_kernel_size",
+        "source_structure_time_permutation_seed",
+        "source_segment_partition_mode",
+        "source_segment_count",
+        "epochs",
+        "with_shift_aug",
+        "closed_set"
+      ],
+      "outputs": [
+        "outputs/<experiment>/fold_0/model.pt",
+        "outputs/<experiment>/train_config.json",
+        "outputs/<experiment>/fold_0/source_structure_lambda_curve.tsv"
+      ]
+    },
+    "timematch_da": {
+      "method": "timematch",
+      "function": "timematch.train_timematch",
+      "key_parameters": [
+        "weights",
+        "pseudo_threshold",
+        "ema_decay",
+        "trade_off",
+        "estimate_shift",
+        "shift_source",
+        "sample_size",
+        "max_temporal_shift",
+        "shift_estimator",
+        "domain_specific_bn",
+        "timematch_shift_policy",
+        "timematch_topk_shifts",
+        "timematch_diagnostic_log_path",
+        "epochs",
+        "steps_per_epoch"
+      ],
+      "outputs": [
+        "outputs/<experiment>/fold_0/model.pt",
+        "outputs/<experiment>/train_config.json",
+        "outputs/<experiment>/fold_0/test_metrics_<target>.json",
+        "outputs/<experiment>/fold_0/class_report_<target>.txt",
+        "outputs/<experiment>/fold_0/conf_mat_<target>.pkl"
+      ]
+    }
+  },
+  "model_encoder": {
+    "wrapper_file": "models/stclassifier.py",
+    "primary_model": "PseLTae",
+    "forward_signature": "forward(pixels, mask, positions, extra, return_feats=False)",
+    "return_feats_current_behavior": "returns logits and pooled temporal encoder output [B,D], not [B,T,D]",
+    "spatial_encoder": {
+      "file": "models/pse.py",
+      "class": "PixelSetEncoder",
+      "input_shapes": {
+        "pixels": "[B,T,C,S]",
+        "mask": "[B,T,S]",
+        "extra": "[B,E] or None"
+      },
+      "output_shape": "[B,T,D]",
+      "pooling": "pixel-set pooling inside each time step, then reshape back to [B,T,D]"
+    },
+    "temporal_encoder": {
+      "file": "models/ltae.py",
+      "class": "LTAE",
+      "input_shape": "[B,T,D]",
+      "position_shape": "[B,T]",
+      "internal_temporal_feature": "inconv(x) + positional_enc(positions + max_temporal_shift)",
+      "output_shape": "[B,D]",
+      "pooling_location": "MultiHeadAttention collapses T to one pooled vector"
+    },
+    "temporal_feature_availability": {
+      "available_now": "model.spatial_encoder(pixels, mask, extra) -> [B,T,D]",
+      "not_available_now": "post-LTAE pre-attention sequence via model.forward",
+      "recommended_hook": "return_temporal_features in PseLTae.forward"
+    }
+  },
+  "existing_structure_losses": {
+    "source_call_site": "ideas/train_source_phase_compactness.py::_compute_source_structure_loss_on_features",
+    "main_loop_features": "spatial_feats_raw = model.spatial_encoder(pixels, mask, extra)",
+    "loss_total": "loss = cls_loss_raw + compact_loss",
+    "raw_dispatch_file": "ideas/source_raw_compactness.py",
+    "raw_function": "compute_source_raw_global_compactness_loss",
+    "legacy_segment_file": "ideas/source_phase_compactness.py",
+    "legacy_segment_function": "compute_source_structure_loss",
+    "versions": {
+      "raw_global": [
+        "v275_raw_global_compactness",
+        "raw_global_compactness",
+        "source_raw_global_compactness"
+      ],
+      "smooth_k3": [
+        "v276_raw_smoothed_timepoint_compactness",
+        "raw_smoothed_timepoint_compactness",
+        "source_raw_smoothed_timepoint_compactness"
+      ],
+      "time_permuted_smooth_k3": [
+        "v303_time_permuted_smoothed_timepoint_compactness",
+        "time_permuted_smoothed_timepoint_compactness",
+        "source_time_permuted_smoothed_timepoint_compactness"
+      ]
+    },
+    "parameters": [
+      "source_structure_intra_trade_off",
+      "source_structure_compact_distance",
+      "source_structure_time_smooth_kernel_size",
+      "source_structure_time_permutation_seed",
+      "source_structure_detach_features"
+    ]
+  },
+  "timematch_components": {
+    "file": "timematch.py",
+    "teacher_student": {
+      "student": "input model loaded from --weights",
+      "teacher": "deepcopy(student)",
+      "ema_update": "update_ema_variables(student, teacher, config.ema_decay)"
+    },
+    "pseudo_labels": {
+      "location": "train_timematch batch loop",
+      "teacher_preds": "softmax teacher output [B,C]",
+      "pseudo_conf": "max probability [B]",
+      "pseudo_targets": "argmax class [B]",
+      "pseudo_mask": "pseudo_conf > config.pseudo_threshold",
+      "batch_storage": "local tensors only, not stored inside target batch"
+    },
+    "global_shift": {
+      "estimation_functions": [
+        "estimate_temporal_shift_details",
+        "collect_shift_softmaxes",
+        "score_shift_softmaxes"
+      ],
+      "state_variables": [
+        "target_to_source_shift",
+        "source_to_target_shift",
+        "target_to_source_topk_shifts",
+        "last_shift_details"
+      ],
+      "usage": {
+        "teacher_target": "position_t_weak + target_to_source_shift",
+        "student_source": "position_s + source_to_target_shift"
+      },
+      "saved_in_checkpoint": false,
+      "logging": [
+        "TIMEMATCH_SHIFT_TRAJECTORY print",
+        "timematch_diagnostic_log_path TSV",
+        "TensorBoard train/temporal_shift"
+      ]
+    },
+    "da_loss": {
+      "source": "criterion(logits_source, source_labels)",
+      "target": "criterion(logits_target, pseudo_targets[pseudo_mask])",
+      "total": "loss_source + config.trade_off * loss_target"
+    }
+  },
+  "batch_data_format": {
+    "dataset_file": "dataset.py",
+    "sample_keys": [
+      "index",
+      "parcel_index",
+      "pixels",
+      "valid_pixels",
+      "positions",
+      "extra",
+      "label"
+    ],
+    "collated_shapes": {
+      "pixels": "[B,T,C,S]",
+      "valid_pixels": "[B,T,S]",
+      "positions": "[B,T]",
+      "extra": "[B,E]",
+      "label": "[B]",
+      "index": "[B]",
+      "parcel_index": "[B]"
+    },
+    "timematch_source_batch": "sample_source dict",
+    "timematch_target_batch": "(sample_target_weak, sample_target_strong)",
+    "target_true_label": "present for diagnostics, not used for training"
+  },
+  "candidate_hook_points": {
+    "return_temporal_features": {
+      "file": "models/stclassifier.py",
+      "function": "PseLTae.forward",
+      "recommended_outputs": [
+        "logits",
+        "spatial_feats [B,T,D]",
+        "pooled_feats [B,D]"
+      ]
+    },
+    "temporal_stage_extractor": {
+      "recommended_file": "ideas/stage_contrast.py",
+      "inputs": [
+        "H [B,T,D]",
+        "positions [B,T]"
+      ],
+      "outputs": [
+        "stage_feats [B,K,D]",
+        "stage_mask [B,K]"
+      ]
+    },
+    "stage_contrastive_loss": {
+      "recommended_file": "ideas/stage_contrast.py",
+      "hook_location": "timematch.py train_timematch batch loop after pseudo labels and feature extraction"
+    },
+    "correspondence_A": {
+      "initial_recommendation": "hard k-k in minimal version",
+      "future_location": "inside StageContrastiveLoss or StageCorrespondence module"
+    },
+    "logging": {
+      "print_tag": "STAGE_CONTRAST",
+      "optional_tsv": "stage_contrast_log_path"
+    }
+  },
+  "risks": [
+    "model.forward(return_feats=True) returns pooled [B,D], not [B,T,D]",
+    "LTAE collapses time via attention; post-positional sequence features need a new hook",
+    "pseudo labels are local tensors inside train_timematch and unavailable outside the loop",
+    "global shift is local state and not saved in checkpoints",
+    "source and target time axes may differ; stage extractor should use positions",
+    "target true labels are present but must remain diagnostic-only",
+    "domain_specific_bn changes whether source and target are forwarded together or separately",
+    "pseudo_mask can be empty or too small, so stage loss needs a zero-loss fallback",
+    "existing structure loss is source-pretrain only; DA-stage stage contrast must be explicitly gated",
+    "large per-sample logs can explode disk usage"
+  ],
+  "minimal_implementation_plan": [
+    "Expose temporal features from PseLTae.forward without changing default behavior",
+    "Add fixed TemporalStageExtractor that pools H into K stages using positions",
+    "Add hard k-k StageContrastiveLoss using source labels and target pseudo labels",
+    "Add config flags for trade-off, stage count, feature kind, pseudo threshold, and log path",
+    "Add compact epoch-level logs and optional TSV summaries"
+  ]
+}

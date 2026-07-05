@@ -24,6 +24,7 @@ from transforms import (
     RandomTemporalShift,
     Identity,
 )
+from ideas.adaptive_stage_contrast import compute_adaptive_stage_contrast_loss
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda, cycle
 
@@ -59,7 +60,9 @@ def _format_diag_value(value):
 def _append_diag_tsv(path, row, fields):
     if not path:
         return
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     exists = os.path.exists(path)
     with open(path, "a", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", extrasaction="ignore")
@@ -170,6 +173,36 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         "teacher_target_macro_f1_offline",
         "student_target_macro_f1_offline",
     ]
+    stage_contrast_enabled = float(getattr(config, "stage_contrast_trade_off", 0.0)) > 0.0
+    stage_contrast_fields = [
+        "task",
+        "source",
+        "target",
+        "seed",
+        "epoch",
+        "step",
+        "stage_loss",
+        "stage_valid_queries",
+        "stage_skipped_no_positive",
+        "stage_skipped_no_negative",
+        "stage_positive_count_mean",
+        "stage_negative_class_count_mean",
+        "stage_pseudo_coverage",
+        "stage_target_conf_mean",
+        "stage_lengths_mean",
+        "stage_lengths_std",
+        "stage_dp_cost_mean",
+        "correspondence_entropy",
+        "correspondence_valid_candidate_mean",
+        "correspondence_mean_time_gap",
+        "correspondence_fallback_count",
+        "correspondence_max_weight_mean",
+        "stage_trade_off",
+        "stage_count",
+        "temperature",
+        "stage_time_radius",
+        "stage_time_temperature",
+    ]
 
     # To evaluate how well we estimate class distribution
     target_labels = target_loader_no_aug.dataset.get_labels()
@@ -260,6 +293,14 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         teacher.eval()  # don't update BN or use dropout for teacher
 
         all_labels, all_pseudo_labels, all_pseudo_conf, all_pseudo_mask = [], [], [], []
+        stage_loss_meter = AverageMeter()
+        stage_valid_queries_meter = AverageMeter()
+        stage_pseudo_coverage_meter = AverageMeter()
+        stage_target_conf_meter = AverageMeter()
+        stage_lengths_meter = AverageMeter()
+        stage_corr_entropy_meter = AverageMeter()
+        stage_corr_gap_meter = AverageMeter()
+        stage_corr_fallback_meter = AverageMeter()
         for step in progress_bar:
             sample_source, (sample_target_weak, sample_target_strong) = next(source_iter), next(target_iter)
 
@@ -314,6 +355,48 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             if logits_target is not None:
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
             loss = loss_source + config.trade_off * loss_target
+            stage_loss = None
+            stage_logs = {}
+            if stage_contrast_enabled:
+                if str(getattr(config, "stage_contrast_feature_kind", "spatial")).lower() != "spatial":
+                    raise ValueError(
+                        "v31_adaptive_stage_shift_contrast currently only supports "
+                        "stage_contrast_feature_kind='spatial'"
+                    )
+                stage_threshold = getattr(config, "stage_contrast_pseudo_threshold", None)
+                if stage_threshold is None:
+                    stage_target_mask = pseudo_mask
+                else:
+                    stage_target_mask = pseudo_conf >= float(stage_threshold)
+                source_stage_features = student.spatial_encoder(pixels_s, mask_s, extra_s)
+                target_stage_features = student.spatial_encoder(pixels_t, mask_t, extra_t)
+                stage_loss, stage_logs = compute_adaptive_stage_contrast_loss(
+                    source_stage_features,
+                    position_s,
+                    source_labels,
+                    target_stage_features,
+                    position_t,
+                    pseudo_targets,
+                    pseudo_conf,
+                    stage_target_mask,
+                    target_to_source_shift,
+                    num_stages=getattr(config, "stage_contrast_stage_count", 6),
+                    stage_min_len=getattr(config, "stage_min_len", 2),
+                    stage_partition_mode=getattr(config, "stage_partition_mode", "feature_change_dp"),
+                    stage_time_radius=getattr(config, "stage_time_radius", 30.0),
+                    stage_time_temperature=getattr(config, "stage_time_temperature", 10.0),
+                    temperature=getattr(config, "stage_contrast_temperature", 0.1),
+                    normalize=True,
+                )
+                loss = loss + float(config.stage_contrast_trade_off) * stage_loss
+                stage_loss_meter.update(stage_logs.get("stage_contrast_loss", 0.0))
+                stage_valid_queries_meter.update(stage_logs.get("stage_valid_queries", 0.0))
+                stage_pseudo_coverage_meter.update(stage_logs.get("stage_pseudo_coverage", 0.0))
+                stage_target_conf_meter.update(stage_logs.get("stage_target_conf_mean", 0.0))
+                stage_lengths_meter.update(stage_logs.get("source_stage_lengths_mean", 0.0))
+                stage_corr_entropy_meter.update(stage_logs.get("correspondence_entropy", 0.0))
+                stage_corr_gap_meter.update(stage_logs.get("correspondence_mean_time_gap", 0.0))
+                stage_corr_fallback_meter.update(stage_logs.get("correspondence_fallback_count", 0.0))
 
             # compute loss and backprop
             optimizer.zero_grad()
@@ -335,10 +418,67 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 writer.add_scalar("train/loss", loss_meter.val, global_step)
                 writer.add_scalar("train/lr", optimizer.param_groups[0]["lr"], global_step)
                 writer.add_scalar("train/target_updates", len(torch.nonzero(pseudo_mask)), global_step)
+                if stage_contrast_enabled:
+                    writer.add_scalar("train/stage_contrast_loss", stage_loss_meter.val, global_step)
+                    writer.add_scalar("train/stage_valid_queries", stage_valid_queries_meter.val, global_step)
+                    writer.add_scalar("train/stage_pseudo_coverage", stage_pseudo_coverage_meter.val, global_step)
+                    writer.add_scalar("train/stage_target_conf_mean", stage_target_conf_meter.val, global_step)
+                    writer.add_scalar("train/stage_lengths_mean", stage_lengths_meter.val, global_step)
+                    writer.add_scalar("train/correspondence_entropy", stage_corr_entropy_meter.val, global_step)
+                    writer.add_scalar("train/correspondence_mean_time_gap", stage_corr_gap_meter.val, global_step)
+                    writer.add_scalar("train/correspondence_fallback_count", stage_corr_fallback_meter.val, global_step)
+                    stage_row = {
+                        "task": getattr(config, "timematch_diagnostic_task", "")
+                        or f"{config.source.split('/')[1]}_to_{config.target.split('/')[1]}",
+                        "source": config.source,
+                        "target": config.target,
+                        "seed": config.seed,
+                        "epoch": epoch + 1,
+                        "step": step + 1,
+                        "stage_loss": stage_logs.get("stage_contrast_loss", 0.0),
+                        "stage_valid_queries": stage_logs.get("stage_valid_queries", 0.0),
+                        "stage_skipped_no_positive": stage_logs.get("stage_skipped_no_positive", 0.0),
+                        "stage_skipped_no_negative": stage_logs.get("stage_skipped_no_negative", 0.0),
+                        "stage_positive_count_mean": stage_logs.get("stage_positive_count_mean", 0.0),
+                        "stage_negative_class_count_mean": stage_logs.get("stage_negative_class_count_mean", 0.0),
+                        "stage_pseudo_coverage": stage_logs.get("stage_pseudo_coverage", 0.0),
+                        "stage_target_conf_mean": stage_logs.get("stage_target_conf_mean", 0.0),
+                        "stage_lengths_mean": stage_logs.get("source_stage_lengths_mean", 0.0),
+                        "stage_lengths_std": stage_logs.get("source_stage_lengths_std", 0.0),
+                        "stage_dp_cost_mean": stage_logs.get("source_stage_dp_cost_mean", 0.0),
+                        "correspondence_entropy": stage_logs.get("correspondence_entropy", 0.0),
+                        "correspondence_valid_candidate_mean": stage_logs.get("correspondence_valid_candidate_mean", 0.0),
+                        "correspondence_mean_time_gap": stage_logs.get("correspondence_mean_time_gap", 0.0),
+                        "correspondence_fallback_count": stage_logs.get("correspondence_fallback_count", 0.0),
+                        "correspondence_max_weight_mean": stage_logs.get("correspondence_max_weight_mean", 0.0),
+                        "stage_trade_off": getattr(config, "stage_contrast_trade_off", 0.0),
+                        "stage_count": getattr(config, "stage_contrast_stage_count", 6),
+                        "temperature": getattr(config, "stage_contrast_temperature", 0.1),
+                        "stage_time_radius": getattr(config, "stage_time_radius", 30.0),
+                        "stage_time_temperature": getattr(config, "stage_time_temperature", 10.0),
+                    }
+                    _append_diag_tsv(
+                        getattr(config, "stage_contrast_log_path", ""),
+                        stage_row,
+                        stage_contrast_fields,
+                    )
 
             global_step += 1
 
         progress_bar.close()
+        if stage_contrast_enabled:
+            print(
+                "ADAPTIVE_STAGE_CONTRAST|"
+                f"epoch={epoch + 1}|"
+                f"loss={stage_loss_meter.avg:.6f}|"
+                f"valid_queries={stage_valid_queries_meter.avg:.3f}|"
+                f"pseudo_coverage={stage_pseudo_coverage_meter.avg:.6f}|"
+                f"target_conf={stage_target_conf_meter.avg:.6f}|"
+                f"stage_len_mean={stage_lengths_meter.avg:.6f}|"
+                f"corr_entropy={stage_corr_entropy_meter.avg:.6f}|"
+                f"corr_time_gap={stage_corr_gap_meter.avg:.6f}|"
+                f"fallback={stage_corr_fallback_meter.avg:.3f}"
+            )
 
         # Evaluate pseudo labels
         all_labels, all_pseudo_labels = np.array(all_labels), np.array(all_pseudo_labels)

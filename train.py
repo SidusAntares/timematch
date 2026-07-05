@@ -857,6 +857,74 @@ if __name__ == '__main__':
         default=1729,
         help="fixed sampling seed for trajectory diagnostics so per-epoch drift is not pixel-sampling noise",
     )
+    timematch.add_argument(
+        "--stage_contrast_trade_off",
+        type=float,
+        default=0.0,
+        help="v3.1 adaptive stage shift contrast weight; 0 keeps original TimeMatch behavior",
+    )
+    timematch.add_argument(
+        "--stage_contrast_stage_count",
+        type=int,
+        default=6,
+        help="number of adaptive feature-change stages for v3.1 stage contrast",
+    )
+    timematch.add_argument(
+        "--stage_contrast_temperature",
+        type=float,
+        default=0.1,
+        help="InfoNCE temperature for v3.1 stage contrast",
+    )
+    timematch.add_argument(
+        "--stage_partition_mode",
+        type=str,
+        default="feature_change_dp",
+        choices=["feature_change_dp"],
+        help="adaptive stage partition mode; fixed uniform partition is intentionally not supported",
+    )
+    timematch.add_argument(
+        "--stage_min_len",
+        type=int,
+        default=2,
+        help="minimum contiguous points per adaptive stage before automatic feasibility reduction",
+    )
+    timematch.add_argument(
+        "--stage_time_radius",
+        type=float,
+        default=30.0,
+        help="maximum shifted time gap for soft source-stage correspondence candidates",
+    )
+    timematch.add_argument(
+        "--stage_time_temperature",
+        type=float,
+        default=10.0,
+        help="temperature in exp(-gap^2 / tau) for shift-aware stage correspondence",
+    )
+    timematch.add_argument(
+        "--stage_contrast_pseudo_threshold",
+        type=float,
+        default=None,
+        help="optional threshold for stage contrast target mask; defaults to TimeMatch pseudo_mask",
+    )
+    timematch.add_argument(
+        "--stage_contrast_feature_kind",
+        type=str,
+        default="spatial",
+        choices=["spatial"],
+        help="feature stream for v3.1 stage contrast; first version only supports PSE temporal features [B,T,D]",
+    )
+    timematch.add_argument(
+        "--stage_contrast_log_path",
+        type=str,
+        default="",
+        help="optional compact TSV path for v3.1 stage contrast logs",
+    )
+    timematch.add_argument(
+        "--stage_contrast_debug",
+        type=bool_flag,
+        default=False,
+        help="reserved debug flag for v3.1 stage contrast; no per-sample logs by default",
+    )
 
     # Source-only + source phase compactness regularization
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')

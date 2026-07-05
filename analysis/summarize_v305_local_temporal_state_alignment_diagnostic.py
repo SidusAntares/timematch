@@ -23,6 +23,7 @@ from analysis.v301_anchor_correspondence_diagnostic import (  # noqa: E402
     resolve_classes,
 )
 from analysis.v302_anchor_order_diagnostic import build_loader  # noqa: E402
+from analysis import summarize_v306_alignment_control_audit as v306  # noqa: E402
 from dataset import count_pixelset_samples  # noqa: E402
 
 
@@ -78,6 +79,10 @@ def parse_args():
     parser.add_argument("--random_repeats", type=int, default=50)
     parser.add_argument("--shuffle_repeats", type=int, default=50)
     parser.add_argument("--write_cost_matrix", default="False")
+    parser.add_argument("--audit_summary_mode", default="False")
+    parser.add_argument("--audit_shuffle_repeats", type=int, default=100)
+    parser.add_argument("--audit_block_size", type=int, default=3)
+    parser.add_argument("--audit_bootstrap_repeats", type=int, default=1000)
     parser.add_argument("--limit_rows", type=int, default=0)
     parser.add_argument("--seed", type=int, default=3050)
     return parser.parse_args()
@@ -109,6 +114,25 @@ def write_tsv(path, rows, fields):
         writer.writeheader()
         for row in rows:
             writer.writerow({field: fmt(row.get(field)) for field in fields})
+
+
+class StreamingTsvWriter:
+    def __init__(self, path, fields):
+        self.path = Path(path)
+        self.fields = fields
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = self.path.open("w", encoding="utf-8", newline="")
+        self.writer = csv.DictWriter(self.handle, fieldnames=fields, delimiter="\t", extrasaction="ignore")
+        self.writer.writeheader()
+        self.handle.flush()
+
+    def write_many(self, rows):
+        for row in rows:
+            self.writer.writerow({field: fmt(row.get(field)) for field in self.fields})
+        self.handle.flush()
+
+    def close(self):
+        self.handle.close()
 
 
 def safe_float(value, default=None):
@@ -261,9 +285,10 @@ def distribution_stats(features, sample_mask, window_size, min_count):
 
 
 def cost_matrices(src_stats, tgt_stats):
-    t = len(src_stats)
-    mean_l2 = np.full((t, t), np.nan, dtype=np.float64)
-    coral = np.full((t, t), np.nan, dtype=np.float64)
+    n_source = len(src_stats)
+    n_target = len(tgt_stats)
+    mean_l2 = np.full((n_source, n_target), np.nan, dtype=np.float64)
+    coral = np.full((n_source, n_target), np.nan, dtype=np.float64)
     for i, ss in enumerate(src_stats):
         if ss is None:
             continue
@@ -283,8 +308,8 @@ def valid_mean(vals):
     return float(arr.mean())
 
 
-def shift_indices(t, shift):
-    return [(i, i + shift) for i in range(t) if 0 <= i + shift < t]
+def shift_indices(n_source, n_target, shift):
+    return [(i, i + shift) for i in range(n_source) if 0 <= i + shift < n_target]
 
 
 def distance_for_pairs(cost, pairs):
@@ -294,9 +319,8 @@ def distance_for_pairs(cost, pairs):
 
 def best_scalar_shift(cost, max_shift):
     best_shift, best_dist, best_valid = 0, None, 0
-    t = cost.shape[0]
     for shift in range(-max_shift, max_shift + 1):
-        dist, valid = distance_for_pairs(cost, shift_indices(t, shift))
+        dist, valid = distance_for_pairs(cost, shift_indices(cost.shape[0], cost.shape[1], shift))
         if dist is None:
             continue
         if best_dist is None or dist < best_dist:
@@ -307,10 +331,14 @@ def best_scalar_shift(cost, max_shift):
 def soft_alignment(cost, shift, radius, tau):
     total, weight_total = 0.0, 0
     entropies, deviations, max_devs = [], [], []
-    t = cost.shape[0]
-    for i in range(t):
+    n_source, n_target = cost.shape
+    for i in range(n_source):
         center = i + shift
-        candidates = [j for j in range(center - radius, center + radius + 1) if 0 <= j < t and np.isfinite(cost[i, j])]
+        candidates = [
+            j
+            for j in range(center - radius, center + radius + 1)
+            if 0 <= j < n_target and np.isfinite(cost[i, j])
+        ]
         if not candidates:
             continue
         vals = np.asarray([cost[i, j] for j in candidates], dtype=np.float64)
@@ -331,13 +359,13 @@ def soft_alignment(cost, shift, radius, tau):
 
 
 def monotonic_alignment(cost, shift, radius):
-    n = cost.shape[0]
+    n_source, n_target = cost.shape
     inf = float("inf")
-    dp = np.full((n + 1, n + 1), inf, dtype=np.float64)
+    dp = np.full((n_source + 1, n_target + 1), inf, dtype=np.float64)
     prev = {}
     dp[0, 0] = 0.0
-    for i in range(1, n + 1):
-        for j in range(1, n + 1):
+    for i in range(1, n_source + 1):
+        for j in range(1, n_target + 1):
             ti, uj = i - 1, j - 1
             if abs(uj - (ti + shift)) > radius or not np.isfinite(cost[ti, uj]):
                 continue
@@ -347,7 +375,9 @@ def monotonic_alignment(cost, shift, radius):
                 continue
             dp[i, j] = best_val + cost[ti, uj]
             prev[(i, j)] = best_prev
-    endpoints = [(n, j) for j in range(1, n + 1)] + [(i, n) for i in range(1, n + 1)]
+    endpoints = [(n_source, j) for j in range(1, n_target + 1)] + [
+        (i, n_target) for i in range(1, n_source + 1)
+    ]
     endpoints = [p for p in endpoints if np.isfinite(dp[p])]
     if not endpoints:
         return None, 0, None, None, None, None, 0
@@ -376,7 +406,7 @@ def monotonic_alignment(cost, shift, radius):
     return (
         dist,
         len(path),
-        float(len(path) / max(n, 1)),
+        float(len(path) / max(n_source, n_target, 1)),
         mean(steps),
         max(steps) if steps else 0,
         mean(deviations),
@@ -386,12 +416,16 @@ def monotonic_alignment(cost, shift, radius):
 
 def random_alignment(cost, shift, radius, repeats, rng):
     values = []
-    t = cost.shape[0]
+    n_source, n_target = cost.shape
     for _ in range(repeats):
         chosen = []
-        for i in range(t):
+        for i in range(n_source):
             center = i + shift
-            candidates = [j for j in range(center - radius, center + radius + 1) if 0 <= j < t and np.isfinite(cost[i, j])]
+            candidates = [
+                j
+                for j in range(center - radius, center + radius + 1)
+                if 0 <= j < n_target and np.isfinite(cost[i, j])
+            ]
             if candidates:
                 chosen.append(cost[i, int(rng.choice(candidates))])
         if chosen:
@@ -401,9 +435,9 @@ def random_alignment(cost, shift, radius, repeats, rng):
 
 def shuffled_alignment(cost, shift, radius, tau, repeats, rng):
     soft_values, mono_values = [], []
-    t = cost.shape[0]
+    n_target = cost.shape[1]
     for _ in range(repeats):
-        perm = rng.permutation(t)
+        perm = rng.permutation(n_target)
         shuffled = cost[:, perm]
         soft_dist, *_ = soft_alignment(shuffled, shift, radius, tau)
         mono_dist, *_ = monotonic_alignment(shuffled, shift, radius)
@@ -415,10 +449,10 @@ def shuffled_alignment(cost, shift, radius, tau, repeats, rng):
 
 
 def local_alignment_for_cost(cost, estimated_shift, args, rng):
-    t = cost.shape[0]
-    max_shift = min(args.max_shift, max(t // 2, 1))
-    no_align, n_no = distance_for_pairs(cost, shift_indices(t, 0))
-    global_shift, n_global = distance_for_pairs(cost, shift_indices(t, estimated_shift))
+    n_source, n_target = cost.shape
+    max_shift = min(args.max_shift, max(max(n_source, n_target) // 2, abs(n_source - n_target), 1))
+    no_align, n_no = distance_for_pairs(cost, shift_indices(n_source, n_target, 0))
+    global_shift, n_global = distance_for_pairs(cost, shift_indices(n_source, n_target, estimated_shift))
     best_shift, best_dist, n_best = best_scalar_shift(cost, max_shift)
     local_soft, n_soft, entropy, mean_dev, max_dev = soft_alignment(cost, estimated_shift, args.radius, args.tau)
     mono = monotonic_alignment(cost, estimated_shift, args.radius)
@@ -493,10 +527,20 @@ def collect_feature_pair(args, row, classes, checkpoint):
     random.seed(int(row["seed"]))
     np.random.seed(int(row["seed"]))
     counts = {
-        row["source"]: count_pixelset_samples(args.data_root, row["source"]),
-        row["target"]: count_pixelset_samples(args.data_root, row["target"]),
+        row["source"]: count_pixelset_samples(
+            args.data_root,
+            row["source"],
+            classes,
+            closed_set=bool_value(args.closed_set),
+        ),
+        row["target"]: count_pixelset_samples(
+            args.data_root,
+            row["target"],
+            classes,
+            closed_set=bool_value(args.closed_set),
+        ),
     }
-    folds = create_train_val_test_folds([row["source"], row["target"]], 1, counts)
+    folds = create_train_val_test_folds([row["source"], row["target"]], 1, counts, 0.1, 0.2)
     splits = folds[0]
     source_loader = build_loader(args, row["source"], classes, splits[row["source"]]["train"], args.max_source_samples)
     target_loader = build_loader(args, row["target"], classes, splits[row["target"]]["train"], args.max_target_samples)
@@ -538,7 +582,127 @@ def parse_control_rows(args):
     return out[: args.limit_rows] if args.limit_rows else out
 
 
-def analyze_row(args, row, output_dir, cost_writer=None):
+def safe_div(a, b):
+    if a is None or b is None or abs(b) <= 1e-12:
+        return None
+    return a / b
+
+
+def emit_v306_audit(audit, out_base, metric, cost, estimated_shift, args, rng):
+    if audit is None:
+        return
+    geom = v306.cost_geometry(cost, estimated_shift, args.radius)
+    geometry_row = {
+        "task": out_base["task"],
+        "source": out_base["source"],
+        "target": out_base["target"],
+        "seed": out_base["seed"],
+        "config": out_base["config"],
+        "label_mode": out_base["label_mode"],
+        "class_id": out_base["class_id"],
+        "distance_metric": metric,
+        **geom,
+        "valid_class": out_base.get("valid_class", 1),
+        "skip_reason": out_base.get("skip_reason", ""),
+    }
+    real_soft, behavior = v306.soft_alignment(cost, estimated_shift, args.radius, args.tau)
+    real_mono, _, _, _ = v306.monotonic_alignment(cost, estimated_shift, args.radius)
+    behavior_row = {
+        "task": out_base["task"],
+        "seed": out_base["seed"],
+        "config": out_base["config"],
+        "label_mode": out_base["label_mode"],
+        "class_id": out_base["class_id"],
+        "distance_metric": metric,
+        **behavior,
+        "interpretation_flag": v306.interpret_flag(behavior, None),
+    }
+    dist_global = geom.get("global_shift_band_cost")
+    finite = cost[np.isfinite(cost)]
+    if finite.size:
+        z_cost = (cost - float(np.mean(finite))) / max(float(np.std(finite)), 1e-12)
+        z_soft, _ = v306.soft_alignment(z_cost, estimated_shift, args.radius, args.tau)
+        z_mono, _, _, _ = v306.monotonic_alignment(z_cost, estimated_shift, args.radius)
+        z_perm = z_cost[:, rng.permutation(z_cost.shape[1])]
+        z_soft_ctrl, _ = v306.soft_alignment(z_perm, estimated_shift, args.radius, args.tau)
+        z_mono_ctrl, _, _, _ = v306.monotonic_alignment(z_perm, estimated_shift, args.radius)
+    else:
+        z_soft = z_mono = z_soft_ctrl = z_mono_ctrl = None
+    shuffle_rows = []
+    full_shuffle_local_gaps = []
+    full_shuffle_monotonic_gaps = []
+    for control_type in ["full_shuffle", "circular_shift", "block_shuffle", "within_band_random", "time_reversed"]:
+        repeats = 1 if control_type == "time_reversed" else args.audit_shuffle_repeats
+        for repeat_id in range(repeats):
+            if control_type == "within_band_random":
+                ctrl_soft, ctrl_mean_dev, ctrl_large = v306.random_within_band(cost, estimated_shift, args.radius, rng)
+                ctrl_mono = None
+                ctrl_path = None
+            else:
+                ctrl_cost = v306.transformed_cost(cost, control_type, rng, args.audit_block_size)
+                ctrl_soft, _ = v306.soft_alignment(ctrl_cost, estimated_shift, args.radius, args.tau)
+                ctrl_mono, ctrl_path, ctrl_mean_dev, ctrl_large = v306.monotonic_alignment(ctrl_cost, estimated_shift, args.radius)
+            local_gap = v306.diff(ctrl_soft, real_soft)
+            mono_gap = v306.diff(ctrl_mono, real_mono)
+            if control_type == "full_shuffle":
+                full_shuffle_local_gaps.append(local_gap)
+                full_shuffle_monotonic_gaps.append(mono_gap)
+            shuffle_rows.append({
+                "task": out_base["task"],
+                "seed": out_base["seed"],
+                "config": out_base["config"],
+                "label_mode": out_base["label_mode"],
+                "class_id": out_base["class_id"],
+                "distance_metric": metric,
+                "control_type": control_type,
+                "repeat_id": repeat_id,
+                "real_local_soft_dist": real_soft,
+                "control_local_soft_dist": ctrl_soft,
+                "real_minus_control_local_soft_gap": local_gap,
+                "real_monotonic_dist": real_mono,
+                "control_monotonic_dist": ctrl_mono,
+                "real_minus_control_monotonic_gap": mono_gap,
+                "control_path_length_ratio": ctrl_path,
+                "control_mean_abs_deviation": ctrl_mean_dev,
+                "control_num_large_jumps": ctrl_large,
+            })
+    raw_local_shuffle_gap = mean(full_shuffle_local_gaps)
+    raw_mono_shuffle_gap = mean(full_shuffle_monotonic_gaps)
+    normalized_row = {
+        "task": out_base["task"],
+        "seed": out_base["seed"],
+        "config": out_base["config"],
+        "label_mode": out_base["label_mode"],
+        "class_id": out_base["class_id"],
+        "distance_metric": metric,
+        "raw_local_soft_improvement": v306.diff(dist_global, real_soft),
+        "relative_local_soft_improvement": safe_div(v306.diff(dist_global, real_soft), dist_global),
+        "raw_monotonic_improvement": v306.diff(dist_global, real_mono),
+        "relative_monotonic_improvement": safe_div(v306.diff(dist_global, real_mono), dist_global),
+        "raw_local_real_vs_shuffled_gap": raw_local_shuffle_gap,
+        "relative_local_real_vs_shuffled_gap": safe_div(raw_local_shuffle_gap, real_soft),
+        "z_normalized_local_real_vs_shuffled_gap": None if z_soft_ctrl is None or z_soft is None else z_soft_ctrl - z_soft,
+        "raw_monotonic_real_vs_shuffled_gap": raw_mono_shuffle_gap,
+        "relative_monotonic_real_vs_shuffled_gap": safe_div(raw_mono_shuffle_gap, real_mono),
+        "z_normalized_monotonic_real_vs_shuffled_gap": None if z_mono_ctrl is None or z_mono is None else z_mono_ctrl - z_mono,
+        "dist_global_shift": dist_global,
+        "dist_local_soft": real_soft,
+        "dist_monotonic": real_mono,
+    }
+    audit["geometry"].append(geometry_row)
+    audit["behavior"].append(behavior_row)
+    audit["normalized"].append(normalized_row)
+    for row in shuffle_rows:
+        stats = audit["shuffle_stats"][row["control_type"]]
+        stats["local"].append(row.get("real_minus_control_local_soft_gap"))
+        stats["monotonic"].append(row.get("real_minus_control_monotonic_gap"))
+    audit["geometry_writer"].write_many([geometry_row])
+    audit["behavior_writer"].write_many([behavior_row])
+    audit["normalized_writer"].write_many([normalized_row])
+    audit["shuffle_writer"].write_many(shuffle_rows)
+
+
+def analyze_row(args, row, output_dir, cost_writer=None, audit=None):
     checkpoint = checkpoint_path(args, row)
     base = {
         "task": row["task"],
@@ -589,6 +753,8 @@ def analyze_row(args, row, output_dir, cost_writer=None):
         mean_cost, coral_cost = cost_matrices(src_stats, tgt_stats)
         mean_diag = local_alignment_for_cost(mean_cost, int(row["estimated_shift"]), args, rng)
         coral_diag = local_alignment_for_cost(coral_cost, int(row["estimated_shift"]), args, rng)
+        emit_v306_audit(audit, out_base, "mean_l2", mean_cost, int(row["estimated_shift"]), args, rng)
+        emit_v306_audit(audit, out_base, "coral", coral_cost, int(row["estimated_shift"]), args, rng)
         n_valid = sum(1 for idx in range(mean_cost.shape[0]) if np.isfinite(mean_cost[idx]).any())
         out = {
             **out_base,
@@ -764,23 +930,6 @@ def main():
     else:
         write_tsv(output_dir / "local_cost_matrix.tsv", [], cost_fields)
 
-    for idx, row in enumerate(control_rows, start=1):
-        print(f"V305_START|{idx}/{len(control_rows)}|task={row['task']}|seed={row['seed']}|config={row['config']}", flush=True)
-        try:
-            diag, feats = analyze_row(args, row, output_dir, cost_writer)
-            all_diag.extend(diag)
-            feature_rows.extend(feats)
-            print(f"V305_DONE|task={row['task']}|seed={row['seed']}|config={row['config']}|rows={len(diag)}", flush=True)
-        except Exception as exc:  # keep the batch running
-            failed_rows.append({**row, "error": repr(exc), "checkpoint_path": str(checkpoint_path(args, row))})
-            print(f"V305_FAIL|task={row['task']}|seed={row['seed']}|config={row['config']}|error={repr(exc)}", flush=True)
-    if cost_handle is not None:
-        cost_handle.close()
-
-    task_rows = weighted_summary(all_diag)
-    da_relation = build_da_relation(task_rows, control_rows)
-    corr_rows = correlation_summary(da_relation)
-
     diag_fields = [
         "task", "source", "target", "seed", "config", "feature_stage", "label_mode", "class_id", "class_name_if_available",
         "n_source_samples", "n_target_samples", "n_valid_time_points",
@@ -796,6 +945,150 @@ def main():
         "path_length", "path_length_ratio", "mean_step_size", "max_step_size", "num_large_jumps",
         "valid_class", "skip_reason",
     ]
+    feature_fields = [
+        "task", "source", "target", "seed", "config", "feature_stage", "estimated_global_shift",
+        "shift_missing", "checkpoint_path", "n_source_samples", "n_target_samples", "feature_shape",
+    ]
+    failed_fields = ["task", "source", "target", "seed", "config", "error", "checkpoint_path"]
+    diag_stream = StreamingTsvWriter(output_dir / "local_alignment_diagnostic.tsv", diag_fields)
+    feature_stream = StreamingTsvWriter(output_dir / "feature_extraction_index.tsv", feature_fields)
+    failed_stream = StreamingTsvWriter(output_dir / "failed_runs.tsv", failed_fields)
+    audit = None
+    if bool_value(args.audit_summary_mode):
+        audit = {
+            "geometry": [],
+            "shuffle_stats": defaultdict(lambda: {"local": [], "monotonic": []}),
+            "behavior": [],
+            "normalized": [],
+            "geometry_writer": StreamingTsvWriter(output_dir / "v306_cost_matrix_geometry.tsv", v306.GEOMETRY_FIELDS),
+            "shuffle_writer": StreamingTsvWriter(output_dir / "v306_shuffle_control_audit.tsv", v306.SHUFFLE_FIELDS),
+            "behavior_writer": StreamingTsvWriter(output_dir / "v306_local_soft_behavior.tsv", v306.BEHAVIOR_FIELDS),
+            "normalized_writer": StreamingTsvWriter(output_dir / "v306_normalized_alignment_summary.tsv", v306.NORMALIZED_FIELDS),
+            "status_writer": StreamingTsvWriter(
+                output_dir / "v306_audit_status.tsv",
+                ["task", "seed", "config", "status", "geometry_rows", "behavior_rows", "normalized_rows", "shuffle_rows", "error"],
+            ),
+        }
+
+    for idx, row in enumerate(control_rows, start=1):
+        print(f"V305_START|{idx}/{len(control_rows)}|task={row['task']}|seed={row['seed']}|config={row['config']}", flush=True)
+        audit_counts_before = None
+        if audit is not None:
+            audit_counts_before = (
+                len(audit["geometry"]),
+                len(audit["behavior"]),
+                len(audit["normalized"]),
+                sum(len(v["local"]) for v in audit["shuffle_stats"].values()),
+            )
+        try:
+            diag, feats = analyze_row(args, row, output_dir, cost_writer, audit)
+            all_diag.extend(diag)
+            feature_rows.extend(feats)
+            diag_stream.write_many(diag)
+            feature_stream.write_many(feats)
+            if audit is not None:
+                before = audit_counts_before
+                after = (
+                    len(audit["geometry"]),
+                    len(audit["behavior"]),
+                    len(audit["normalized"]),
+                    sum(len(v["local"]) for v in audit["shuffle_stats"].values()),
+                )
+                audit["status_writer"].write_many([{
+                    "task": row["task"],
+                    "seed": row["seed"],
+                    "config": row["config"],
+                    "status": "DONE",
+                    "geometry_rows": after[0] - before[0],
+                    "behavior_rows": after[1] - before[1],
+                    "normalized_rows": after[2] - before[2],
+                    "shuffle_rows": after[3] - before[3],
+                    "error": "",
+                }])
+            print(f"V305_DONE|task={row['task']}|seed={row['seed']}|config={row['config']}|rows={len(diag)}", flush=True)
+        except Exception as exc:  # keep the batch running
+            failed = {**row, "error": repr(exc), "checkpoint_path": str(checkpoint_path(args, row))}
+            failed_rows.append(failed)
+            failed_stream.write_many([failed])
+            if audit is not None:
+                before = audit_counts_before
+                after = (
+                    len(audit["geometry"]),
+                    len(audit["behavior"]),
+                    len(audit["normalized"]),
+                    sum(len(v["local"]) for v in audit["shuffle_stats"].values()),
+                )
+                audit["status_writer"].write_many([{
+                    "task": row["task"],
+                    "seed": row["seed"],
+                    "config": row["config"],
+                    "status": "FAIL",
+                    "geometry_rows": after[0] - before[0],
+                    "behavior_rows": after[1] - before[1],
+                    "normalized_rows": after[2] - before[2],
+                    "shuffle_rows": after[3] - before[3],
+                    "error": repr(exc),
+                }])
+            print(f"V305_FAIL|task={row['task']}|seed={row['seed']}|config={row['config']}|error={repr(exc)}", flush=True)
+    diag_stream.close()
+    feature_stream.close()
+    failed_stream.close()
+    if cost_handle is not None:
+        cost_handle.close()
+    if audit is not None:
+        for key in ["geometry_writer", "shuffle_writer", "behavior_writer", "normalized_writer"]:
+            audit[key].close()
+        audit["status_writer"].close()
+
+    task_rows = weighted_summary(all_diag)
+    da_relation = build_da_relation(task_rows, control_rows)
+    corr_rows = correlation_summary(da_relation)
+    if audit is not None:
+        audit_args = argparse.Namespace(
+            seed=args.seed,
+            bootstrap_repeats=args.audit_bootstrap_repeats,
+            v305_dir=str(output_dir),
+            v304_dir=args.v304_dir,
+        )
+        monotonic_rows = v306.build_monotonic_stability(all_diag, audit_args, random.Random(args.seed + 306))
+        audit_corr = v306.build_da_correlation(
+            audit["normalized"],
+            audit["geometry"],
+            audit["behavior"],
+            da_relation,
+        )
+        write_tsv(output_dir / "v306_monotonic_stability.tsv", monotonic_rows, v306.MONOTONIC_FIELDS)
+        write_tsv(output_dir / "v306_da_relation_correlation.tsv", audit_corr, v306.CORR_FIELDS)
+        shuffle_summary_rows = [
+            {
+                "control_type": control,
+                "real_minus_control_local_soft_gap": mean(values["local"]),
+                "real_minus_control_monotonic_gap": mean(values["monotonic"]),
+            }
+            for control, values in sorted(audit["shuffle_stats"].items())
+        ]
+        v306.write_summary(
+            output_dir,
+            audit_args,
+            audit["geometry"],
+            shuffle_summary_rows,
+            audit["behavior"],
+            monotonic_rows,
+            audit["normalized"],
+            audit_corr,
+            [],
+            failed_rows,
+            len(audit["geometry"]),
+            sum(1 for r in audit["geometry"] if str(r.get("valid_class")) == "1"),
+        )
+    else:
+        write_tsv(output_dir / "v306_cost_matrix_geometry.tsv", [], v306.GEOMETRY_FIELDS)
+        write_tsv(output_dir / "v306_shuffle_control_audit.tsv", [], v306.SHUFFLE_FIELDS)
+        write_tsv(output_dir / "v306_local_soft_behavior.tsv", [], v306.BEHAVIOR_FIELDS)
+        write_tsv(output_dir / "v306_monotonic_stability.tsv", [], v306.MONOTONIC_FIELDS)
+        write_tsv(output_dir / "v306_normalized_alignment_summary.tsv", [], v306.NORMALIZED_FIELDS)
+        write_tsv(output_dir / "v306_da_relation_correlation.tsv", [], v306.CORR_FIELDS)
+
     task_fields = [
         "task", "source", "target", "seed", "config", "feature_stage", "label_mode", "n_valid_classes",
         "weighted_local_soft_improvement_vs_global", "weighted_monotonic_improvement_vs_global",
@@ -807,12 +1100,9 @@ def main():
         "positive_local_soft_classes", "positive_monotonic_classes", "positive_real_vs_shuffled_classes",
     ]
     relation_fields = task_fields + ["da_f1", "source_on_target_f1", "da_gain"]
-    write_tsv(output_dir / "local_alignment_diagnostic.tsv", all_diag, diag_fields)
     write_tsv(output_dir / "local_alignment_task_summary.tsv", task_rows, task_fields)
     write_tsv(output_dir / "local_alignment_da_relation.tsv", da_relation, relation_fields)
     write_tsv(output_dir / "local_alignment_correlation_summary.tsv", corr_rows, ["label_mode", "predictor", "target", "n", "pearson_corr", "spearman_corr"])
-    write_tsv(output_dir / "feature_extraction_index.tsv", feature_rows, ["task", "source", "target", "seed", "config", "feature_stage", "estimated_global_shift", "shift_missing", "checkpoint_path", "n_source_samples", "n_target_samples", "feature_shape"])
-    write_tsv(output_dir / "failed_runs.tsv", failed_rows, ["task", "source", "target", "seed", "config", "error", "checkpoint_path"])
     write_tsv(output_dir / "missing_records.tsv", [], ["task", "seed", "config", "missing"])
     write_summary_md(output_dir / "v305_local_temporal_state_alignment_diagnostic_summary.md", args, all_diag, task_rows, failed_rows)
     print(f"OUTPUT_DIR={output_dir}")
