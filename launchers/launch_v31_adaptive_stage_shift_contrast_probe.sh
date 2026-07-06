@@ -5,7 +5,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-SOURCE_RUN_TAG="${SOURCE_RUN_TAG:?SOURCE_RUN_TAG is required; this launcher is DA-only and will not train source models}"
+SOURCE_RUN_TAG="${SOURCE_RUN_TAG:-}"
+SOURCE_ROOT_GLOB="${SOURCE_ROOT_GLOB:-}"
 RUN_TAG="${RUN_TAG:-v31_adaptive_stage_shift_contrast_$(date +%Y%m%d_%H%M%S)}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs/${RUN_TAG}}"
 GPUS="${GPUS:-0 1 2 3}"
@@ -26,6 +27,7 @@ STAGE_MIN_LEN="${STAGE_MIN_LEN:-2}"
 STAGE_TIME_RADIUS="${STAGE_TIME_RADIUS:-30.0}"
 STAGE_TIME_TEMPERATURE="${STAGE_TIME_TEMPERATURE:-10.0}"
 STAGE_CONTRAST_TEMPERATURE="${STAGE_CONTRAST_TEMPERATURE:-0.1}"
+STAGE_CONTRAST_BACKEND="${STAGE_CONTRAST_BACKEND:-class_prototype_fast}"
 STAGE_PSEUDO_THRESHOLD="${STAGE_PSEUDO_THRESHOLD:-}"
 
 mkdir -p "$LOG_DIR"
@@ -77,6 +79,37 @@ source_model_name() {
   echo "pseltae_${source_tile}_${set_tag}_noshift_${SOURCE_RUN_TAG}_${task}_seed${seed}_${source_config}_source"
 }
 
+source_model_path() {
+  local source_dataset="$1"
+  local task="$2"
+  local seed="$3"
+  local source_config="$4"
+  local source_tile set_tag model_name
+  source_tile="$(echo "$source_dataset" | cut -d'/' -f2)"
+  case "$(echo "$CLOSED_SET" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|y|on) set_tag="closedset" ;;
+    *) set_tag="openset" ;;
+  esac
+  if [ -n "$SOURCE_RUN_TAG" ]; then
+    model_name="$(source_model_name "$source_dataset" "$task" "$seed" "$source_config")"
+    echo "$ROOT_DIR/outputs/$model_name/fold_0/model.pt"
+    return
+  fi
+  if [ -n "$SOURCE_ROOT_GLOB" ]; then
+    find "$ROOT_DIR/outputs" -maxdepth 3 -path "$ROOT_DIR/outputs/$SOURCE_ROOT_GLOB" -type f -name model.pt \
+      | grep "pseltae_${source_tile}_${set_tag}_noshift_" \
+      | grep "_${task}_seed${seed}_${source_config}_source/fold_0/model.pt" \
+      | sort \
+      | tail -n 1
+    return
+  fi
+  find "$ROOT_DIR/outputs" -maxdepth 3 -type f -name model.pt \
+    | grep "pseltae_${source_tile}_${set_tag}_noshift_" \
+    | grep "_${task}_seed${seed}_${source_config}_source/fold_0/model.pt" \
+    | sort \
+    | tail -n 1
+}
+
 IFS=',' read -r -a TASK_NAMES <<< "$TASKS"
 IFS=',' read -r -a SOURCE_CONFIG_NAMES <<< "$SOURCE_CONFIGS"
 IFS=',' read -r -a STAGE_TRADE_OFF_VALUES <<< "$STAGE_TRADE_OFFS"
@@ -89,10 +122,9 @@ for seed in $SEEDS; do
     read -r source_dataset target_dataset est_weight <<< "$spec"
     for source_config in "${SOURCE_CONFIG_NAMES[@]}"; do
       source_config="$(echo "$source_config" | xargs)"
-      source_model="$(source_model_name "$source_dataset" "$task" "$seed" "$source_config")"
-      source_path="$ROOT_DIR/outputs/$source_model/fold_0/model.pt"
+      source_path="$(source_model_path "$source_dataset" "$task" "$seed" "$source_config")"
       if [ ! -f "$source_path" ]; then
-        echo "MISSING_SOURCE|task=$task|seed=$seed|source_config=$source_config|path=$source_path" >&2
+        echo "MISSING_SOURCE|task=$task|seed=$seed|source_config=$source_config|searched=${source_path:-EMPTY}" >&2
         missing=1
         continue
       fi
@@ -130,11 +162,12 @@ run_job() {
   local seed="$5"
   local source_config="$6"
   local trade_off="$7"
-  local source_tile target_tile source_model timematch_model stage_log set_tag pseudo_args=()
+  local source_tile target_tile source_path source_weights timematch_model stage_log set_tag pseudo_args=()
 
   source_tile="$(echo "$source_dataset" | cut -d'/' -f2)"
   target_tile="$(echo "$target_dataset" | cut -d'/' -f2)"
-  source_model="$(source_model_name "$source_dataset" "$task" "$seed" "$source_config")"
+  source_path="$(source_model_path "$source_dataset" "$task" "$seed" "$source_config")"
+  source_weights="$(cd "$(dirname "$(dirname "$source_path")")" && pwd)"
   case "$(echo "$CLOSED_SET" | tr '[:upper:]' '[:lower:]')" in
     1|true|yes|y|on) set_tag="closedset" ;;
     *) set_tag="openset" ;;
@@ -159,7 +192,7 @@ run_job() {
     timematch \
     --epochs "$DA_EPOCHS" \
     --steps_per_epoch "$STEPS_PER_EPOCH" \
-    --weights "outputs/$source_model" \
+    --weights "$source_weights" \
     --stage_contrast_trade_off "$trade_off" \
     --stage_contrast_stage_count "$STAGE_COUNT" \
     --stage_partition_mode feature_change_dp \
@@ -167,6 +200,7 @@ run_job() {
     --stage_time_radius "$STAGE_TIME_RADIUS" \
     --stage_time_temperature "$STAGE_TIME_TEMPERATURE" \
     --stage_contrast_temperature "$STAGE_CONTRAST_TEMPERATURE" \
+    --stage_contrast_backend "$STAGE_CONTRAST_BACKEND" \
     --stage_contrast_feature_kind spatial \
     --stage_contrast_log_path "$stage_log" \
     "${pseudo_args[@]}"
@@ -199,12 +233,14 @@ run_worker() {
 }
 
 echo "SOURCE_RUN_TAG=$SOURCE_RUN_TAG"
+echo "SOURCE_ROOT_GLOB=$SOURCE_ROOT_GLOB"
 echo "RUN_TAG=$RUN_TAG"
 echo "LOG_DIR=$LOG_DIR"
 echo "TASKS=$TASKS"
 echo "SEEDS=$SEEDS"
 echo "SOURCE_CONFIGS=$SOURCE_CONFIGS"
 echo "STAGE_TRADE_OFFS=$STAGE_TRADE_OFFS"
+echo "STAGE_CONTRAST_BACKEND=$STAGE_CONTRAST_BACKEND"
 echo "GPUS=$GPUS"
 echo "JOBS=$(wc -l < "$JOBS")"
 
@@ -224,6 +260,12 @@ case "$(echo "$RUN_UNIT_TEST" | tr '[:upper:]' '[:lower:]')" in
       exit 1
     fi
     echo "DONE_UNIT_TEST|log=$LOG_DIR/unit_test.log"
+    python "$ROOT_DIR/analysis/test_v31_stage_contrast_fast.py" > "$LOG_DIR/unit_test_fast.log" 2>&1
+    if [ "$?" -ne 0 ]; then
+      echo "FAIL_FAST_UNIT_TEST|log=$LOG_DIR/unit_test_fast.log"
+      exit 1
+    fi
+    echo "DONE_FAST_UNIT_TEST|log=$LOG_DIR/unit_test_fast.log"
     ;;
 esac
 

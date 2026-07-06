@@ -357,6 +357,274 @@ class StageContrastiveLoss(nn.Module):
         return loss, logs
 
 
+def build_class_stage_prototypes(
+    source_stage_feats,
+    source_stage_mask,
+    source_stage_center_pos,
+    source_labels,
+    num_classes,
+    eps=1e-6,
+):
+    if source_stage_feats.dim() != 3:
+        raise ValueError(f"Expected source_stage_feats [B,K,D], got {tuple(source_stage_feats.shape)}")
+    if source_stage_mask.shape != source_stage_feats.shape[:2]:
+        raise ValueError(
+            "source_stage_mask must match source_stage_feats[:2], "
+            f"got {tuple(source_stage_mask.shape)} vs {tuple(source_stage_feats.shape[:2])}"
+        )
+    if source_stage_center_pos.shape != source_stage_feats.shape[:2]:
+        raise ValueError(
+            "source_stage_center_pos must match source_stage_feats[:2], "
+            f"got {tuple(source_stage_center_pos.shape)} vs {tuple(source_stage_feats.shape[:2])}"
+        )
+
+    source_labels = source_labels.view(-1).long()
+    if source_labels.numel() != source_stage_feats.shape[0]:
+        raise ValueError("source_labels length must match source batch size")
+    if source_labels.numel() > 0:
+        if int(source_labels.min().item()) < 0 or int(source_labels.max().item()) >= int(num_classes):
+            raise ValueError(
+                f"source_labels must be in [0, {int(num_classes) - 1}], "
+                f"got min={int(source_labels.min().item())}, max={int(source_labels.max().item())}"
+            )
+
+    batch_size, stage_count, feat_dim = source_stage_feats.shape
+    dtype = source_stage_feats.dtype
+    device = source_stage_feats.device
+    num_classes = int(num_classes)
+    mask_float = source_stage_mask.to(dtype=dtype)
+
+    proto_sum = source_stage_feats.new_zeros(num_classes, stage_count, feat_dim)
+    proto_index = source_labels.view(batch_size, 1, 1).expand(batch_size, stage_count, feat_dim)
+    proto_sum.scatter_add_(0, proto_index, source_stage_feats * mask_float[..., None])
+
+    count = source_stage_feats.new_zeros(num_classes, stage_count)
+    count_index = source_labels.view(batch_size, 1).expand(batch_size, stage_count)
+    count.scatter_add_(0, count_index, mask_float)
+
+    center_sum = source_stage_feats.new_zeros(num_classes, stage_count)
+    center_sum.scatter_add_(0, count_index, source_stage_center_pos.to(dtype=dtype) * mask_float)
+
+    source_proto_mask = count > 0
+    source_proto = proto_sum / count.clamp_min(eps)[..., None]
+    source_center = center_sum / count.clamp_min(eps)
+    source_class_count = torch.bincount(source_labels, minlength=num_classes).to(device=device, dtype=dtype)
+
+    return {
+        "source_proto": source_proto,
+        "source_center": source_center,
+        "source_proto_mask": source_proto_mask,
+        "source_class_count": source_class_count,
+        "source_class_stage_count": count,
+    }
+
+
+class FastShiftAwareClassStageCorrespondence(nn.Module):
+    """Vectorized class-stage correspondence A[B_t,K_t,C,K_s]."""
+
+    def __init__(self, stage_time_radius=30.0, stage_time_temperature=10.0, eps=1e-6):
+        super().__init__()
+        self.stage_time_radius = float(stage_time_radius)
+        self.stage_time_temperature = float(stage_time_temperature)
+        self.eps = float(eps)
+
+    def forward(
+        self,
+        target_stage_center_pos,
+        target_stage_mask,
+        source_center,
+        source_proto_mask,
+        target_to_source_shift,
+    ):
+        dtype = source_center.dtype
+        shifted_target = target_stage_center_pos.to(dtype=dtype)[:, :, None, None] + float(target_to_source_shift)
+        gap = (shifted_target - source_center[None, None, :, :]).abs()
+
+        target_valid = target_stage_mask[:, :, None, None]
+        source_valid = source_proto_mask[None, None, :, :]
+        candidate = (gap <= self.stage_time_radius) & source_valid & target_valid
+
+        class_has_stage = source_proto_mask.any(dim=-1)
+        valid_pair = target_stage_mask[:, :, None] & class_has_stage[None, None, :]
+        no_candidate = (~candidate.any(dim=-1)) & valid_pair
+
+        masked_gap = gap.masked_fill(~source_valid, float("inf"))
+        nearest_idx = masked_gap.argmin(dim=-1, keepdim=True)
+        fallback = torch.zeros_like(candidate)
+        fallback.scatter_(-1, nearest_idx, True)
+        fallback = fallback & no_candidate[..., None] & source_valid
+        candidate_final = candidate | fallback
+
+        scores = -gap.pow(2) / max(self.stage_time_temperature, self.eps)
+        scores = scores.masked_fill(~candidate_final, -1.0e9)
+        weights = torch.softmax(scores, dim=-1) * candidate_final.to(dtype=dtype)
+        weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(self.eps)
+        weights = weights * valid_pair[..., None].to(dtype=dtype)
+
+        valid_entries = candidate_final.any(dim=-1)
+        valid_count = int(valid_entries.sum().item())
+        fallback_count = float(fallback.sum().detach().item())
+        valid_pair_count = float(valid_pair.sum().detach().item())
+        if valid_count > 0:
+            weights_safe = weights.clamp_min(1e-12)
+            entropy = -(weights_safe * weights_safe.log()).sum(dim=-1)
+            candidate_count = candidate_final.to(dtype=dtype).sum(dim=-1)
+            mean_gap = (weights * gap).sum(dim=-1)
+            max_weight = weights.max(dim=-1).values
+            valid_class_count = (weights.sum(dim=-1) > 0).to(dtype=dtype).sum(dim=-1)
+            logs = {
+                "correspondence_entropy": float(entropy[valid_entries].mean().detach().item()),
+                "correspondence_valid_candidate_mean": float(candidate_count[valid_entries].mean().detach().item()),
+                "correspondence_mean_time_gap": float(mean_gap[valid_entries].mean().detach().item()),
+                "correspondence_fallback_count": fallback_count,
+                "correspondence_fallback_ratio": fallback_count / max(valid_pair_count, 1.0),
+                "correspondence_max_weight_mean": float(max_weight[valid_entries].mean().detach().item()),
+                "correspondence_valid_class_mean": float(valid_class_count[target_stage_mask].mean().detach().item())
+                if bool(target_stage_mask.any().item())
+                else 0.0,
+            }
+        else:
+            logs = {
+                "correspondence_entropy": 0.0,
+                "correspondence_valid_candidate_mean": 0.0,
+                "correspondence_mean_time_gap": 0.0,
+                "correspondence_fallback_count": fallback_count,
+                "correspondence_fallback_ratio": fallback_count / max(valid_pair_count, 1.0),
+                "correspondence_max_weight_mean": 0.0,
+                "correspondence_valid_class_mean": 0.0,
+            }
+        return weights, logs
+
+
+class FastClassPrototypeStageContrastiveLoss(nn.Module):
+    """Vectorized class-prototype stage contrast.
+
+    This keeps the class-conditional stage contrast objective but replaces the
+    dense sample-pair correspondence A[B_t,B_s,K,K] with class-stage prototypes
+    and A[B_t,K,C,K].
+    """
+
+    def __init__(self, temperature=0.1, normalize=True, eps=1e-6):
+        super().__init__()
+        self.temperature = float(temperature)
+        self.normalize = bool(normalize)
+        self.eps = float(eps)
+
+    def forward(
+        self,
+        source_stage_feats,
+        source_stage_mask,
+        source_stage_center_pos,
+        source_labels,
+        target_stage_feats,
+        target_stage_mask,
+        target_stage_center_pos,
+        target_pseudo_labels,
+        target_conf,
+        target_mask,
+        target_to_source_shift,
+        num_classes,
+        stage_time_radius=30.0,
+        stage_time_temperature=10.0,
+    ):
+        prototypes = build_class_stage_prototypes(
+            source_stage_feats,
+            source_stage_mask,
+            source_stage_center_pos,
+            source_labels,
+            num_classes=num_classes,
+            eps=self.eps,
+        )
+        correspondence_module = FastShiftAwareClassStageCorrespondence(
+            stage_time_radius=stage_time_radius,
+            stage_time_temperature=stage_time_temperature,
+            eps=self.eps,
+        )
+        correspondence, correspondence_logs = correspondence_module(
+            target_stage_center_pos,
+            target_stage_mask,
+            prototypes["source_center"],
+            prototypes["source_proto_mask"],
+            target_to_source_shift,
+        )
+
+        proto_for_target = torch.einsum(
+            "bkcl,cld->bkcd",
+            correspondence,
+            prototypes["source_proto"],
+        )
+        query = target_stage_feats
+        if self.normalize:
+            query = F.normalize(query, dim=-1, eps=self.eps)
+            proto_for_target = F.normalize(proto_for_target, dim=-1, eps=self.eps)
+        logits = torch.einsum("bkd,bkcd->bkc", query, proto_for_target) / max(self.temperature, self.eps)
+
+        class_valid = correspondence.sum(dim=-1) > 0
+        logits = logits.masked_fill(~class_valid, -1.0e9)
+
+        target_pseudo_labels = target_pseudo_labels.view(-1).long()
+        target_conf = target_conf.view(-1)
+        target_mask = target_mask.view(-1).bool()
+        batch_size, stage_count, num_classes = logits.shape
+        label_valid = (target_pseudo_labels >= 0) & (target_pseudo_labels < num_classes)
+        safe_labels = target_pseudo_labels.clamp(min=0, max=max(num_classes - 1, 0))
+        labels = safe_labels[:, None].expand(batch_size, stage_count)
+        positive_valid = class_valid.gather(dim=-1, index=labels[..., None]).squeeze(-1)
+        valid_class_count = class_valid.to(dtype=logits.dtype).sum(dim=-1)
+        query_valid = (
+            target_mask[:, None]
+            & target_stage_mask
+            & label_valid[:, None]
+            & positive_valid
+            & (valid_class_count >= 2)
+        )
+
+        logits_flat = logits.reshape(batch_size * stage_count, num_classes)
+        labels_flat = labels.reshape(batch_size * stage_count)
+        valid_flat = query_valid.reshape(batch_size * stage_count)
+        if bool(valid_flat.any().item()):
+            loss = F.cross_entropy(logits_flat[valid_flat], labels_flat[valid_flat])
+        else:
+            loss = _zero_like_loss(target_stage_feats)
+
+        invalid_target_queries = (target_mask[:, None] & target_stage_mask & (~label_valid[:, None])).sum()
+        no_positive = (target_mask[:, None] & target_stage_mask & label_valid[:, None] & (~positive_valid)).sum()
+        no_negative = (
+            target_mask[:, None]
+            & target_stage_mask
+            & label_valid[:, None]
+            & positive_valid
+            & (valid_class_count < 2)
+        ).sum()
+        conf_values = target_conf[target_mask]
+        source_valid_class_count = (prototypes["source_class_count"] > 0).sum()
+        source_valid_class_stage_count = prototypes["source_proto_mask"].sum()
+
+        logs = {
+            "stage_contrast_loss": float(loss.detach().item()),
+            "stage_valid_queries": float(query_valid.sum().detach().item()),
+            "stage_skipped_invalid_target": float(invalid_target_queries.detach().item()),
+            "stage_skipped_no_positive": float(no_positive.detach().item()),
+            "stage_skipped_no_negative": float(no_negative.detach().item()),
+            "stage_valid_class_count_mean": float(valid_class_count[target_stage_mask].mean().detach().item())
+            if bool(target_stage_mask.any().item())
+            else 0.0,
+            "stage_positive_count_mean": float(
+                prototypes["source_class_stage_count"][safe_labels].sum(dim=-1)[target_mask].mean().detach().item()
+            )
+            if bool(target_mask.any().item())
+            else 0.0,
+            "stage_negative_class_count_mean": 0.0,
+            "stage_pseudo_coverage": float(target_mask.to(dtype=logits.dtype).mean().detach().item()) if target_mask.numel() else 0.0,
+            "stage_target_conf_mean": float(conf_values.mean().detach().item()) if conf_values.numel() else 0.0,
+            "stage_temperature": float(self.temperature),
+            "source_valid_class_count": float(source_valid_class_count.detach().item()),
+            "source_valid_class_stage_count": float(source_valid_class_stage_count.detach().item()),
+        }
+        logs.update(correspondence_logs)
+        return loss, logs
+
+
 def compute_adaptive_stage_contrast_loss(
     source_features,
     source_positions,
@@ -374,44 +642,71 @@ def compute_adaptive_stage_contrast_loss(
     stage_time_temperature=10.0,
     temperature=0.1,
     normalize=True,
+    num_classes=None,
+    backend="class_prototype_fast",
 ):
     extractor = AdaptiveTemporalStageExtractor(
         num_stages=num_stages,
         min_stage_len=stage_min_len,
         mode=stage_partition_mode,
     )
-    correspondence_module = ShiftAwareStageCorrespondence(
-        stage_time_radius=stage_time_radius,
-        stage_time_temperature=stage_time_temperature,
-    )
-    contrastive_loss = StageContrastiveLoss(
-        temperature=temperature,
-        normalize=normalize,
-    )
-
     source_stage = extractor(source_features, source_positions)
     target_stage = extractor(target_features, target_positions)
-    correspondence, correspondence_logs = correspondence_module(
-        source_stage["stage_center_pos"],
-        target_stage["stage_center_pos"],
-        source_stage["stage_mask"],
-        target_stage["stage_mask"],
-        target_to_source_shift,
-    )
-    loss, contrast_logs = contrastive_loss(
-        source_stage["stage_feats"],
-        source_stage["stage_mask"],
-        source_labels,
-        target_stage["stage_feats"],
-        target_stage["stage_mask"],
-        target_pseudo_labels,
-        target_conf,
-        target_mask,
-        correspondence,
-    )
+    if str(backend) != "class_prototype_fast":
+        correspondence_module = ShiftAwareStageCorrespondence(
+            stage_time_radius=stage_time_radius,
+            stage_time_temperature=stage_time_temperature,
+        )
+        contrastive_loss = StageContrastiveLoss(
+            temperature=temperature,
+            normalize=normalize,
+        )
+        correspondence, correspondence_logs = correspondence_module(
+            source_stage["stage_center_pos"],
+            target_stage["stage_center_pos"],
+            source_stage["stage_mask"],
+            target_stage["stage_mask"],
+            target_to_source_shift,
+        )
+        loss, contrast_logs = contrastive_loss(
+            source_stage["stage_feats"],
+            source_stage["stage_mask"],
+            source_labels,
+            target_stage["stage_feats"],
+            target_stage["stage_mask"],
+            target_pseudo_labels,
+            target_conf,
+            target_mask,
+            correspondence,
+        )
+    else:
+        if num_classes is None:
+            max_source = int(source_labels.max().item()) if source_labels.numel() else 0
+            max_target = int(target_pseudo_labels.max().item()) if target_pseudo_labels.numel() else 0
+            num_classes = max(max_source, max_target) + 1
+        contrastive_loss = FastClassPrototypeStageContrastiveLoss(
+            temperature=temperature,
+            normalize=normalize,
+        )
+        loss, contrast_logs = contrastive_loss(
+            source_stage["stage_feats"],
+            source_stage["stage_mask"],
+            source_stage["stage_center_pos"],
+            source_labels,
+            target_stage["stage_feats"],
+            target_stage["stage_mask"],
+            target_stage["stage_center_pos"],
+            target_pseudo_labels,
+            target_conf,
+            target_mask,
+            target_to_source_shift,
+            num_classes=int(num_classes),
+            stage_time_radius=stage_time_radius,
+            stage_time_temperature=stage_time_temperature,
+        )
     logs = {}
     logs.update({f"source_{key}": value for key, value in source_stage["logs"].items()})
     logs.update({f"target_{key}": value for key, value in target_stage["logs"].items()})
-    logs.update(correspondence_logs)
     logs.update(contrast_logs)
+    logs["stage_contrast_backend"] = 1.0 if str(backend) == "class_prototype_fast" else 0.0
     return loss, logs

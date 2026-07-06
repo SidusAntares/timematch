@@ -925,6 +925,13 @@ if __name__ == '__main__':
         default=False,
         help="reserved debug flag for v3.1 stage contrast; no per-sample logs by default",
     )
+    timematch.add_argument(
+        "--stage_contrast_backend",
+        type=str,
+        default="class_prototype_fast",
+        choices=["class_prototype_fast"],
+        help="v3.1 stage contrast backend; default avoids dense sample-pair correspondence",
+    )
 
     # Source-only + source phase compactness regularization
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')

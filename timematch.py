@@ -3,6 +3,7 @@ import csv
 import json
 import os
 import sys
+import time
 import sklearn.metrics
 from collections import Counter
 from copy import deepcopy
@@ -202,6 +203,12 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         "temperature",
         "stage_time_radius",
         "stage_time_temperature",
+        "stage_contrast_backend",
+        "stage_loss_compute_time_ms",
+        "source_valid_class_count",
+        "source_valid_class_stage_count",
+        "correspondence_fallback_ratio",
+        "correspondence_valid_class_mean",
     ]
 
     # To evaluate how well we estimate class distribution
@@ -370,6 +377,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     stage_target_mask = pseudo_conf >= float(stage_threshold)
                 source_stage_features = student.spatial_encoder(pixels_s, mask_s, extra_s)
                 target_stage_features = student.spatial_encoder(pixels_t, mask_t, extra_t)
+                if bool(getattr(config, "stage_contrast_debug", False)) and source_stage_features.is_cuda:
+                    torch.cuda.synchronize(source_stage_features.device)
+                stage_start_time = time.perf_counter()
                 stage_loss, stage_logs = compute_adaptive_stage_contrast_loss(
                     source_stage_features,
                     position_s,
@@ -387,7 +397,12 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     stage_time_temperature=getattr(config, "stage_time_temperature", 10.0),
                     temperature=getattr(config, "stage_contrast_temperature", 0.1),
                     normalize=True,
+                    num_classes=getattr(config, "num_classes", None),
+                    backend=getattr(config, "stage_contrast_backend", "class_prototype_fast"),
                 )
+                if bool(getattr(config, "stage_contrast_debug", False)) and source_stage_features.is_cuda:
+                    torch.cuda.synchronize(source_stage_features.device)
+                stage_logs["stage_loss_compute_time_ms"] = (time.perf_counter() - stage_start_time) * 1000.0
                 loss = loss + float(config.stage_contrast_trade_off) * stage_loss
                 stage_loss_meter.update(stage_logs.get("stage_contrast_loss", 0.0))
                 stage_valid_queries_meter.update(stage_logs.get("stage_valid_queries", 0.0))
@@ -456,6 +471,12 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         "temperature": getattr(config, "stage_contrast_temperature", 0.1),
                         "stage_time_radius": getattr(config, "stage_time_radius", 30.0),
                         "stage_time_temperature": getattr(config, "stage_time_temperature", 10.0),
+                        "stage_contrast_backend": getattr(config, "stage_contrast_backend", "class_prototype_fast"),
+                        "stage_loss_compute_time_ms": stage_logs.get("stage_loss_compute_time_ms", 0.0),
+                        "source_valid_class_count": stage_logs.get("source_valid_class_count", 0.0),
+                        "source_valid_class_stage_count": stage_logs.get("source_valid_class_stage_count", 0.0),
+                        "correspondence_fallback_ratio": stage_logs.get("correspondence_fallback_ratio", 0.0),
+                        "correspondence_valid_class_mean": stage_logs.get("correspondence_valid_class_mean", 0.0),
                     }
                     _append_diag_tsv(
                         getattr(config, "stage_contrast_log_path", ""),
@@ -477,7 +498,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 f"stage_len_mean={stage_lengths_meter.avg:.6f}|"
                 f"corr_entropy={stage_corr_entropy_meter.avg:.6f}|"
                 f"corr_time_gap={stage_corr_gap_meter.avg:.6f}|"
-                f"fallback={stage_corr_fallback_meter.avg:.3f}"
+                f"fallback={stage_corr_fallback_meter.avg:.3f}|"
+                f"backend={getattr(config, 'stage_contrast_backend', 'class_prototype_fast')}"
             )
 
         # Evaluate pseudo labels
