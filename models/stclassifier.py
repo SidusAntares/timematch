@@ -57,7 +57,7 @@ class PseLTae(nn.Module):
         )
         self.decoder = get_decoder(mlp4, num_classes)
 
-    def forward(self, pixels, mask, positions, extra, return_feats=False):
+    def forward(self, pixels, mask, positions, extra, return_feats=False, return_temporal_features=False):
         """
         Args:
            input(tuple): (Pixel-Set, Pixel-Mask) or ((Pixel-Set, Pixel-Mask), Extra-features)
@@ -69,7 +69,11 @@ class PseLTae(nn.Module):
         spatial_feats = self.spatial_encoder(pixels, mask, extra)
         temporal_feats = self.temporal_encoder(spatial_feats, positions)
         logits = self.decoder(temporal_feats)
-        if return_feats:
+        if return_feats and return_temporal_features:
+            return logits, temporal_feats, spatial_feats
+        elif return_temporal_features:
+            return logits, spatial_feats
+        elif return_feats:
             return logits, temporal_feats
         else:
             return logits
@@ -139,7 +143,7 @@ class PseTae(nn.Module):
         )
         self.decoder = get_decoder(mlp4, num_classes)
 
-    def forward(self, pixels, mask, positions, extra, return_feats=False):
+    def forward(self, pixels, mask, positions, extra, return_feats=False, return_temporal_features=False):
         """
         Args:
            input(tuple): (Pixel-Set, Pixel-Mask) or ((Pixel-Set, Pixel-Mask), Extra-features)
@@ -151,7 +155,11 @@ class PseTae(nn.Module):
         spatial_feats = self.spatial_encoder(pixels, mask, extra)
         temporal_feats = self.temporal_encoder(spatial_feats, positions)
         logits = self.decoder(temporal_feats)
-        if return_feats:
+        if return_feats and return_temporal_features:
+            return logits, temporal_feats, spatial_feats
+        elif return_temporal_features:
+            return logits, spatial_feats
+        elif return_feats:
             return logits, temporal_feats
         else:
             return logits
@@ -210,7 +218,7 @@ class PseGru(nn.Module):
         )
         self.decoder = get_decoder(mlp4, num_classes)
 
-    def forward(self, pixels, mask, positions, extra, return_feats=False):
+    def forward(self, pixels, mask, positions, extra, return_feats=False, return_temporal_features=False):
         """
         Args:
            input(tuple): (Pixel-Set, Pixel-Mask) or ((Pixel-Set, Pixel-Mask), Extra-features)
@@ -222,7 +230,11 @@ class PseGru(nn.Module):
         spatial_feats = self.spatial_encoder(pixels, mask, extra)
         temporal_feats = self.temporal_encoder(spatial_feats, positions)
         logits = self.decoder(temporal_feats)
-        if return_feats:
+        if return_feats and return_temporal_features:
+            return logits, temporal_feats, spatial_feats
+        elif return_temporal_features:
+            return logits, spatial_feats
+        elif return_feats:
             return logits, temporal_feats
         else:
             return logits
@@ -286,7 +298,7 @@ class PseTempCNN(nn.Module):
         )
         self.decoder = get_decoder(mlp4, num_classes)
 
-    def forward(self, pixels, mask, positions, extra, return_feats=False):
+    def forward(self, pixels, mask, positions, extra, return_feats=False, return_temporal_features=False):
         """
         Args:
            input(tuple): (Pixel-Set, Pixel-Mask) or ((Pixel-Set, Pixel-Mask), Extra-features)
@@ -298,7 +310,11 @@ class PseTempCNN(nn.Module):
         spatial_feats = self.spatial_encoder(pixels, mask, extra)
         temporal_feats = self.temporal_encoder(spatial_feats, positions)
         logits = self.decoder(temporal_feats)
-        if return_feats:
+        if return_feats and return_temporal_features:
+            return logits, temporal_feats, spatial_feats
+        elif return_temporal_features:
+            return logits, spatial_feats
+        elif return_feats:
             return logits, temporal_feats
         else:
             return logits

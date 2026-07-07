@@ -1,154 +1,170 @@
-"""Source class-stage reference construction for v3.2.1.
-
-The first v3.2.1 version is only a scaffold: source checkpoints can later be
-converted into class-stage references here, then reused by local shift DA.
-"""
+"""Source class-stage reference construction for v3.2.1."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, Optional
 
 import torch
 
-from methods.local_shift.target_partition import (
-    BudgetedFeatureChangePartitioner,
-    StageInterval,
-    pool_stage_features,
-)
+from methods.local_shift.target_partition import BudgetedFeatureChangePartitioner, pool_stage_features
+from utils.train_utils import to_cuda
 
 
-@dataclass
-class SourceStageReference:
-    """Padded source class-stage prototypes.
-
-    Attributes:
-        prototypes: Tensor shaped ``[C, Kmax, D]``.
-        times: Tensor shaped ``[C, Kmax]`` with reference stage center times.
-        mask: Boolean tensor shaped ``[C, Kmax]``.
-        counts: Tensor shaped ``[C, Kmax]`` with sample counts per stage.
-    """
-
-    prototypes: torch.Tensor
-    times: torch.Tensor
-    mask: torch.Tensor
-    counts: torch.Tensor
-
-    def to_dict(self) -> Dict[str, torch.Tensor]:
-        return {
-            "prototypes": self.prototypes,
-            "times": self.times,
-            "mask": self.mask,
-            "counts": self.counts,
-        }
+def _as_positions_for_batch(positions: torch.Tensor, batch_size: int) -> torch.Tensor:
+    if positions.ndim == 1:
+        return positions.unsqueeze(0).expand(batch_size, -1)
+    if positions.ndim == 2:
+        return positions
+    raise ValueError("positions must be [T] or [B,T]")
 
 
 def build_reference_from_temporal_features(
     temporal_features: torch.Tensor,
     labels: torch.Tensor,
-    times: torch.Tensor,
+    positions: torch.Tensor,
     num_classes: int,
     partitioner: Optional[BudgetedFeatureChangePartitioner] = None,
-) -> SourceStageReference:
-    """Build source class-stage references from already extracted features.
+) -> Dict[str, torch.Tensor]:
+    """Build class-stage references from source temporal features.
 
-    Args:
-        temporal_features: Source temporal features shaped ``[N, T, D]``.
-        labels: Source labels shaped ``[N]``.
-        times: Time coordinates shaped ``[T]`` or ``[N, T]``.
-        num_classes: Number of source classes.
-        partitioner: Feature-change partitioner.  A default one is used if
-            omitted.
-
-    Returns:
-        A padded ``SourceStageReference``.
+    Each sample is partitioned independently.  Stage prototypes are then
+    aggregated by source class and stage index.  Invalid padded stages are
+    represented by ``class_stage_mask=False``.
     """
 
     if temporal_features.ndim != 3:
-        raise ValueError("temporal_features must be shaped [N, T, D]")
+        raise ValueError("temporal_features must be shaped [N,T,D]")
     if labels.ndim != 1 or labels.shape[0] != temporal_features.shape[0]:
-        raise ValueError("labels must be shaped [N] and match features")
+        raise ValueError("labels must be shaped [N] and match temporal_features")
 
     partitioner = partitioner or BudgetedFeatureChangePartitioner()
-    device = temporal_features.device
+    num_samples, steps, dim = temporal_features.shape
+    positions = _as_positions_for_batch(positions, num_samples).to(temporal_features.device)
+    if positions.shape[:2] != (num_samples, steps):
+        raise ValueError("positions must match temporal feature time length")
+
     dtype = temporal_features.dtype
-    _, _, dim = temporal_features.shape
+    device = temporal_features.device
+    kmax = partitioner.kmax
 
-    class_stage_features: List[List[torch.Tensor]] = []
-    class_stage_times: List[List[torch.Tensor]] = []
-    class_stage_counts: List[List[torch.Tensor]] = []
-    max_stages = 1
+    feat_sum = torch.zeros(num_classes, kmax, dim, device=device, dtype=dtype)
+    center_sum = torch.zeros(num_classes, kmax, device=device, dtype=dtype)
+    duration_sum = torch.zeros(num_classes, kmax, device=device, dtype=dtype)
+    stage_counts = torch.zeros(num_classes, kmax, device=device, dtype=dtype)
+    class_counts = torch.zeros(num_classes, device=device, dtype=dtype)
 
-    for cls in range(num_classes):
-        cls_mask = labels == cls
-        cls_features = temporal_features[cls_mask]
-        if cls_features.numel() == 0:
-            class_stage_features.append([])
-            class_stage_times.append([])
-            class_stage_counts.append([])
+    for idx in range(num_samples):
+        cls = int(labels[idx].item())
+        if cls < 0 or cls >= num_classes:
             continue
+        class_counts[cls] += 1
+        intervals = partitioner.partition_curve(temporal_features[idx], positions[idx])
+        pooled = pool_stage_features(temporal_features[idx], intervals)
+        for stage_idx, interval in enumerate(intervals[:kmax]):
+            feat_sum[cls, stage_idx] += pooled[stage_idx]
+            center_sum[cls, stage_idx] += float(interval.center_time)
+            duration_sum[cls, stage_idx] += float(interval.duration)
+            stage_counts[cls, stage_idx] += 1
 
-        cls_times = times
-        if times.ndim == 2:
-            cls_times = times[cls_mask].float().mean(dim=0)
-        intervals = partitioner(cls_features, cls_times)
-        pooled = pool_stage_features(cls_features, intervals)
-        stage_times = torch.tensor(
-            [stage.center_time for stage in intervals],
-            device=device,
-            dtype=dtype,
-        )
-        counts = torch.full(
-            (len(intervals),),
-            float(cls_features.shape[0]),
-            device=device,
-            dtype=dtype,
-        )
-        class_stage_features.append([x for x in pooled])
-        class_stage_times.append([x for x in stage_times])
-        class_stage_counts.append([x for x in counts])
-        max_stages = max(max_stages, len(intervals))
+    valid = stage_counts > 0
+    denom = stage_counts.clamp_min(1.0)
+    class_stage_feats = feat_sum / denom.unsqueeze(-1)
+    class_stage_centers = center_sum / denom
+    class_stage_durations = duration_sum / denom
 
-    prototypes = torch.zeros(num_classes, max_stages, dim, device=device, dtype=dtype)
-    ref_times = torch.zeros(num_classes, max_stages, device=device, dtype=dtype)
-    ref_mask = torch.zeros(num_classes, max_stages, device=device, dtype=torch.bool)
-    counts = torch.zeros(num_classes, max_stages, device=device, dtype=dtype)
-
-    for cls in range(num_classes):
-        for idx, feature in enumerate(class_stage_features[cls]):
-            prototypes[cls, idx] = feature
-            ref_times[cls, idx] = class_stage_times[cls][idx]
-            counts[cls, idx] = class_stage_counts[cls][idx]
-            ref_mask[cls, idx] = True
-
-    return SourceStageReference(
-        prototypes=prototypes,
-        times=ref_times,
-        mask=ref_mask,
-        counts=counts,
-    )
+    config = {
+        "kmax": int(kmax),
+        "min_stage_len": int(partitioner.min_stage_len),
+        "change_threshold": partitioner.change_threshold,
+        "change_quantile": partitioner.change_quantile,
+        "nms_radius": int(partitioner.nms_radius),
+    }
+    return {
+        "class_stage_feats": class_stage_feats,
+        "class_stage_centers": class_stage_centers,
+        "class_stage_durations": class_stage_durations,
+        "class_stage_mask": valid,
+        "class_counts": class_counts,
+        "stage_sample_counts": stage_counts,
+        "config": config,
+    }
 
 
+@torch.no_grad()
 def build_source_stage_reference(
     model,
     source_loader: Iterable,
     device,
     num_classes: int,
-    kmax: int = 6,
-    min_stage_len: int = 2,
+    kmax: int = 8,
+    min_stage_len: int = 3,
     change_threshold: Optional[float] = None,
-    change_quantile: Optional[float] = 0.8,
-    nms_radius: int = 1,
+    change_quantile: Optional[float] = 0.75,
+    nms_radius: int = 2,
     max_batches: Optional[int] = None,
-) -> SourceStageReference:
-    """Extract temporal features and build source stage references.
+) -> Dict[str, torch.Tensor]:
+    """Extract source temporal features and build class-stage references."""
 
-    The full project-specific extraction path is intentionally left as a hook:
-    models must expose temporal features before this function becomes a
-    production entry point.
-    """
-
-    raise NotImplementedError(
-        "v3.2.1 scaffold only: expose temporal features from the encoder, "
-        "then call build_reference_from_temporal_features(...)."
+    partitioner = BudgetedFeatureChangePartitioner(
+        kmax=kmax,
+        min_stage_len=min_stage_len,
+        change_threshold=change_threshold,
+        change_quantile=change_quantile,
+        nms_radius=nms_radius,
     )
+    was_training = model.training
+    model.eval()
+
+    features, labels, positions = [], [], []
+    for batch_idx, sample in enumerate(source_loader):
+        if max_batches is not None and batch_idx >= max_batches:
+            break
+        pixels, valid_pixels, batch_positions, extra = to_cuda(sample, device)
+        output = model(
+            pixels,
+            valid_pixels,
+            batch_positions,
+            extra,
+            return_temporal_features=True,
+        )
+        _, temporal_features = output
+        features.append(temporal_features.detach().cpu())
+        labels.append(sample["label"].detach().cpu().long())
+        positions.append(batch_positions.detach().cpu())
+
+    if was_training:
+        model.train()
+
+    if not features:
+        raise ValueError("source_loader produced no batches for source reference construction")
+
+    all_features = torch.cat(features, dim=0)
+    all_labels = torch.cat(labels, dim=0)
+    all_positions = torch.cat(positions, dim=0)
+    reference = build_reference_from_temporal_features(
+        all_features,
+        all_labels,
+        all_positions,
+        num_classes=num_classes,
+        partitioner=partitioner,
+    )
+    reference["summary"] = summarize_source_stage_reference(reference)
+    return reference
+
+
+def summarize_source_stage_reference(reference: Dict[str, torch.Tensor]) -> Dict[str, float]:
+    mask = reference["class_stage_mask"]
+    class_counts = reference["class_counts"]
+    stage_counts = mask.sum(dim=1).float()
+    return {
+        "class_count_nonzero": int((class_counts > 0).sum().item()),
+        "class_counts": [int(x) for x in class_counts.cpu().tolist()],
+        "avg_stage_count": float(stage_counts.mean().item()),
+        "max_stage_count": int(stage_counts.max().item()) if stage_counts.numel() else 0,
+        "stage_mask_ratio": float(mask.float().mean().item()),
+        "kmax": int(mask.shape[1]),
+        "min_stage_len": int(reference["config"]["min_stage_len"]),
+        "change_quantile": reference["config"]["change_quantile"],
+        "change_threshold": reference["config"]["change_threshold"],
+        "nms_radius": int(reference["config"]["nms_radius"]),
+    }
