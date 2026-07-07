@@ -1,9 +1,10 @@
-.idea/
-**/__pycache__
-__pycache__/*
-data/
+﻿logs/
 outputs/
 runs/
-.vim/
-.ipynb_checkpoints
-.vscode/
+*.tsv
+*.pkl
+*.pt
+*.pth
+*.ckpt
+*.npy
+*.npz
