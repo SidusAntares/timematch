@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 from collections import defaultdict
 from copy import deepcopy
 from distutils.util import strtobool
@@ -39,7 +39,7 @@ from competitors.mmd.train_mmd import train_mmd
 from competitors.alda.train_alda import train_alda
 from dataset import PixelSetData, count_pixelset_samples, create_evaluation_loaders, create_train_loader
 from evaluation import evaluation, validation
-from ideas.train_source_phase_compactness import train_supervised_source_phase_compactness
+from methods.source_structure.train_source_structure import train_supervised_source_phase_compactness
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
 from timematch import train_timematch
 from transforms import (
@@ -361,10 +361,10 @@ def overall_performance(config):
     for metric, values in overall_metrics.items():
         values = np.array(values)
         if metric == 'loss':
-            print(f"{metric}: {np.mean(values):.4}±{np.std(values):.4}")
+            print(f"{metric}: {np.mean(values):.4}卤{np.std(values):.4}")
         else:
             values *= 100
-            print(f"{metric}: {np.mean(values):.1f}±{np.std(values):.1f}")
+            print(f"{metric}: {np.mean(values):.1f}卤{np.std(values):.1f}")
 
     with open(os.path.join(config.output_dir, f'overall_{target_name}.json'), 'w') as file:
         file.write(json.dumps(overall_metrics, indent=4))
@@ -857,82 +857,6 @@ if __name__ == '__main__':
         default=1729,
         help="fixed sampling seed for trajectory diagnostics so per-epoch drift is not pixel-sampling noise",
     )
-    timematch.add_argument(
-        "--stage_contrast_trade_off",
-        type=float,
-        default=0.0,
-        help="v3.1 adaptive stage shift contrast weight; 0 keeps original TimeMatch behavior",
-    )
-    timematch.add_argument(
-        "--stage_contrast_stage_count",
-        type=int,
-        default=6,
-        help="number of adaptive feature-change stages for v3.1 stage contrast",
-    )
-    timematch.add_argument(
-        "--stage_contrast_temperature",
-        type=float,
-        default=0.1,
-        help="InfoNCE temperature for v3.1 stage contrast",
-    )
-    timematch.add_argument(
-        "--stage_partition_mode",
-        type=str,
-        default="feature_change_topk",
-        choices=["feature_change_topk", "feature_change_dp"],
-        help="adaptive stage partition mode; topk is the fast default, dp is a slow diagnostic fallback",
-    )
-    timematch.add_argument(
-        "--stage_min_len",
-        type=int,
-        default=2,
-        help="minimum contiguous points per adaptive stage before automatic feasibility reduction",
-    )
-    timematch.add_argument(
-        "--stage_time_radius",
-        type=float,
-        default=30.0,
-        help="maximum shifted time gap for soft source-stage correspondence candidates",
-    )
-    timematch.add_argument(
-        "--stage_time_temperature",
-        type=float,
-        default=10.0,
-        help="temperature in exp(-gap^2 / tau) for shift-aware stage correspondence",
-    )
-    timematch.add_argument(
-        "--stage_contrast_pseudo_threshold",
-        type=float,
-        default=None,
-        help="optional threshold for stage contrast target mask; defaults to TimeMatch pseudo_mask",
-    )
-    timematch.add_argument(
-        "--stage_contrast_feature_kind",
-        type=str,
-        default="spatial",
-        choices=["spatial"],
-        help="feature stream for v3.1 stage contrast; first version only supports PSE temporal features [B,T,D]",
-    )
-    timematch.add_argument(
-        "--stage_contrast_log_path",
-        type=str,
-        default="",
-        help="optional compact TSV path for v3.1 stage contrast logs",
-    )
-    timematch.add_argument(
-        "--stage_contrast_debug",
-        type=bool_flag,
-        default=False,
-        help="reserved debug flag for v3.1 stage contrast; no per-sample logs by default",
-    )
-    timematch.add_argument(
-        "--stage_contrast_backend",
-        type=str,
-        default="class_prototype_fast",
-        choices=["class_prototype_fast"],
-        help="v3.1 stage contrast backend; default avoids dense sample-pair correspondence",
-    )
-
     # Source-only + source phase compactness regularization
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')
 
@@ -955,3 +879,4 @@ if __name__ == '__main__':
             f.write(json.dumps(vars(cfg), indent=4))
     print(cfg)
     main(cfg)
+
