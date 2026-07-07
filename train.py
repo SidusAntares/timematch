@@ -878,9 +878,9 @@ if __name__ == '__main__':
     timematch.add_argument(
         "--stage_partition_mode",
         type=str,
-        default="feature_change_dp",
-        choices=["feature_change_dp"],
-        help="adaptive stage partition mode; fixed uniform partition is intentionally not supported",
+        default="feature_change_topk",
+        choices=["feature_change_topk", "feature_change_dp"],
+        help="adaptive stage partition mode; topk is the fast default, dp is a slow diagnostic fallback",
     )
     timematch.add_argument(
         "--stage_min_len",

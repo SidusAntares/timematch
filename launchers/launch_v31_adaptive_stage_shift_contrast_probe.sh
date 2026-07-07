@@ -23,6 +23,7 @@ DA_EPOCHS="${DA_EPOCHS:-20}"
 STEPS_PER_EPOCH="${STEPS_PER_EPOCH:-500}"
 NUM_WORKERS="${NUM_WORKERS:-16}"
 STAGE_COUNT="${STAGE_COUNT:-6}"
+STAGE_PARTITION_MODE="${STAGE_PARTITION_MODE:-feature_change_topk}"
 STAGE_MIN_LEN="${STAGE_MIN_LEN:-2}"
 STAGE_TIME_RADIUS="${STAGE_TIME_RADIUS:-30.0}"
 STAGE_TIME_TEMPERATURE="${STAGE_TIME_TEMPERATURE:-10.0}"
@@ -195,7 +196,7 @@ run_job() {
     --weights "$source_weights" \
     --stage_contrast_trade_off "$trade_off" \
     --stage_contrast_stage_count "$STAGE_COUNT" \
-    --stage_partition_mode feature_change_dp \
+    --stage_partition_mode "$STAGE_PARTITION_MODE" \
     --stage_min_len "$STAGE_MIN_LEN" \
     --stage_time_radius "$STAGE_TIME_RADIUS" \
     --stage_time_temperature "$STAGE_TIME_TEMPERATURE" \
@@ -240,6 +241,7 @@ echo "TASKS=$TASKS"
 echo "SEEDS=$SEEDS"
 echo "SOURCE_CONFIGS=$SOURCE_CONFIGS"
 echo "STAGE_TRADE_OFFS=$STAGE_TRADE_OFFS"
+echo "STAGE_PARTITION_MODE=$STAGE_PARTITION_MODE"
 echo "STAGE_CONTRAST_BACKEND=$STAGE_CONTRAST_BACKEND"
 echo "GPUS=$GPUS"
 echo "JOBS=$(wc -l < "$JOBS")"

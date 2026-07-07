@@ -72,6 +72,13 @@ def _append_diag_tsv(path, row, fields):
         writer.writerow({field: _format_diag_value(row.get(field)) for field in fields})
 
 
+def _format_elapsed_seconds(seconds):
+    seconds = int(max(0, seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
 def _pseudo_metrics(labels, pseudo_labels, pseudo_conf, pseudo_mask, num_classes):
     labels = np.asarray(labels, dtype=np.int64)
     pseudo_labels = np.asarray(pseudo_labels, dtype=np.int64)
@@ -200,6 +207,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         "correspondence_max_weight_mean",
         "stage_trade_off",
         "stage_count",
+        "stage_partition_mode",
         "temperature",
         "stage_time_radius",
         "stage_time_temperature",
@@ -251,7 +259,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         all_pseudo_labels = torch.max(pseudo_softmaxes, dim=1)[1]
 
     source_to_target_shift = 0
+    timematch_start_time = time.perf_counter()
     for epoch in range(config.epochs):
+        epoch_start_time = time.perf_counter()
         progress_bar = tqdm(
             range(steps_per_epoch),
             desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}",
@@ -340,14 +350,36 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             pixels_s, mask_s, position_s, extra_s = to_cuda(sample_source, device)
             source_labels = sample_source['label'].cuda(device, non_blocking=True)
             pixels_t, mask_t, position_t, extra_t = to_cuda(sample_target_strong, device)
+            source_batch_size = int(source_labels.shape[0])
             logits_target = None
             loss_target = 0.0
+            source_stage_features = None
+            target_stage_features = None
+            stage_pseudo_targets = pseudo_targets
+            stage_pseudo_conf = pseudo_conf
+            stage_target_mask = pseudo_mask
             if config.domain_specific_bn:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
-                logits_source = student.forward(pixels_s, mask_s, position_s + source_to_target_shift, extra_s)
+                if stage_contrast_enabled:
+                    source_stage_features = student.spatial_encoder(pixels_s, mask_s, extra_s)
+                    logits_source = student.decoder(
+                        student.temporal_encoder(source_stage_features, position_s + source_to_target_shift)
+                    )
+                else:
+                    logits_source = student.forward(pixels_s, mask_s, position_s + source_to_target_shift, extra_s)
                 if len(torch.nonzero(pseudo_mask)) >= 2:  # at least 2 examples required for BN
                     _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
-                    logits_target = student.forward(pixels_t[pseudo_mask], mask_t[pseudo_mask], position_t[pseudo_mask], extra_t[pseudo_mask])
+                    if stage_contrast_enabled:
+                        target_stage_features = student.spatial_encoder(
+                            pixels_t[pseudo_mask],
+                            mask_t[pseudo_mask],
+                            extra_t[pseudo_mask],
+                        )
+                        logits_target = student.decoder(
+                            student.temporal_encoder(target_stage_features, position_t[pseudo_mask])
+                        )
+                    else:
+                        logits_target = student.forward(pixels_t[pseudo_mask], mask_t[pseudo_mask], position_t[pseudo_mask], extra_t[pseudo_mask])
             else:
                 _check_temporal_index_range(student, position_s, source_to_target_shift, "source")
                 _check_temporal_index_range(student, position_t[pseudo_mask], 0, "target")
@@ -355,8 +387,15 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 mask = torch.cat([mask_s, mask_t[pseudo_mask]])
                 position = torch.cat([position_s + source_to_target_shift, position_t[pseudo_mask]])
                 extra = torch.cat([extra_s, extra_t[pseudo_mask]])
-                logits = student.forward(pixels, mask, position, extra)
-                logits_source, logits_target = logits[:config.batch_size], logits[config.batch_size:]
+                if stage_contrast_enabled:
+                    spatial_feats = student.spatial_encoder(pixels, mask, extra)
+                    temporal_feats = student.temporal_encoder(spatial_feats, position)
+                    logits = student.decoder(temporal_feats)
+                    source_stage_features = spatial_feats[:source_batch_size]
+                    target_stage_features = spatial_feats[source_batch_size:]
+                else:
+                    logits = student.forward(pixels, mask, position, extra)
+                logits_source, logits_target = logits[:source_batch_size], logits[source_batch_size:]
 
             loss_source = criterion(logits_source, source_labels)
             if logits_target is not None:
@@ -372,37 +411,59 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     )
                 stage_threshold = getattr(config, "stage_contrast_pseudo_threshold", None)
                 if stage_threshold is None:
-                    stage_target_mask = pseudo_mask
+                    selected_target_mask = pseudo_mask
                 else:
-                    stage_target_mask = pseudo_conf >= float(stage_threshold)
-                source_stage_features = student.spatial_encoder(pixels_s, mask_s, extra_s)
-                target_stage_features = student.spatial_encoder(pixels_t, mask_t, extra_t)
-                if bool(getattr(config, "stage_contrast_debug", False)) and source_stage_features.is_cuda:
-                    torch.cuda.synchronize(source_stage_features.device)
-                stage_start_time = time.perf_counter()
-                stage_loss, stage_logs = compute_adaptive_stage_contrast_loss(
-                    source_stage_features,
-                    position_s,
-                    source_labels,
-                    target_stage_features,
-                    position_t,
-                    pseudo_targets,
-                    pseudo_conf,
-                    stage_target_mask,
-                    target_to_source_shift,
-                    num_stages=getattr(config, "stage_contrast_stage_count", 6),
-                    stage_min_len=getattr(config, "stage_min_len", 2),
-                    stage_partition_mode=getattr(config, "stage_partition_mode", "feature_change_dp"),
-                    stage_time_radius=getattr(config, "stage_time_radius", 30.0),
-                    stage_time_temperature=getattr(config, "stage_time_temperature", 10.0),
-                    temperature=getattr(config, "stage_contrast_temperature", 0.1),
-                    normalize=True,
-                    num_classes=getattr(config, "num_classes", None),
-                    backend=getattr(config, "stage_contrast_backend", "class_prototype_fast"),
-                )
-                if bool(getattr(config, "stage_contrast_debug", False)) and source_stage_features.is_cuda:
-                    torch.cuda.synchronize(source_stage_features.device)
-                stage_logs["stage_loss_compute_time_ms"] = (time.perf_counter() - stage_start_time) * 1000.0
+                    selected_target_mask = pseudo_conf >= float(stage_threshold)
+                if not bool(selected_target_mask.any().item()):
+                    stage_loss = loss_source.sum() * 0.0
+                    stage_logs = {
+                        "stage_contrast_loss": 0.0,
+                        "stage_valid_queries": 0.0,
+                        "stage_pseudo_coverage": 0.0,
+                        "stage_target_conf_mean": 0.0,
+                    }
+                elif torch.equal(selected_target_mask, pseudo_mask) and target_stage_features is not None:
+                    stage_pseudo_targets = pseudo_targets[pseudo_mask]
+                    stage_pseudo_conf = pseudo_conf[pseudo_mask]
+                    stage_target_mask = torch.ones_like(stage_pseudo_conf, dtype=torch.bool)
+                    stage_positions_t = position_t[pseudo_mask]
+                else:
+                    target_stage_features = student.spatial_encoder(
+                        pixels_t[selected_target_mask],
+                        mask_t[selected_target_mask],
+                        extra_t[selected_target_mask],
+                    )
+                    stage_pseudo_targets = pseudo_targets[selected_target_mask]
+                    stage_pseudo_conf = pseudo_conf[selected_target_mask]
+                    stage_target_mask = torch.ones_like(stage_pseudo_conf, dtype=torch.bool)
+                    stage_positions_t = position_t[selected_target_mask]
+                if stage_loss is None:
+                    if bool(getattr(config, "stage_contrast_debug", False)) and source_stage_features.is_cuda:
+                        torch.cuda.synchronize(source_stage_features.device)
+                    stage_start_time = time.perf_counter()
+                    stage_loss, stage_logs = compute_adaptive_stage_contrast_loss(
+                        source_stage_features,
+                        position_s,
+                        source_labels,
+                        target_stage_features,
+                        stage_positions_t,
+                        stage_pseudo_targets,
+                        stage_pseudo_conf,
+                        stage_target_mask,
+                        target_to_source_shift,
+                        num_stages=getattr(config, "stage_contrast_stage_count", 6),
+                        stage_min_len=getattr(config, "stage_min_len", 2),
+                        stage_partition_mode=getattr(config, "stage_partition_mode", "feature_change_topk"),
+                        stage_time_radius=getattr(config, "stage_time_radius", 30.0),
+                        stage_time_temperature=getattr(config, "stage_time_temperature", 10.0),
+                        temperature=getattr(config, "stage_contrast_temperature", 0.1),
+                        normalize=True,
+                        num_classes=getattr(config, "num_classes", None),
+                        backend=getattr(config, "stage_contrast_backend", "class_prototype_fast"),
+                    )
+                    if bool(getattr(config, "stage_contrast_debug", False)) and source_stage_features.is_cuda:
+                        torch.cuda.synchronize(source_stage_features.device)
+                    stage_logs["stage_loss_compute_time_ms"] = (time.perf_counter() - stage_start_time) * 1000.0
                 loss = loss + float(config.stage_contrast_trade_off) * stage_loss
                 stage_loss_meter.update(stage_logs.get("stage_contrast_loss", 0.0))
                 stage_valid_queries_meter.update(stage_logs.get("stage_valid_queries", 0.0))
@@ -468,6 +529,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         "correspondence_max_weight_mean": stage_logs.get("correspondence_max_weight_mean", 0.0),
                         "stage_trade_off": getattr(config, "stage_contrast_trade_off", 0.0),
                         "stage_count": getattr(config, "stage_contrast_stage_count", 6),
+                        "stage_partition_mode": getattr(config, "stage_partition_mode", "feature_change_topk"),
                         "temperature": getattr(config, "stage_contrast_temperature", 0.1),
                         "stage_time_radius": getattr(config, "stage_time_radius", 30.0),
                         "stage_time_temperature": getattr(config, "stage_time_temperature", 10.0),
@@ -487,6 +549,13 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             global_step += 1
 
         progress_bar.close()
+        epoch_elapsed = time.perf_counter() - epoch_start_time
+        total_elapsed = time.perf_counter() - timematch_start_time
+        print(
+            f"---------epoch {epoch + 1} -------- "
+            f"time={_format_elapsed_seconds(total_elapsed)}",
+            flush=True,
+        )
         if stage_contrast_enabled:
             print(
                 "ADAPTIVE_STAGE_CONTRAST|"
@@ -499,7 +568,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 f"corr_entropy={stage_corr_entropy_meter.avg:.6f}|"
                 f"corr_time_gap={stage_corr_gap_meter.avg:.6f}|"
                 f"fallback={stage_corr_fallback_meter.avg:.3f}|"
-                f"backend={getattr(config, 'stage_contrast_backend', 'class_prototype_fast')}"
+                f"backend={getattr(config, 'stage_contrast_backend', 'class_prototype_fast')}|"
+                f"partition={getattr(config, 'stage_partition_mode', 'feature_change_topk')}"
             )
 
         # Evaluate pseudo labels

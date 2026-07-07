@@ -83,15 +83,86 @@ def _feature_change_dp_boundaries(sequence, stage_count, min_stage_len):
     return boundaries, float(dp[effective_stages, time_steps].detach().item()), "", reduced_min_len
 
 
-class AdaptiveTemporalStageExtractor(nn.Module):
-    """Feature-change dynamic-programming temporal stage extractor."""
+def _feature_change_topk_boundaries(sequence, stage_count, min_stage_len):
+    """Fast feature-change stage boundaries.
 
-    def __init__(self, num_stages=6, min_stage_len=2, mode="feature_change_dp"):
+    This is a greedy adaptive partition: boundaries are chosen at large adjacent
+    feature changes while respecting a minimum segment length. It keeps the
+    "feature-change stage" meaning but avoids the per-sample dynamic-programming
+    loop that is too slow inside DA training.
+    """
+    time_steps = int(sequence.shape[0])
+    if time_steps <= 0 or stage_count <= 0:
+        return [], float("inf"), "empty_sequence", False
+
+    effective_stages = min(int(stage_count), time_steps)
+    requested_min_len = max(1, int(min_stage_len))
+    effective_min_len = min(requested_min_len, max(1, time_steps // effective_stages))
+    reduced_min_len = effective_min_len < requested_min_len
+    if effective_stages * effective_min_len > time_steps:
+        effective_min_len = 1
+        reduced_min_len = True
+
+    if effective_stages == 1:
+        return [(0, time_steps)], 0.0, "", reduced_min_len
+
+    with torch.no_grad():
+        change = (sequence[1:] - sequence[:-1]).pow(2).sum(dim=-1)
+        sorted_cuts = torch.argsort(change, descending=True).detach().cpu().tolist()
+
+    cuts = []
+
+    def _valid_with_cut(candidate):
+        trial = sorted(cuts + [candidate])
+        points = [0] + trial + [time_steps]
+        return all((points[idx + 1] - points[idx]) >= effective_min_len for idx in range(len(points) - 1))
+
+    for cut_idx in sorted_cuts:
+        cut = int(cut_idx) + 1
+        if cut <= 0 or cut >= time_steps:
+            continue
+        if _valid_with_cut(cut):
+            cuts.append(cut)
+            if len(cuts) >= effective_stages - 1:
+                break
+
+    if len(cuts) < effective_stages - 1:
+        # Deterministic fill with near-uniform legal cuts when feature-change
+        # peaks are blocked by the min-length constraint.
+        for stage_idx in range(1, effective_stages):
+            cut = int(round(stage_idx * time_steps / effective_stages))
+            cut = max(effective_min_len, min(time_steps - effective_min_len, cut))
+            if cut not in cuts and _valid_with_cut(cut):
+                cuts.append(cut)
+            if len(cuts) >= effective_stages - 1:
+                break
+
+    if len(cuts) < effective_stages - 1:
+        return [], float("inf"), "topk_no_solution", reduced_min_len
+
+    cuts = sorted(cuts[: effective_stages - 1])
+    boundaries = []
+    start = 0
+    for cut in cuts + [time_steps]:
+        boundaries.append((start, cut))
+        start = cut
+
+    score = 0.0
+    if time_steps > 1:
+        with torch.no_grad():
+            score = float(change[[cut - 1 for cut in cuts]].sum().detach().item()) if cuts else 0.0
+    return boundaries, score, "", reduced_min_len
+
+
+class AdaptiveTemporalStageExtractor(nn.Module):
+    """Adaptive feature-change temporal stage extractor."""
+
+    def __init__(self, num_stages=6, min_stage_len=2, mode="feature_change_topk"):
         super().__init__()
         self.num_stages = int(num_stages)
         self.min_stage_len = int(min_stage_len)
         self.mode = str(mode)
-        if self.mode != "feature_change_dp":
+        if self.mode not in {"feature_change_dp", "feature_change_topk"}:
             raise ValueError(f"Unsupported stage partition mode: {mode}")
 
     def forward(self, features, positions=None):
@@ -118,11 +189,18 @@ class AdaptiveTemporalStageExtractor(nn.Module):
         for batch_idx in range(batch_size):
             sample = features[batch_idx]
             sample_positions = None if positions is None else positions[batch_idx].to(dtype=dtype)
-            sample_boundaries, sample_cost, skip_reason, reduced_min_len = _feature_change_dp_boundaries(
-                sample,
-                num_stages,
-                self.min_stage_len,
-            )
+            if self.mode == "feature_change_dp":
+                sample_boundaries, sample_cost, skip_reason, reduced_min_len = _feature_change_dp_boundaries(
+                    sample,
+                    num_stages,
+                    self.min_stage_len,
+                )
+            else:
+                sample_boundaries, sample_cost, skip_reason, reduced_min_len = _feature_change_topk_boundaries(
+                    sample,
+                    num_stages,
+                    self.min_stage_len,
+                )
             if reduced_min_len:
                 reduced_min_len_count += 1
             if skip_reason:
@@ -637,7 +715,7 @@ def compute_adaptive_stage_contrast_loss(
     target_to_source_shift,
     num_stages=6,
     stage_min_len=2,
-    stage_partition_mode="feature_change_dp",
+    stage_partition_mode="feature_change_topk",
     stage_time_radius=30.0,
     stage_time_temperature=10.0,
     temperature=0.1,
