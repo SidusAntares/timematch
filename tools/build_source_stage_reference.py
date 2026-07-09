@@ -5,7 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from distutils.util import strtobool
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 import torch
 from torch.utils import data
@@ -40,15 +45,46 @@ def build_model(args, num_classes):
     raise ValueError(f"unsupported model: {args.model}")
 
 
-def infer_classes(args):
+def infer_num_classes_from_checkpoint(weights_path: str) -> int:
+    checkpoint = torch.load(weights_path, map_location="cpu", weights_only=False)
+    state_dict = checkpoint.get("state_dict", checkpoint)
+    decoder_weights = []
+    for key, value in state_dict.items():
+        if key.startswith("decoder.") and key.endswith(".weight") and torch.is_tensor(value) and value.ndim == 2:
+            parts = key.split(".")
+            try:
+                layer_idx = int(parts[1])
+            except (IndexError, ValueError):
+                layer_idx = -1
+            decoder_weights.append((layer_idx, key, int(value.shape[0])))
+    if not decoder_weights:
+        raise ValueError(f"could not infer num_classes from checkpoint decoder weights: {weights_path}")
+    decoder_weights.sort(key=lambda item: item[0])
+    return decoder_weights[-1][2]
+
+
+def infer_classes(args, num_classes):
     if args.classes:
         return [item.strip() for item in args.classes.split(",") if item.strip()]
     country = args.source.split("/")[0]
     classes = label_utils.get_classes(country, combine_spring_and_winter=args.combine_spring_and_winter)
     if args.closed_set:
         classes = [cls for cls in classes if cls != "unknown"]
-    if args.num_classes > 0:
-        classes = classes[: args.num_classes]
+    if args.source_min_count > 0:
+        source_data = PixelSetData(
+            args.data_root,
+            args.source,
+            classes,
+            closed_set=args.closed_set,
+        )
+        labels, counts = torch.as_tensor(source_data.get_labels()).unique(return_counts=True)
+        keep = {int(label.item()) for label, count in zip(labels, counts) if int(count.item()) >= args.source_min_count}
+        classes = [cls for idx, cls in enumerate(classes) if idx in keep]
+    if num_classes > 0 and len(classes) != num_classes:
+        raise ValueError(
+            f"inferred {len(classes)} source classes but checkpoint expects {num_classes}. "
+            "Pass --classes explicitly if this source checkpoint used a custom class list."
+        )
     return classes
 
 
@@ -66,7 +102,8 @@ def main() -> None:
     parser.add_argument("--output", required=True, help="output .pt path")
     parser.add_argument("--data_root", default="/data/user/DBL/timematch_data")
     parser.add_argument("--classes", default="", help="optional comma-separated class names")
-    parser.add_argument("--num_classes", type=int, required=True)
+    parser.add_argument("--num_classes", type=int, default=0, help="<=0 infers from checkpoint decoder")
+    parser.add_argument("--source_min_count", type=int, default=200, help="match train.py source class filtering")
     parser.add_argument("--model", default="pseltae", choices=["pseltae", "psetae", "psegru", "psetcnn"])
     parser.add_argument("--input_dim", type=int, default=10)
     parser.add_argument("--with_extra", type=bool_flag, default=True)
@@ -87,9 +124,8 @@ def main() -> None:
     args = parser.parse_args()
 
     device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
-    classes = infer_classes(args)
-    if args.num_classes > 0 and len(classes) != args.num_classes:
-        raise ValueError(f"expected {args.num_classes} classes, got {len(classes)}")
+    num_classes = args.num_classes if args.num_classes > 0 else infer_num_classes_from_checkpoint(args.weights)
+    classes = infer_classes(args, num_classes)
 
     transform = transforms.Compose([RandomSamplePixels(args.num_pixels), Normalize(), ToTensor()])
     dataset = PixelSetData(

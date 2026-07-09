@@ -1,13 +1,22 @@
 import os
-import sys
 import time
 import numpy as np
 import torch
 import torch.backends.cudnn
 import torch.nn.functional as F
-from tqdm import tqdm
 import sklearn.metrics
 from utils.train_utils import AverageMeter, to_cuda
+
+
+def _timestamp():
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+
+def _format_elapsed_seconds(seconds):
+    seconds = int(max(0, seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def validation(best_f1, best_model_path, config, criterion, device, epoch, model, val_loader, writer, temporal_shift=None):
@@ -55,7 +64,15 @@ def evaluation(
     model.eval()
     label = 'Validating' if mode == 'val' else 'Testing'
     start_time = time.time()
-    for sample in tqdm(data_loader, desc=label, disable=not sys.stderr.isatty()):
+    print(
+        "EVAL_START|"
+        f"timestamp={_timestamp()}|"
+        f"mode={mode}|"
+        f"label={label}|"
+        f"batches={len(data_loader)}",
+        flush=True,
+    )
+    for sample in data_loader:
         target = sample['label']
         y_true.extend(target.tolist())
         target = target.cuda(device=device, non_blocking=True)
@@ -88,9 +105,11 @@ def evaluation(
     elapsed = time.time() - start_time
     print(
         "EVAL_RUNTIME|"
+        f"timestamp={_timestamp()}|"
         f"mode={mode}|"
         f"batches={len(data_loader)}|"
         f"samples={len(y_true)}|"
+        f"elapsed={_format_elapsed_seconds(elapsed)}|"
         f"seconds={elapsed:.3f}|"
         f"batches_per_sec={len(data_loader) / max(elapsed, 1e-9):.3f}",
         flush=True,

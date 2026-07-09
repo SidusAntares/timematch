@@ -79,13 +79,12 @@ def expand_stage_shift_to_time(
         raise ValueError("stage_mask must match stage_shift")
 
     global_shift = _expand_global_shift(global_shift, batch, base_positions.device, base_positions.dtype)
-    per_time_shift = torch.zeros_like(base_positions, dtype=base_positions.dtype)
     valid_time = stage_to_time >= 0
-    for b in range(batch):
-        for t in range(steps):
-            stage_idx = int(stage_to_time[b, t].item())
-            if stage_idx >= 0 and stage_idx < stage_shift.shape[1] and bool(stage_mask[b, stage_idx].item()):
-                per_time_shift[b, t] = stage_shift[b, stage_idx]
+    safe_stage_to_time = stage_to_time.clamp(min=0, max=stage_shift.shape[1] - 1)
+    gathered_shift = torch.gather(stage_shift, dim=1, index=safe_stage_to_time)
+    gathered_valid = torch.gather(stage_mask.bool(), dim=1, index=safe_stage_to_time)
+    valid_time = valid_time & gathered_valid
+    per_time_shift = torch.where(valid_time, gathered_shift, torch.zeros_like(gathered_shift)).to(base_positions.dtype)
     local_positions = base_positions.float() + global_shift.unsqueeze(1) + per_time_shift
     valid_residual = stage_shift[stage_mask]
     if valid_residual.numel() == 0:

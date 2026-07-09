@@ -90,6 +90,9 @@ def confusion_matrix_report(cm, class_names):
 
 
 def overall_classification_report(cms, class_names):
+    def mean_std_text(mean, std):
+        return f"{mean:.1f}+/-{std:.1f}"
+
     class_metrics = [precision_recall_fscore_support(cm) for cm in cms]
     class_metrics = np.array(class_metrics)  # (len(cms), 4, len(class_names))
     class_metrics[:, :-1] *= 100.0
@@ -99,11 +102,13 @@ def overall_classification_report(cms, class_names):
         mean_stds = list(zip(np.mean(metrics, axis=0), np.std(metrics, axis=0)))
         support_mean, support_std = mean_stds[-1]
         # mean_stds = np.array(mean_stds[:-1]) * 100.0
-        mean_stds = [f'{mean:.1f}±{std:.1f}' for mean, std in mean_stds[:-1]] + [f'{support_mean:.1f}±{support_std:.1f}']
+        mean_stds = [mean_std_text(mean, std) for mean, std in mean_stds[:-1]] + [
+            mean_std_text(support_mean, support_std)
+        ]
         rows.append((class_name, *mean_stds))
 
     accs = np.array([accuracy_cm(cm) * 100.0 for cm in cms])
-    accuracy = '{:.1f}±{:.1f}'.format(np.mean(accs), np.std(accs))
+    accuracy = mean_std_text(np.mean(accs), np.std(accs))
     rows.append([None, None, None, None, None])
     rows.append(['accuracy', None, None, None, accuracy])
     macro_avg = []
@@ -114,7 +119,7 @@ def overall_classification_report(cms, class_names):
         else:
             macro_avg_per_run = np.mean(class_metrics[:, i, :], axis=-1)
             std = np.std(macro_avg_per_run)
-        macro_avg.append(f'{np.mean(macro_avg_per_run):.1f}±{std:.1f}')
+        macro_avg.append(mean_std_text(np.mean(macro_avg_per_run), std))
     rows.append(['macro avg', *macro_avg])
     headers = ['', 'precision', 'recall', 'f1-score', 'support']
     return tabulate(rows, headers=headers, floatfmt='.2f', tablefmt='pipe')

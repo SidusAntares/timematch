@@ -13,7 +13,6 @@ import numpy as np
 import torch
 import torch.backends.cudnn
 from torchvision.transforms import transforms
-from tqdm import tqdm
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -40,6 +39,7 @@ from competitors.alda.train_alda import train_alda
 from dataset import PixelSetData, count_pixelset_samples, create_evaluation_loaders, create_train_loader
 from evaluation import evaluation, validation
 from methods.source_structure.train_source_structure import train_supervised_source_phase_compactness
+from methods.local_shift.train_local_shift import train_timematch_local_shift
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
 from timematch import train_timematch
 from transforms import (
@@ -55,6 +55,16 @@ from utils.focal_loss import FocalLoss
 from utils.metrics import overall_classification_report
 from utils.train_utils import AverageMeter, bool_flag, to_cuda
 
+
+def _timestamp():
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+
+def _format_elapsed_seconds(seconds):
+    seconds = int(max(0, seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def main(config):
@@ -128,6 +138,8 @@ def main(config):
             writer = SummaryWriter(log_dir=f'{config.tensorboard_log_dir}_fold{fold_num}', purge_step=0)
             if config.method == 'timematch':
                 train_timematch(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
+            elif config.method == 'timematch_local_shift':
+                train_timematch_local_shift(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'dann':
                 train_dann(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'mmd':
@@ -222,24 +234,25 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs * steps_per_epoch, eta_min=0)
 
     best_f1 = 0
+    train_start_time = time.time()
     for epoch in range(config.epochs):
         model.train()
         loss_meter = AverageMeter()
         epoch_start_time = time.time()
+        print(
+            f"---------epoch {epoch + 1}/{config.epochs} | "
+            f"timestamp={_timestamp()} | "
+            f"elapsed={_format_elapsed_seconds(epoch_start_time - train_start_time)} ---------",
+            flush=True,
+        )
         speed_probe_steps = {
             step for step in (10, 50, 100, 200, 500)
             if step <= len(data_loader)
         }
         speed_probe_steps.add(len(data_loader))
 
-        progress_bar = tqdm(
-            enumerate(data_loader),
-            total=len(data_loader),
-            desc=f'Epoch {epoch + 1}/{config.epochs}',
-            disable=not sys.stderr.isatty(),
-        )
         global_step = epoch * len(data_loader)
-        for step, sample in progress_bar:
+        for step, sample in enumerate(data_loader):
             targets = sample['label'].cuda(device=device, non_blocking=True)
 
             pixels, mask, positions, extra = to_cuda(sample, device)
@@ -255,17 +268,18 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
 
             if step % config.log_step == 0:
                 lr = optimizer.param_groups[0]["lr"]
-                progress_bar.set_postfix(lr=f'{lr:.1E}', loss=f"{loss_meter.avg:.3f}")
                 writer.add_scalar("train/loss", loss_meter.val, global_step + step)
                 writer.add_scalar("train/lr", lr, global_step + step)
             if epoch == 0 and (step + 1) in speed_probe_steps:
                 elapsed = time.time() - epoch_start_time
                 print(
                     "SOURCE_SPEED_PROBE|"
+                    f"timestamp={_timestamp()}|"
                     f"method=supervised|"
                     f"epoch={epoch + 1}|"
                     f"batches={step + 1}|"
                     f"samples={loss_meter.count}|"
+                    f"elapsed={_format_elapsed_seconds(elapsed)}|"
                     f"seconds={elapsed:.3f}|"
                     f"batches_per_sec={(step + 1) / max(elapsed, 1e-9):.3f}|"
                     f"seconds_per_batch={elapsed / max(step + 1, 1):.3f}|"
@@ -273,13 +287,16 @@ def train_supervised(model, config, writer, splits, val_loader, device, best_mod
                     flush=True,
                 )
 
-        progress_bar.close()
         epoch_elapsed = time.time() - epoch_start_time
+        total_elapsed = time.time() - train_start_time
         print(
             "SOURCE_EPOCH_RUNTIME|"
+            f"timestamp={_timestamp()}|"
             f"method=supervised|"
             f"epoch={epoch + 1}|"
             f"batches={len(data_loader)}|"
+            f"elapsed={_format_elapsed_seconds(total_elapsed)}|"
+            f"epoch_elapsed={_format_elapsed_seconds(epoch_elapsed)}|"
             f"seconds={epoch_elapsed:.3f}|"
             f"batches_per_sec={len(data_loader) / max(epoch_elapsed, 1e-9):.3f}",
             flush=True,
@@ -361,10 +378,10 @@ def overall_performance(config):
     for metric, values in overall_metrics.items():
         values = np.array(values)
         if metric == 'loss':
-            print(f"{metric}: {np.mean(values):.4}卤{np.std(values):.4}")
+            print(f"{metric}: {np.mean(values):.4}+/-{np.std(values):.4}")
         else:
             values *= 100
-            print(f"{metric}: {np.mean(values):.1f}卤{np.std(values):.1f}")
+            print(f"{metric}: {np.mean(values):.1f}+/-{np.std(values):.1f}")
 
     with open(os.path.join(config.output_dir, f'overall_{target_name}.json'), 'w') as file:
         file.write(json.dumps(overall_metrics, indent=4))
@@ -818,6 +835,8 @@ if __name__ == '__main__':
         type=str,
         help="optional human-readable task id for diagnostic TSV rows",
     )
+    timematch.add_argument("--timematch_equiv_debug_steps", default=0, type=int)
+    timematch.add_argument("--timematch_equiv_debug_path", default="", type=str)
     timematch.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
     timematch.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
     timematch.add_argument(
@@ -856,6 +875,73 @@ if __name__ == '__main__':
         type=int,
         default=1729,
         help="fixed sampling seed for trajectory diagnostics so per-epoch drift is not pixel-sampling noise",
+    )
+
+    # Experimental archived v3.2.1 local-shift diagnostic.
+    timematch_local_shift = subparsers.add_parser(
+        'timematch_local_shift',
+        description='experimental archived local-shift diagnostic; not active main method',
+    )
+    timematch_local_shift.add_argument('--weights', type=str, required=True, help='path to source trained model weights')
+    timematch_local_shift.add_argument('--lr', default=0.0001, type=float, help='Learning rate')
+    timematch_local_shift.add_argument("--pseudo_threshold", default=0.9, type=float, help='confidence threshold for assigning pseudo labels')
+    timematch_local_shift.add_argument("--ema_decay", default=0.9999, type=float, help='decay rate for mean teacher')
+    timematch_local_shift.add_argument("--trade_off", type=float, default=2.0, help='weight for unsupervised loss')
+    timematch_local_shift.add_argument("--estimate_shift", type=bool_flag, default=True, help='whether to account for temporal shift')
+    timematch_local_shift.add_argument('--epochs', default=20, type=int, help='Number of epochs per fold')
+    timematch_local_shift.add_argument("--steps_per_epoch", type=int, default=500, help='n steps per epoch')
+    timematch_local_shift.add_argument("--balance_source", type=bool_flag, default=True, help='class balanced batches for source')
+    timematch_local_shift.add_argument("--use_focal_loss", type=bool_flag, default=True, help='use focal loss or cross entropy')
+    timematch_local_shift.add_argument("--shift_source", type=bool_flag, default=True, help='whether to apply the global source-to-target shift to source batches')
+    timematch_local_shift.add_argument("--sample_size", type=int, default=100, help='number of batches to sample for estimating shift')
+    timematch_local_shift.add_argument("--max_temporal_shift", type=int, default=60, help='maximum temporal shift to consider')
+    timematch_local_shift.add_argument("--domain_specific_bn", type=bool_flag, default=True, help='kept for CLI compatibility')
+    timematch_local_shift.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT', 'F1'])
+    timematch_local_shift.add_argument(
+        "--timematch_topk_shifts",
+        type=int,
+        default=3,
+        help="top-k shifts recorded by shift diagnostics",
+    )
+    timematch_local_shift.add_argument(
+        "--timematch_diagnostic_task",
+        default="",
+        type=str,
+        help="optional human-readable task id for diagnostic logs",
+    )
+    timematch_local_shift.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
+    timematch_local_shift.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
+    timematch_local_shift.add_argument("--source_stage_reference_path", default="", type=str)
+    timematch_local_shift.add_argument("--local_shift_kmax", default=8, type=int)
+    timematch_local_shift.add_argument("--local_shift_min_stage_len", default=3, type=int)
+    timematch_local_shift.add_argument("--local_shift_topm", default=3, type=int)
+    timematch_local_shift.add_argument("--local_shift_change_threshold", default=None, type=float)
+    timematch_local_shift.add_argument("--local_shift_change_quantile", default=0.75, type=float)
+    timematch_local_shift.add_argument("--local_shift_nms_radius", default=2, type=int)
+    timematch_local_shift.add_argument("--local_shift_time_weight", default=1.0, type=float)
+    timematch_local_shift.add_argument("--local_shift_duration_weight", default=0.2, type=float)
+    timematch_local_shift.add_argument("--local_shift_feature_weight", default=0.5, type=float)
+    timematch_local_shift.add_argument("--local_shift_clip", default=20.0, type=float)
+    timematch_local_shift.add_argument("--local_shift_detach_correspondence", default=True, type=bool_flag)
+    timematch_local_shift.add_argument("--local_shift_compute_alignment_in_global_only", default=False, type=bool_flag)
+    timematch_local_shift.add_argument("--local_shift_log_path", default="", type=str)
+    timematch_local_shift.add_argument("--local_shift_equiv_debug_steps", default=0, type=int)
+    timematch_local_shift.add_argument("--local_shift_equiv_debug_path", default="", type=str)
+    timematch_local_shift.add_argument("--local_shift_debug", action="store_true")
+    timematch_local_shift.add_argument(
+        "--local_shift_mode",
+        default="residual",
+        choices=[
+            "base_equiv",
+            "global_forward",
+            "global_only",
+            "residual",
+            "residual_raw",
+            "residual_zero_mean",
+            "residual_scaled_zero_mean_alpha05",
+            "residual_gated_scaled_zero_mean_alpha05_top065",
+        ],
+        help="equivalence/profiling modes for v3.2.1 local shift",
     )
     # Source-only + source phase compactness regularization
     sourcephasecompact = subparsers.add_parser('sourcephasecompact')

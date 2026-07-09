@@ -74,17 +74,82 @@ class BudgetedFeatureChangePartitioner:
         stage_to_time = torch.full((batch, steps), -1, device=temporal_features.device, dtype=torch.long)
         stage_count = torch.zeros(batch, device=temporal_features.device, dtype=torch.long)
 
+        change = (temporal_features[:, 1:] - temporal_features[:, :-1]).float().pow(2).mean(dim=-1).sqrt()
+        if steps == 1 or self.kmax == 1:
+            cut_values = torch.empty(batch, 0, device=temporal_features.device, dtype=torch.long)
+            cut_valid = torch.empty(batch, 0, device=temporal_features.device, dtype=torch.bool)
+        else:
+            if self.change_threshold is not None:
+                threshold = torch.full((batch, 1), float(self.change_threshold), device=change.device, dtype=change.dtype)
+            elif self.change_quantile is not None:
+                threshold = torch.quantile(change, float(self.change_quantile), dim=1, keepdim=True)
+            else:
+                threshold = change.mean(dim=1, keepdim=True)
+            cut_positions = torch.arange(1, steps, device=change.device).view(1, -1)
+            candidate_mask = (change >= threshold) & (cut_positions >= self.min_stage_len) & ((steps - cut_positions) >= self.min_stage_len)
+            if self.nms_radius > 0:
+                pooled = torch.nn.functional.max_pool1d(
+                    change.unsqueeze(1),
+                    kernel_size=2 * self.nms_radius + 1,
+                    stride=1,
+                    padding=self.nms_radius,
+                ).squeeze(1)
+                candidate_mask = candidate_mask & (change >= pooled)
+            score = change.masked_fill(~candidate_mask, -float("inf"))
+            topk = min(self.kmax - 1, score.shape[1])
+            if topk > 0:
+                top_values, top_indices = torch.topk(score, k=topk, dim=1)
+                cut_values = (top_indices + 1).sort(dim=1).values
+                cut_valid = torch.isfinite(top_values).gather(1, torch.argsort(top_indices + 1, dim=1))
+            else:
+                cut_values = torch.empty(batch, 0, device=temporal_features.device, dtype=torch.long)
+                cut_valid = torch.empty(batch, 0, device=temporal_features.device, dtype=torch.bool)
+
         interval_records: List[List[StageInterval]] = []
         for b in range(batch):
-            intervals = self.partition_curve(temporal_features[b], positions[b])
-            interval_records.append(intervals)
-            stage_count[b] = len(intervals)
-            for k, interval in enumerate(intervals[: self.kmax]):
-                stage_feats[b, k] = temporal_features[b, interval.start : interval.end + 1].mean(dim=0)
+            cuts: List[int] = []
+            prev = 0
+            for idx in range(cut_values.shape[1]):
+                if not bool(cut_valid[b, idx].item()):
+                    continue
+                cut = int(cut_values[b, idx].item())
+                if cut - prev < self.min_stage_len:
+                    continue
+                if steps - cut < self.min_stage_len:
+                    continue
+                cuts.append(cut)
+                prev = cut
+                if len(cuts) >= self.kmax - 1:
+                    break
+            bounds = [0] + cuts + [steps]
+            intervals: List[StageInterval] = []
+            for k, (left, right) in enumerate(zip(bounds[:-1], bounds[1:])):
+                if k >= self.kmax:
+                    break
+                start = int(left)
+                end = int(right) - 1
+                stage_slice = slice(start, end + 1)
+                stage_feats[b, k] = temporal_features[b, stage_slice].mean(dim=0)
                 stage_mask[b, k] = True
-                stage_centers[b, k] = float(interval.center_time)
-                stage_durations[b, k] = float(interval.duration)
-                stage_to_time[b, interval.start : interval.end + 1] = k
+                stage_positions = positions[b, stage_slice].float()
+                center = stage_positions.mean()
+                duration = stage_positions.max() - stage_positions.min()
+                if stage_positions.numel() == 1:
+                    duration = torch.ones_like(duration)
+                stage_centers[b, k] = center
+                stage_durations[b, k] = duration
+                stage_to_time[b, stage_slice] = k
+                intervals.append(
+                    StageInterval(
+                        start=start,
+                        end=end,
+                        center_time=float(center.detach().cpu()),
+                        duration=float(duration.detach().cpu()),
+                        score=0.0,
+                    )
+                )
+            stage_count[b] = len(intervals)
+            interval_records.append(intervals)
 
         logs = {
             "stage_count_mean": float(stage_count.float().mean().detach().cpu()),

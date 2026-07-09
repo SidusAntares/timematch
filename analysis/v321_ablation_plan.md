@@ -6,11 +6,10 @@ Run only after local-shift training is implemented.
 
 | setting | purpose |
 |---|---|
-| base TimeMatch | clean reference |
-| smooth source structure + base TimeMatch | source anchor/reference effect only |
-| source reference + global shift | verify reference extraction without local shift |
-| source reference + stage-wise local shift | first active v3.2.1 |
-| local shift with detached correspondence | check whether correspondence only changes positions |
+| cleaned base TimeMatch | same-code clean reference |
+| cleaned smooth source + base TimeMatch | source anchor/reference effect only |
+| source reference + global_only | loads reference and logs partition/alignment but uses scalar shift positions |
+| source reference + residual local_shift | completed and stopped after Stage 3d |
 
 ## Diagnostics
 
@@ -43,3 +42,52 @@ alignment entropy collapses at epoch 1;
 runtime is more than 1.5x base TimeMatch;
 DA F1 drops on most probe tasks while pseudo confidence rises.
 ```
+
+## Stage 3d Stop Decision
+
+Stage 3d stop condition was met.
+
+Results:
+
+```text
+AT1->DK1:
+  global_only test = 0.7874
+  best residual test = 0.7782
+  best residual - global_only = -0.0092
+
+FR2->FR1:
+  global_only test = 0.7200
+  best residual test = 0.7120
+  best residual - global_only = -0.0080
+```
+
+All tested residual variants underperformed the corrected `global_only`
+control, and residual runtime remained about 2.7-3.0x slower.
+
+Decision:
+
+```text
+Do not proceed to full12 for v3.2.1 residual local shift.
+Do not tune more residual local-shift hyperparameters.
+Archive v3.2.1 residual local shift as a negative boundary experiment.
+Future experiments should return to cleaned-code source-side structure baselines.
+```
+
+## Stage 2 Scope
+
+Stage 2 only proves the runtime training loop exists:
+
+```text
+source reference loads;
+target H(t) is extracted;
+target stages are partitioned;
+soft alignment produces source-stage centers;
+local positions are generated;
+target forward_from_temporal_features runs;
+source CE + pseudo target CE backward succeeds;
+EMA updates;
+compact TSV logs are written.
+```
+
+It does not claim performance equivalence with older baselines. Formal
+comparisons must rerun all settings under the same cleaned code.

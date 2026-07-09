@@ -1,9 +1,7 @@
 ﻿import torch
 import os
-import sys
 import time
 from torchvision import transforms
-from tqdm import tqdm
 
 from dataset import PixelSetData, create_train_loader
 from evaluation import validation
@@ -27,6 +25,17 @@ from transforms import (
 )
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda
+
+
+def _timestamp():
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+
+def _format_elapsed_seconds(seconds):
+    seconds = int(max(0, seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def _parse_grad_diag_steps(value):
@@ -467,6 +476,7 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
     )
 
     best_f1 = 0
+    train_start_time = time.time()
     for epoch in range(config.epochs):
         scheduled_lambda = float(_source_structure_lambda_for_epoch(epoch, config))
         model.train()
@@ -483,19 +493,19 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
         }
 
         epoch_start_time = time.time()
+        print(
+            f"---------epoch {epoch + 1}/{config.epochs} | "
+            f"timestamp={_timestamp()} | "
+            f"elapsed={_format_elapsed_seconds(epoch_start_time - train_start_time)} ---------",
+            flush=True,
+        )
         speed_probe_steps = {
             step for step in (10, 50, 100, 200, 500)
             if step <= len(data_loader)
         }
         speed_probe_steps.add(len(data_loader))
-        progress_bar = tqdm(
-            enumerate(data_loader),
-            total=len(data_loader),
-            desc=f'Epoch {epoch + 1}/{config.epochs}',
-            disable=not sys.stderr.isatty(),
-        )
         global_step = epoch * len(data_loader)
-        for step, sample in progress_bar:
+        for step, sample in enumerate(data_loader):
             targets = sample['label'].cuda(device=device, non_blocking=True)
             pixels, mask, positions, extra = to_cuda(sample, device)
 
@@ -582,13 +592,6 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
 
             if step % config.log_step == 0:
                 lr = optimizer.param_groups[0]["lr"]
-                progress_bar.set_postfix(
-                    lr=f'{lr:.1E}',
-                    loss=f"{loss_meter.avg:.3f}",
-                    cls=f"{cls_loss_meter.avg:.3f}",
-                    compact=f"{compact_loss_meter.avg:.3f}",
-                    rawc=f"{compact_raw_loss_meter.avg:.3f}",
-                )
                 writer.add_scalar("train/loss", loss_meter.val, global_step + step)
                 writer.add_scalar("train/lr", lr, global_step + step)
                 writer.add_scalar("train/source_cls_loss_raw", cls_loss_meter.val, global_step + step)
@@ -601,10 +604,12 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                 elapsed = time.time() - epoch_start_time
                 print(
                     "SOURCE_SPEED_PROBE|"
+                    f"timestamp={_timestamp()}|"
                     f"method=sourcephasecompact|"
                     f"epoch={epoch + 1}|"
                     f"batches={step + 1}|"
                     f"samples={loss_meter.count}|"
+                    f"elapsed={_format_elapsed_seconds(elapsed)}|"
                     f"seconds={elapsed:.3f}|"
                     f"batches_per_sec={(step + 1) / max(elapsed, 1e-9):.3f}|"
                     f"seconds_per_batch={elapsed / max(step + 1, 1):.3f}|"
@@ -614,10 +619,11 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
                     flush=True,
                 )
 
-        progress_bar.close()
         epoch_elapsed = time.time() - epoch_start_time
+        total_elapsed = time.time() - train_start_time
         print(
             "SOURCE_EPOCH_SUMMARY|"
+            f"timestamp={_timestamp()}|"
             f"epoch={epoch + 1}|"
             f"source_structure_lambda={scheduled_lambda:.8f}|"
             f"schedule={getattr(config, 'source_structure_lambda_schedule', 'constant')}|"
@@ -640,6 +646,8 @@ def train_supervised_source_phase_compactness(model, config, writer, splits, val
             f"elastic_boundary_weight={elastic_metric_meters['boundary_weight'].avg:.6f}|"
             f"elastic_distance_scale={elastic_metric_meters['distance_scale'].avg:.6f}|"
             f"elastic_struct_loss={elastic_metric_meters['struct_loss'].avg:.6f}|"
+            f"elapsed={_format_elapsed_seconds(total_elapsed)}|"
+            f"epoch_elapsed={_format_elapsed_seconds(epoch_elapsed)}|"
             f"seconds={epoch_elapsed:.3f}|"
             f"batches_per_sec={len(data_loader) / max(epoch_elapsed, 1e-9):.3f}",
             flush=True,

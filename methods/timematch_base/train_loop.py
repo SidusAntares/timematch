@@ -1,9 +1,10 @@
 ﻿from torch.utils.data.sampler import WeightedRandomSampler
 import csv
+import hashlib
 import json
 import os
-import sys
 import sklearn.metrics
+import time
 from collections import Counter
 from copy import deepcopy
 
@@ -12,7 +13,6 @@ import torch
 import torch.nn.functional as F
 from torch.utils import data
 from torchvision import transforms
-from tqdm import tqdm
 
 from dataset import PixelSetData
 from evaluation import validation
@@ -26,6 +26,17 @@ from transforms import (
 )
 from utils.focal_loss import FocalLoss
 from utils.train_utils import AverageMeter, to_cuda, cycle
+
+
+def _timestamp():
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+
+def _format_elapsed_seconds(seconds):
+    seconds = int(max(0, seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def _check_temporal_index_range(model, positions, applied_shift, tag):
@@ -66,6 +77,19 @@ def _append_diag_tsv(path, row, fields):
         if not exists:
             writer.writeheader()
         writer.writerow({field: _format_diag_value(row.get(field)) for field in fields})
+
+
+def _hash_tensor(value):
+    tensor = value.detach().cpu().contiguous()
+    return hashlib.sha1(tensor.numpy().tobytes()).hexdigest()[:12]
+
+
+def _hash_state_dict(model):
+    digest = hashlib.sha1()
+    for name, tensor in model.state_dict().items():
+        digest.update(name.encode("utf-8"))
+        digest.update(tensor.detach().cpu().contiguous().numpy().tobytes())
+    return digest.hexdigest()[:16]
 
 
 def _pseudo_metrics(labels, pseudo_labels, pseudo_conf, pseudo_mask, num_classes):
@@ -211,11 +235,41 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         all_pseudo_labels = torch.max(pseudo_softmaxes, dim=1)[1]
 
     source_to_target_shift = 0
+    train_start_time = time.time()
+    student_start_hash = _hash_state_dict(student)
+    teacher_start_hash = _hash_state_dict(teacher)
+    equiv_debug_fields = [
+        "task",
+        "mode",
+        "seed",
+        "epoch",
+        "global_step",
+        "source_labels_hash",
+        "target_position_hash",
+        "source_logits_mean",
+        "source_logits_std",
+        "teacher_target_logits_mean",
+        "teacher_target_logits_std",
+        "pseudo_label_distribution_json",
+        "pseudo_confidence_mean",
+        "pseudo_mask_ratio",
+        "global_shift",
+        "target_positions_min_after_teacher_shift",
+        "target_positions_max_after_teacher_shift",
+        "source_loss",
+        "target_loss",
+        "total_loss",
+        "student_start_hash",
+        "teacher_start_hash",
+        "weights",
+    ]
     for epoch in range(config.epochs):
-        progress_bar = tqdm(
-            range(steps_per_epoch),
-            desc=f"TimeMatch Epoch {epoch + 1}/{config.epochs}",
-            disable=not sys.stderr.isatty(),
+        epoch_start_time = time.time()
+        print(
+            f"---------epoch {epoch + 1}/{config.epochs} | "
+            f"timestamp={_timestamp()} | "
+            f"elapsed={_format_elapsed_seconds(epoch_start_time - train_start_time)} ---------",
+            flush=True,
         )
         loss_meter = AverageMeter()
 
@@ -260,12 +314,13 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         teacher.eval()  # don't update BN or use dropout for teacher
 
         all_labels, all_pseudo_labels, all_pseudo_conf, all_pseudo_mask = [], [], [], []
-        for step in progress_bar:
+        for step in range(steps_per_epoch):
             sample_source, (sample_target_weak, sample_target_strong) = next(source_iter), next(target_iter)
 
             # Get pseudo labels from teacher
             pixels_t_weak, mask_t_weak, position_t_weak, extra_t_weak = to_cuda(sample_target_weak, device)
             with torch.no_grad():
+                teacher_logits = None
                 if shift_policy == "topk_shift_ensemble_diagnostic":
                     teacher_preds = _forward_shift_ensemble(
                         teacher,
@@ -276,13 +331,14 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         target_to_source_topk_shifts,
                     )
                 else:
+                    teacher_logits = teacher.forward(
+                        pixels_t_weak,
+                        mask_t_weak,
+                        position_t_weak + target_to_source_shift,
+                        extra_t_weak,
+                    )
                     teacher_preds = F.softmax(
-                        teacher.forward(
-                            pixels_t_weak,
-                            mask_t_weak,
-                            position_t_weak + target_to_source_shift,
-                            extra_t_weak,
-                        ),
+                        teacher_logits,
                         dim=1,
                     )
             pseudo_conf, pseudo_targets = torch.max(teacher_preds, dim=1)
@@ -315,6 +371,42 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 loss_target = criterion(logits_target, pseudo_targets[pseudo_mask])
             loss = loss_source + config.trade_off * loss_target
 
+            if global_step < int(getattr(config, "timematch_equiv_debug_steps", 0)):
+                pseudo_counts = torch.bincount(pseudo_targets.detach().cpu(), minlength=config.num_classes).tolist()
+                teacher_summary = teacher_logits if teacher_logits is not None else teacher_preds
+                target_loss_value = loss_target.item() if hasattr(loss_target, "item") else float(loss_target)
+                debug_row = {
+                    "task": getattr(config, "timematch_diagnostic_task", "")
+                    or f"{config.source.split('/')[1]}_to_{config.target.split('/')[1]}",
+                    "mode": "smooth_base",
+                    "seed": config.seed,
+                    "epoch": epoch + 1,
+                    "global_step": global_step,
+                    "source_labels_hash": _hash_tensor(source_labels),
+                    "target_position_hash": _hash_tensor(position_t_weak),
+                    "source_logits_mean": float(logits_source.detach().mean().item()),
+                    "source_logits_std": float(logits_source.detach().std(unbiased=False).item()),
+                    "teacher_target_logits_mean": float(teacher_summary.detach().mean().item()),
+                    "teacher_target_logits_std": float(teacher_summary.detach().std(unbiased=False).item()),
+                    "pseudo_label_distribution_json": json.dumps(pseudo_counts, ensure_ascii=True),
+                    "pseudo_confidence_mean": float(pseudo_conf.detach().mean().item()),
+                    "pseudo_mask_ratio": float(pseudo_mask.float().mean().item()),
+                    "global_shift": target_to_source_shift,
+                    "target_positions_min_after_teacher_shift": float((position_t_weak + target_to_source_shift).min().item()),
+                    "target_positions_max_after_teacher_shift": float((position_t_weak + target_to_source_shift).max().item()),
+                    "source_loss": float(loss_source.detach().item()),
+                    "target_loss": float(target_loss_value),
+                    "total_loss": float(loss.detach().item()),
+                    "student_start_hash": student_start_hash,
+                    "teacher_start_hash": teacher_start_hash,
+                    "weights": str(config.weights),
+                }
+                _append_diag_tsv(
+                    getattr(config, "timematch_equiv_debug_path", ""),
+                    debug_row,
+                    equiv_debug_fields,
+                )
+
             # compute loss and backprop
             optimizer.zero_grad()
             loss.backward()
@@ -325,7 +417,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
             # Metrics
             loss_meter.update(loss.item())
-            progress_bar.set_postfix(loss=f"{loss_meter.avg:.3f}")
             all_labels.extend(sample_target_weak['label'].tolist())
             all_pseudo_labels.extend(pseudo_targets.tolist())
             all_pseudo_conf.extend(pseudo_conf.tolist())
@@ -337,8 +428,6 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 writer.add_scalar("train/target_updates", len(torch.nonzero(pseudo_mask)), global_step)
 
             global_step += 1
-
-        progress_bar.close()
 
         # Evaluate pseudo labels
         all_labels, all_pseudo_labels = np.array(all_labels), np.array(all_pseudo_labels)
@@ -353,7 +442,14 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             )
         else:
             conf_pseudo_f1 = 0.0
-        print(f"Teacher pseudo label F1 {conf_pseudo_f1:.3f} (n={pseudo_count})")
+        print(
+            "TIMEMATCH_PSEUDO|"
+            f"timestamp={_timestamp()}|"
+            f"epoch={epoch + 1}|"
+            f"macro_f1={conf_pseudo_f1:.6f}|"
+            f"count={int(pseudo_count)}",
+            flush=True,
+        )
         writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
         writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
 
@@ -406,6 +502,24 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
 
         writer.add_scalar("train/pseudo_f1", conf_pseudo_f1, epoch)
         writer.add_scalar("train/pseudo_count", pseudo_count, epoch)
+
+        epoch_elapsed = time.time() - epoch_start_time
+        total_elapsed = time.time() - train_start_time
+        print(
+            "TIMEMATCH_EPOCH_SUMMARY|"
+            f"timestamp={_timestamp()}|"
+            f"epoch={epoch + 1}|"
+            f"elapsed={_format_elapsed_seconds(total_elapsed)}|"
+            f"epoch_elapsed={_format_elapsed_seconds(epoch_elapsed)}|"
+            f"loss={loss_meter.avg:.6f}|"
+            f"source_loss={_format_diag_value(diag_row.get('source_loss'))}|"
+            f"target_loss={_format_diag_value(diag_row.get('target_loss'))}|"
+            f"pseudo_f1={conf_pseudo_f1:.6f}|"
+            f"pseudo_count={int(pseudo_count)}|"
+            f"target_to_source_shift={target_to_source_shift}|"
+            f"source_to_target_shift={source_to_target_shift}",
+            flush=True,
+        )
 
         if config.run_validation:
             if config.output_student:
@@ -474,11 +588,16 @@ def collect_shift_softmaxes(model, target_loader, device, min_shift=-60, max_shi
 
     target_iter = iter(target_loader)
     shift_softmaxes, labels = [], []
-    for _ in tqdm(
-        range(sample_size),
-        desc=f'Estimating shift between [{min_shift}, {max_shift}]',
-        disable=not sys.stderr.isatty(),
-    ):
+    start_time = time.time()
+    print(
+        "SHIFT_ESTIMATION_START|"
+        f"timestamp={_timestamp()}|"
+        f"min_shift={min_shift}|"
+        f"max_shift={max_shift}|"
+        f"sample_size={sample_size}",
+        flush=True,
+    )
+    for _ in range(sample_size):
         try:
             sample = next(target_iter)
         except StopIteration:
@@ -495,6 +614,15 @@ def collect_shift_softmaxes(model, target_loader, device, min_shift=-60, max_shi
         shift_softmaxes.append(shift_probs)
     shift_softmaxes = torch.cat(shift_softmaxes).cpu().numpy()
     labels = np.asarray(labels, dtype=np.int64)
+    elapsed = time.time() - start_time
+    print(
+        "SHIFT_ESTIMATION_DONE|"
+        f"timestamp={_timestamp()}|"
+        f"sample_size={sample_size}|"
+        f"elapsed={_format_elapsed_seconds(elapsed)}|"
+        f"seconds={elapsed:.3f}",
+        flush=True,
+    )
     return shifts, shift_softmaxes, labels
 
 
@@ -792,7 +920,16 @@ def get_pseudo_labels(model, data_loader, device, best_shift, n=500):
     model.eval()
     pseudo_softmaxes = []
     indices = []
-    for i, sample in enumerate(tqdm(data_loader, "computing pseudo labels", disable=not sys.stderr.isatty())):
+    start_time = time.time()
+    max_batches = len(data_loader) if n is None else min(int(n), len(data_loader))
+    print(
+        "PSEUDO_LABEL_START|"
+        f"timestamp={_timestamp()}|"
+        f"best_shift={best_shift}|"
+        f"max_batches={max_batches}",
+        flush=True,
+    )
+    for i, sample in enumerate(data_loader):
         if n is not None and i == n:
             break
         indices.extend(sample["index"].tolist())
@@ -805,5 +942,16 @@ def get_pseudo_labels(model, data_loader, device, best_shift, n=500):
     indices = torch.as_tensor(indices)
     pseudo_softmaxes = torch.as_tensor(pseudo_softmaxes)
     pseudo_softmaxes = pseudo_softmaxes[torch.argsort(indices)]
+    elapsed = time.time() - start_time
+    print(
+        "PSEUDO_LABEL_DONE|"
+        f"timestamp={_timestamp()}|"
+        f"best_shift={best_shift}|"
+        f"batches={max_batches}|"
+        f"samples={len(indices)}|"
+        f"elapsed={_format_elapsed_seconds(elapsed)}|"
+        f"seconds={elapsed:.3f}",
+        flush=True,
+    )
 
     return pseudo_softmaxes

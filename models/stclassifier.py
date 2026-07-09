@@ -67,8 +67,11 @@ class PseLTae(nn.Module):
            Extra-features : Batch_size x Sequence length x Number of features
         """
         spatial_feats = self.spatial_encoder(pixels, mask, extra)
-        temporal_feats = self.temporal_encoder(spatial_feats, positions)
-        logits = self.decoder(temporal_feats)
+        logits, temporal_feats = self.forward_from_temporal_features(
+            spatial_feats,
+            positions,
+            return_feats=True,
+        )
         if return_feats and return_temporal_features:
             return logits, temporal_feats, spatial_feats
         elif return_temporal_features:
@@ -77,6 +80,13 @@ class PseLTae(nn.Module):
             return logits, temporal_feats
         else:
             return logits
+
+    def forward_from_temporal_features(self, temporal_features, positions, return_feats=False):
+        temporal_feats = self.temporal_encoder(temporal_features, positions)
+        logits = self.decoder(temporal_feats)
+        if return_feats:
+            return logits, temporal_feats
+        return logits
 
     def param_ratio(self):
         total = get_ntrainparams(self)
@@ -153,8 +163,11 @@ class PseTae(nn.Module):
            Extra-features : Batch_size x Sequence length x Number of features
         """
         spatial_feats = self.spatial_encoder(pixels, mask, extra)
-        temporal_feats = self.temporal_encoder(spatial_feats, positions)
-        logits = self.decoder(temporal_feats)
+        logits, temporal_feats = self.forward_from_temporal_features(
+            spatial_feats,
+            positions,
+            return_feats=True,
+        )
         if return_feats and return_temporal_features:
             return logits, temporal_feats, spatial_feats
         elif return_temporal_features:
@@ -163,6 +176,13 @@ class PseTae(nn.Module):
             return logits, temporal_feats
         else:
             return logits
+
+    def forward_from_temporal_features(self, temporal_features, positions, return_feats=False):
+        temporal_feats = self.temporal_encoder(temporal_features, positions)
+        logits = self.decoder(temporal_feats)
+        if return_feats:
+            return logits, temporal_feats
+        return logits
 
     def param_ratio(self):
         total = get_ntrainparams(self)
@@ -228,8 +248,11 @@ class PseGru(nn.Module):
            Extra-features : Batch_size x Sequence length x Number of features
         """
         spatial_feats = self.spatial_encoder(pixels, mask, extra)
-        temporal_feats = self.temporal_encoder(spatial_feats, positions)
-        logits = self.decoder(temporal_feats)
+        logits, temporal_feats = self.forward_from_temporal_features(
+            spatial_feats,
+            positions,
+            return_feats=True,
+        )
         if return_feats and return_temporal_features:
             return logits, temporal_feats, spatial_feats
         elif return_temporal_features:
@@ -238,6 +261,13 @@ class PseGru(nn.Module):
             return logits, temporal_feats
         else:
             return logits
+
+    def forward_from_temporal_features(self, temporal_features, positions, return_feats=False):
+        temporal_feats = self.temporal_encoder(temporal_features, positions)
+        logits = self.decoder(temporal_feats)
+        if return_feats:
+            return logits, temporal_feats
+        return logits
 
     def param_ratio(self):
         total = get_ntrainparams(self)
@@ -308,8 +338,11 @@ class PseTempCNN(nn.Module):
            Extra-features : Batch_size x Sequence length x Number of features
         """
         spatial_feats = self.spatial_encoder(pixels, mask, extra)
-        temporal_feats = self.temporal_encoder(spatial_feats, positions)
-        logits = self.decoder(temporal_feats)
+        logits, temporal_feats = self.forward_from_temporal_features(
+            spatial_feats,
+            positions,
+            return_feats=True,
+        )
         if return_feats and return_temporal_features:
             return logits, temporal_feats, spatial_feats
         elif return_temporal_features:
@@ -318,6 +351,13 @@ class PseTempCNN(nn.Module):
             return logits, temporal_feats
         else:
             return logits
+
+    def forward_from_temporal_features(self, temporal_features, positions, return_feats=False):
+        temporal_feats = self.temporal_encoder(temporal_features, positions)
+        logits = self.decoder(temporal_feats)
+        if return_feats:
+            return logits, temporal_feats
+        return logits
 
     def param_ratio(self):
         total = get_ntrainparams(self)

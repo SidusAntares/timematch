@@ -21,6 +21,7 @@ class SoftStageAligner:
         top_m: int = 2,
         time_gap_weight: float = 1.0,
         duration_gap_weight: float = 0.25,
+        feature_weight: float = 1.0,
         eps: float = 1e-6,
     ) -> None:
         if temperature <= 0:
@@ -31,6 +32,7 @@ class SoftStageAligner:
         self.top_m = int(top_m)
         self.time_gap_weight = float(time_gap_weight)
         self.duration_gap_weight = float(duration_gap_weight)
+        self.feature_weight = float(feature_weight)
         self.eps = float(eps)
 
     def __call__(
@@ -65,45 +67,56 @@ class SoftStageAligner:
         pseudo_mask = pseudo_mask.to(target_stage_feats.device).bool()
         global_shift = _expand_global_shift(global_shift, batch, target_stage_feats.device, target_stage_feats.dtype)
 
-        top_m = min(self.top_m, source_feats_all.shape[1])
-        weights = target_stage_feats.new_zeros(batch, kmax, top_m)
-        source_indices = torch.zeros(batch, kmax, top_m, device=target_stage_feats.device, dtype=torch.long)
-        expected_centers = target_stage_feats.new_zeros(batch, kmax)
-        valid_mask = torch.zeros(batch, kmax, device=target_stage_feats.device, dtype=torch.bool)
+        class_count = source_feats_all.shape[0]
+        source_k = source_feats_all.shape[1]
+        top_m = min(self.top_m, source_k)
+        safe_labels = pseudo_labels.clamp(min=0, max=class_count - 1)
+        label_in_range = (pseudo_labels >= 0) & (pseudo_labels < class_count)
+        src_feats = source_feats_all[safe_labels]
+        src_centers = source_centers_all[safe_labels]
+        src_durations = source_durations_all[safe_labels]
+        src_mask = source_mask_all[safe_labels]
 
-        for b in range(batch):
-            if not pseudo_mask[b]:
-                continue
-            cls = int(pseudo_labels[b].item())
-            if cls < 0 or cls >= source_feats_all.shape[0]:
-                continue
-            source_valid = source_mask_all[cls]
-            if not bool(source_valid.any().item()):
-                continue
-            source_feats = source_feats_all[cls]
-            source_centers = source_centers_all[cls]
-            source_durations = source_durations_all[cls]
+        target_unit = F.normalize(target_stage_feats, dim=-1, eps=self.eps)
+        src_unit = F.normalize(src_feats, dim=-1, eps=self.eps)
+        feature_score = torch.einsum("bkd,bsd->bks", target_unit, src_unit)
 
-            for kt in range(kmax):
-                if not target_stage_mask[b, kt]:
-                    continue
-                score = self._score(
-                    target_stage_feats[b, kt],
-                    target_stage_centers[b, kt] + global_shift[b],
-                    target_stage_durations[b, kt],
-                    source_feats,
-                    source_centers,
-                    source_durations,
-                )
-                score = score.masked_fill(~source_valid, float("-inf"))
-                if not torch.isfinite(score).any():
-                    continue
-                values, indices = torch.topk(score, k=top_m, dim=0)
-                probs = torch.softmax(values / self.temperature, dim=0)
-                weights[b, kt, :top_m] = probs
-                source_indices[b, kt, :top_m] = indices
-                expected_centers[b, kt] = (probs * source_centers[indices]).sum()
-                valid_mask[b, kt] = True
+        src_centers_max = src_centers.masked_fill(~src_mask, -float("inf")).max(dim=1).values
+        src_centers_min = src_centers.masked_fill(~src_mask, float("inf")).min(dim=1).values
+        source_time_scale = (src_centers_max - src_centers_min)
+        source_time_scale = torch.where(torch.isfinite(source_time_scale), source_time_scale, torch.ones_like(source_time_scale))
+        source_time_scale = source_time_scale.clamp_min(1.0)
+        duration_sum = (src_durations * src_mask.float()).sum(dim=1)
+        duration_count = src_mask.float().sum(dim=1).clamp_min(1.0)
+        duration_scale = (duration_sum / duration_count).clamp_min(1.0)
+
+        shifted_target_centers = target_stage_centers + global_shift.unsqueeze(1)
+        time_penalty = (src_centers.unsqueeze(1) - shifted_target_centers.unsqueeze(2)).abs() / source_time_scale.view(batch, 1, 1)
+        duration_penalty = (src_durations.unsqueeze(1) - target_stage_durations.unsqueeze(2)).abs() / duration_scale.view(batch, 1, 1)
+        score = (
+            self.feature_weight * feature_score
+            - self.time_gap_weight * time_penalty
+            - self.duration_gap_weight * duration_penalty
+        )
+
+        valid_score_mask = (
+            target_stage_mask.unsqueeze(2)
+            & src_mask.unsqueeze(1)
+            & pseudo_mask.view(batch, 1, 1)
+            & label_in_range.view(batch, 1, 1)
+        )
+        score = score.masked_fill(~valid_score_mask, float("-inf"))
+        values, source_indices = torch.topk(score, k=top_m, dim=2)
+        finite = torch.isfinite(values)
+        safe_values = values.masked_fill(~finite, -1e9)
+        weights = torch.softmax(safe_values / self.temperature, dim=2)
+        weights = torch.where(finite, weights, torch.zeros_like(weights))
+        weight_sum = weights.sum(dim=2, keepdim=True).clamp_min(self.eps)
+        weights = weights / weight_sum
+        valid_mask = finite.any(dim=2)
+        gathered_centers = torch.gather(src_centers.unsqueeze(1).expand(-1, kmax, -1), dim=2, index=source_indices)
+        expected_centers = (weights * gathered_centers).sum(dim=2)
+        source_indices = source_indices.masked_fill(~finite, 0)
 
         logs = self._logs(weights, valid_mask, target_stage_mask, pseudo_mask)
         return {
@@ -136,7 +149,11 @@ class SoftStageAligner:
 
         time_penalty = (source_centers - shifted_target_center).abs() / time_scale
         duration_penalty = (source_durations - target_duration).abs() / duration_scale
-        return feature_score - self.time_gap_weight * time_penalty - self.duration_gap_weight * duration_penalty
+        return (
+            self.feature_weight * feature_score
+            - self.time_gap_weight * time_penalty
+            - self.duration_gap_weight * duration_penalty
+        )
 
     @staticmethod
     def _logs(
