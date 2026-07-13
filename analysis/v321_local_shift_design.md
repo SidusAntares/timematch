@@ -59,10 +59,10 @@ global_only == global_forward
 Stage 3d then tested safer residual local-shift variants:
 
 ```text
-raw
-zero_mean
-scaled_zero_mean
-gated_scaled_zero_mean
+residual_raw
+residual_zero_mean
+residual_scaled_zero_mean_alpha05
+residual_gated_scaled_zero_mean_alpha05_top065
 ```
 
 All residual variants failed to beat `global_only`:
@@ -83,5 +83,3 @@ negative boundary, not as the active v3 main method.
 
 The source reference, target partition, soft alignment, and local-position
 utilities remain useful diagnostic components.
-
-Status: archived as negative boundary; not an active method.

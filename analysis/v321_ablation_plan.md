@@ -9,7 +9,7 @@ Run only after local-shift training is implemented.
 | cleaned base TimeMatch | same-code clean reference |
 | cleaned smooth source + base TimeMatch | source anchor/reference effect only |
 | source reference + global_only | loads reference and logs partition/alignment but uses scalar shift positions |
-| source reference + residual local_shift | completed and stopped after Stage 3d |
+| source reference + residual local_shift | first active v3.2.1 local positions |
 
 ## Diagnostics
 
@@ -43,9 +43,9 @@ runtime is more than 1.5x base TimeMatch;
 DA F1 drops on most probe tasks while pseudo confidence rises.
 ```
 
-## Stage 3d Stop Decision
+## Stage 3d Stop Condition
 
-Stage 3d stop condition was met.
+Stage 3d met the stop condition for residual local shift.
 
 Results:
 
@@ -70,7 +70,6 @@ Decision:
 Do not proceed to full12 for v3.2.1 residual local shift.
 Do not tune more residual local-shift hyperparameters.
 Archive v3.2.1 residual local shift as a negative boundary experiment.
-Future experiments should return to cleaned-code source-side structure baselines.
 ```
 
 ## Stage 2 Scope
