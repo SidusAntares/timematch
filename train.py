@@ -824,6 +824,12 @@ if __name__ == '__main__':
         help="top-k shifts used only by topk_shift_ensemble_diagnostic",
     )
     timematch.add_argument(
+        "--timematch_shift_score_epsilon",
+        type=float,
+        default=1e-12,
+        help="epsilon used only inside TimeMatch shift-score logarithms",
+    )
+    timematch.add_argument(
         "--timematch_diagnostic_log_path",
         default="",
         type=str,

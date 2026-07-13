@@ -177,6 +177,12 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         "estimated_shift_t_to_s",
         "estimated_shift_s_to_t",
         "topk_shifts_json",
+        "shift_estimator",
+        "shift_score_epsilon",
+        "best_shift_score",
+        "second_shift_score",
+        "shift_score_margin",
+        "top5_shift_candidates_json",
         "is_score_top1",
         "am_score_top1",
         "is_top1_top2_margin",
@@ -215,6 +221,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             num_classes=config.num_classes,
             pseudo_threshold=config.pseudo_threshold,
             topk=getattr(config, "timematch_topk_shifts", 3),
+            shift_score_epsilon=getattr(config, "timematch_shift_score_epsilon", 1e-12),
         )
         target_to_source_shift = int(last_shift_details["best_shift"])
         target_to_source_topk_shifts = [int(x) for x in last_shift_details["topk_shifts"]]
@@ -288,6 +295,7 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                 num_classes=config.num_classes,
                 pseudo_threshold=config.pseudo_threshold,
                 topk=getattr(config, "timematch_topk_shifts", 3),
+                shift_score_epsilon=getattr(config, "timematch_shift_score_epsilon", 1e-12),
             )
             target_to_source_shift = int(last_shift_details["best_shift"])
             target_to_source_topk_shifts = [int(x) for x in last_shift_details["topk_shifts"]]
@@ -463,8 +471,33 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
         if last_shift_details is None:
             shift_diag = {}
         else:
-            best_idx = int(last_shift_details.get("best_shift_idx", 0))
+            estimator = str(config.shift_estimator).upper()
+            score_key = {
+                "IS": "is_scores",
+                "ENT": "entropy_scores",
+                "AM": "am_scores",
+                "ACC": "acc_scores",
+                "F1": "f1_scores",
+            }.get(estimator, "am_scores")
+            score_values = last_shift_details[score_key]
+            top_indices = [int(index) for index in last_shift_details.get("topk_indices", [])[:5]]
+            top_scores = [float(score_values[index]) for index in top_indices]
+            top_candidates = [
+                {
+                    "shift": int(last_shift_details["shifts"][index]),
+                    "score": float(score_values[index]),
+                }
+                for index in top_indices
+            ]
             shift_diag = {
+                "shift_estimator": estimator,
+                "shift_score_epsilon": float(getattr(config, "timematch_shift_score_epsilon", 1e-12)),
+                "best_shift_score": top_scores[0] if top_scores else "",
+                "second_shift_score": top_scores[1] if len(top_scores) > 1 else "",
+                "shift_score_margin": (
+                    abs(top_scores[0] - top_scores[1]) if len(top_scores) > 1 else ""
+                ),
+                "top5_shift_candidates_json": json.dumps(top_candidates, ensure_ascii=True),
                 "is_score_top1": float(last_shift_details["is_scores"][last_shift_details["best_is_idx"]]),
                 "am_score_top1": float(last_shift_details["am_scores"][last_shift_details["best_am_idx"]]),
                 "is_top1_top2_margin": float(last_shift_details.get("is_top1_top2_margin", 0.0)),
@@ -626,7 +659,18 @@ def collect_shift_softmaxes(model, target_loader, device, min_shift=-60, max_shi
     return shifts, shift_softmaxes, labels
 
 
-def score_shift_softmaxes(shifts, shift_softmaxes, labels, num_classes, class_distribution=None, pseudo_threshold=0.9):
+def score_shift_softmaxes(
+    shifts,
+    shift_softmaxes,
+    labels,
+    num_classes,
+    class_distribution=None,
+    pseudo_threshold=0.9,
+    shift_score_epsilon=1e-12,
+):
+    shift_score_epsilon = float(shift_score_epsilon)
+    if shift_score_epsilon <= 0.0:
+        raise ValueError("shift_score_epsilon must be positive")
     shift_predictions = np.argmax(shift_softmaxes, axis=2)
     p_yx = shift_softmaxes
     p_y = shift_softmaxes.mean(axis=0)
@@ -637,10 +681,20 @@ def score_shift_softmaxes(shifts, shift_softmaxes, labels, num_classes, class_di
         for predictions in np.moveaxis(shift_predictions, 0, 1)
     ])
     inception_score = np.mean(
-        np.sum(p_yx * (np.log(p_yx + 1e-12) - np.log(p_y[np.newaxis] + 1e-12)), axis=2),
+        np.sum(
+            p_yx
+            * (
+                np.log(p_yx + shift_score_epsilon)
+                - np.log(p_y[np.newaxis] + shift_score_epsilon)
+            ),
+            axis=2,
+        ),
         axis=0,
     )
-    entropy_score = -np.mean(np.sum(p_yx * np.log(p_yx + 1e-12), axis=2), axis=0)
+    entropy_score = -np.mean(
+        np.sum(p_yx * np.log(p_yx + shift_score_epsilon), axis=2),
+        axis=0,
+    )
 
     if class_distribution is None:
         class_distribution = estimate_class_distribution(labels, num_classes)
@@ -649,8 +703,18 @@ def score_shift_softmaxes(shifts, shift_softmaxes, labels, num_classes, class_di
         one_hot = np.zeros((shift_softmaxes.shape[0], shift_softmaxes.shape[-1]))
         one_hot[np.arange(one_hot.shape[0]), shift_predictions[:, i]] = 1
         one_hot_p_y[i] = one_hot.mean(axis=0)
-    kl_d = np.sum(class_distribution * (np.log(class_distribution + 1e-12) - np.log(one_hot_p_y + 1e-12)), axis=1)
-    am_score = kl_d + np.mean(np.sum(-p_yx * np.log(p_yx + 1e-12), axis=2), axis=0)
+    kl_d = np.sum(
+        class_distribution
+        * (
+            np.log(class_distribution + shift_score_epsilon)
+            - np.log(one_hot_p_y + shift_score_epsilon)
+        ),
+        axis=1,
+    )
+    am_score = kl_d + np.mean(
+        np.sum(-p_yx * np.log(p_yx + shift_score_epsilon), axis=2),
+        axis=0,
+    )
 
     best_is_idx = int(np.argsort(inception_score)[::-1][0])
     best_am_idx = int(np.argsort(am_score)[0])
@@ -721,6 +785,7 @@ def estimate_temporal_shift_details(
     num_classes=None,
     pseudo_threshold=0.9,
     topk=3,
+    shift_score_epsilon=1e-12,
 ):
     shifts, shift_softmaxes, labels = collect_shift_softmaxes(
         model,
@@ -739,6 +804,7 @@ def estimate_temporal_shift_details(
         num_classes,
         class_distribution=class_distribution,
         pseudo_threshold=pseudo_threshold,
+        shift_score_epsilon=shift_score_epsilon,
     )
 
     estimator = str(shift_estimator).upper()
