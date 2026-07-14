@@ -16,6 +16,10 @@ from torchvision import transforms
 
 from dataset import PixelSetData
 from evaluation import validation
+from methods.temporal_alignment.teacher_affine import (
+    load_teacher_affine_spec,
+    resolve_target_teacher_positions,
+)
 from transforms import (
     Normalize,
     RandomSamplePixels,
@@ -167,6 +171,57 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
     shift_policy = getattr(config, "timematch_shift_policy", "original_timematch")
     if shift_policy == "original":
         shift_policy = "original_timematch"
+    teacher_position_mode = getattr(
+        config, "timematch_target_teacher_position_mode", "global_only"
+    )
+    teacher_affine_spec = None
+    if teacher_position_mode == "affine":
+        if not config.estimate_shift:
+            raise ValueError("v3.2.2 affine teacher positions require shift estimation")
+        if shift_policy not in {"original_timematch", "fixed_initial_shift"}:
+            raise ValueError(
+                "v3.2.2 affine teacher positions require original_timematch or "
+                "fixed_initial_shift policy"
+            )
+        stretch_json = getattr(config, "timematch_affine_stretch_json", "")
+        affine_task = getattr(config, "timematch_affine_task", "")
+        affine_repository_branch = getattr(
+            config, "timematch_affine_repository_branch", ""
+        )
+        affine_repository_commit = getattr(
+            config, "timematch_affine_repository_commit", ""
+        )
+        if not all(
+            [
+                stretch_json,
+                affine_task,
+                affine_repository_branch,
+                affine_repository_commit,
+            ]
+        ):
+            raise ValueError(
+                "affine mode requires stretch JSON, task, repository branch, and "
+                "repository commit arguments"
+            )
+        teacher_affine_spec = load_teacher_affine_spec(
+            stretch_json,
+            checkpoint_path=f"{pretrained_path}/model.pt",
+            expected_task=affine_task,
+            expected_source=config.source,
+            expected_target=config.target,
+            expected_seed=config.seed,
+            expected_repository_branch=affine_repository_branch,
+            expected_repository_commit=affine_repository_commit,
+        )
+        print(
+            "V322_TEACHER_AFFINE|"
+            f"task={teacher_affine_spec.task}|"
+            f"stretch={teacher_affine_spec.stretch:.2f}|"
+            f"anchor={teacher_affine_spec.anchor:.6f}|"
+            f"expected_global_shift={teacher_affine_spec.global_shift}|"
+            f"repository_commit={teacher_affine_spec.repository_commit}",
+            flush=True,
+        )
     diagnostic_fields = [
         "task",
         "source",
@@ -224,6 +279,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             shift_score_epsilon=getattr(config, "timematch_shift_score_epsilon", 1e-12),
         )
         target_to_source_shift = int(last_shift_details["best_shift"])
+        if teacher_affine_spec is not None:
+            teacher_affine_spec.validate_global_shift(target_to_source_shift)
         target_to_source_topk_shifts = [int(x) for x in last_shift_details["topk_shifts"]]
         print(
             f"Initial {shift_estimator} shift {target_to_source_shift}; "
@@ -235,7 +292,14 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             max_shift = 0
 
         # Use estimated shift to get initial pseudo labels
-        pseudo_softmaxes = get_pseudo_labels(teacher, target_loader_no_aug, device, target_to_source_shift, n=None)
+        pseudo_softmaxes = get_pseudo_labels(
+            teacher,
+            target_loader_no_aug,
+            device,
+            target_to_source_shift,
+            n=None,
+            affine_spec=teacher_affine_spec,
+        )
         all_pseudo_labels = torch.max(pseudo_softmaxes, dim=1)[1]
     else:
         pseudo_softmaxes = get_pseudo_labels(teacher, target_loader_no_aug, device, 0, n=None)
@@ -318,6 +382,9 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             else:
                 source_to_target_shift = 0
 
+        if teacher_affine_spec is not None:
+            teacher_affine_spec.validate_global_shift(target_to_source_shift)
+
         student.train()
         teacher.eval()  # don't update BN or use dropout for teacher
 
@@ -329,6 +396,11 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
             pixels_t_weak, mask_t_weak, position_t_weak, extra_t_weak = to_cuda(sample_target_weak, device)
             with torch.no_grad():
                 teacher_logits = None
+                teacher_positions = resolve_target_teacher_positions(
+                    position_t_weak,
+                    target_to_source_shift,
+                    teacher_affine_spec,
+                )
                 if shift_policy == "topk_shift_ensemble_diagnostic":
                     teacher_preds = _forward_shift_ensemble(
                         teacher,
@@ -339,10 +411,14 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                         target_to_source_topk_shifts,
                     )
                 else:
+                    if teacher_affine_spec is not None:
+                        _check_temporal_index_range(
+                            teacher, teacher_positions, 0, "target teacher affine"
+                        )
                     teacher_logits = teacher.forward(
                         pixels_t_weak,
                         mask_t_weak,
-                        position_t_weak + target_to_source_shift,
+                        teacher_positions,
                         extra_t_weak,
                     )
                     teacher_preds = F.softmax(
@@ -400,8 +476,8 @@ def train_timematch(student, config, writer, val_loader, device, best_model_path
                     "pseudo_confidence_mean": float(pseudo_conf.detach().mean().item()),
                     "pseudo_mask_ratio": float(pseudo_mask.float().mean().item()),
                     "global_shift": target_to_source_shift,
-                    "target_positions_min_after_teacher_shift": float((position_t_weak + target_to_source_shift).min().item()),
-                    "target_positions_max_after_teacher_shift": float((position_t_weak + target_to_source_shift).max().item()),
+                    "target_positions_min_after_teacher_shift": float(teacher_positions.min().item()),
+                    "target_positions_max_after_teacher_shift": float(teacher_positions.max().item()),
                     "source_loss": float(loss_source.detach().item()),
                     "target_loss": float(target_loss_value),
                     "total_loss": float(loss.detach().item()),
@@ -982,7 +1058,7 @@ def estimate_temporal_shift(model, target_loader, device, class_distribution=Non
 
 
 @torch.no_grad()
-def get_pseudo_labels(model, data_loader, device, best_shift, n=500):
+def get_pseudo_labels(model, data_loader, device, best_shift, n=500, affine_spec=None):
     model.eval()
     pseudo_softmaxes = []
     indices = []
@@ -1001,7 +1077,14 @@ def get_pseudo_labels(model, data_loader, device, best_shift, n=500):
         indices.extend(sample["index"].tolist())
 
         pixels, valid_pixels, positions, extra = to_cuda(sample, device)
-        logits = model.forward(pixels, valid_pixels, positions + best_shift, extra)
+        teacher_positions = resolve_target_teacher_positions(
+            positions, best_shift, affine_spec
+        )
+        if affine_spec is not None:
+            _check_temporal_index_range(
+                model, teacher_positions, 0, "target teacher affine pseudo labels"
+            )
+        logits = model.forward(pixels, valid_pixels, teacher_positions, extra)
         probs = F.softmax(logits, dim=1).cpu()
         pseudo_softmaxes.extend(probs.tolist())
 

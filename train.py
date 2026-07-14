@@ -830,6 +830,37 @@ if __name__ == '__main__':
         help="epsilon used only inside TimeMatch shift-score logarithms",
     )
     timematch.add_argument(
+        "--timematch_target_teacher_position_mode",
+        type=str,
+        default="global_only",
+        choices=["global_only", "affine"],
+        help="target-teacher position path; affine requires a formal v3.2.2 stretch JSON",
+    )
+    timematch.add_argument(
+        "--timematch_affine_stretch_json",
+        default="",
+        type=str,
+        help="formal v3.2.2 stretch-estimation JSON used only in affine mode",
+    )
+    timematch.add_argument(
+        "--timematch_affine_task",
+        default="",
+        type=str,
+        help="task identity that must match the formal v3.2.2 stretch JSON",
+    )
+    timematch.add_argument(
+        "--timematch_affine_repository_branch",
+        default="",
+        type=str,
+        help="repository branch identity recorded by the formal stretch JSON",
+    )
+    timematch.add_argument(
+        "--timematch_affine_repository_commit",
+        default="",
+        type=str,
+        help="full repository commit recorded by the formal stretch JSON",
+    )
+    timematch.add_argument(
         "--timematch_diagnostic_log_path",
         default="",
         type=str,
@@ -971,4 +1002,3 @@ if __name__ == '__main__':
             f.write(json.dumps(vars(cfg), indent=4))
     print(cfg)
     main(cfg)
-
