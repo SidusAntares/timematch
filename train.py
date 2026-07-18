@@ -38,8 +38,8 @@ from competitors.mmd.train_mmd import train_mmd
 from competitors.alda.train_alda import train_alda
 from dataset import PixelSetData, count_pixelset_samples, create_evaluation_loaders, create_train_loader
 from evaluation import evaluation, validation
-from methods.source_structure.train_source_structure import train_supervised_source_phase_compactness
-from methods.local_shift.train_local_shift import train_timematch_local_shift
+from methods.source_structure.configs import add_source_structure_args, validate_source_structure_config
+from methods.source_structure.train_source_structure import train_source_structure
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
 from timematch import train_timematch
 from transforms import (
@@ -138,8 +138,6 @@ def main(config):
             writer = SummaryWriter(log_dir=f'{config.tensorboard_log_dir}_fold{fold_num}', purge_step=0)
             if config.method == 'timematch':
                 train_timematch(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
-            elif config.method == 'timematch_local_shift':
-                train_timematch_local_shift(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'dann':
                 train_dann(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'mmd':
@@ -148,8 +146,19 @@ def main(config):
                 train_jumbot(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'alda':
                 train_alda(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
-            elif config.method == 'sourcephasecompact':
-                train_supervised_source_phase_compactness(model, config, writer, splits, val_loader, device, best_model_path)
+            elif config.method == 'source_structure':
+                if config.source_structure_mode == 'off':
+                    train_supervised(model, config, writer, splits, val_loader, device, best_model_path)
+                else:
+                    train_source_structure(
+                        model,
+                        config,
+                        writer,
+                        splits,
+                        val_loader,
+                        device,
+                        best_model_path,
+                    )
             else:
                 train_supervised(model, config, writer, splits, val_loader, device, best_model_path)
 
@@ -430,318 +439,11 @@ if __name__ == '__main__':
     parser.add_argument('--with_extra', default=False, type=bool_flag, help='whether to input extra geometric features to the PSE')
     parser.add_argument('--tensorboard_log_dir', default='runs')
     parser.add_argument('--train_on_target', default=False, action='store_true', help='supervised training on target for upper bound comparison')
-    parser.add_argument(
-        '--source_checkpoint_epochs',
-        default='',
-        type=str,
-        help='comma-separated source-training epochs to save as diagnostic checkpoints, or all; empty disables',
-    )
-
     parser.add_argument('--with_shift_aug', default=False, type=bool_flag, help='whether to apply random temporal shift augmentation')
     parser.add_argument('--shift_aug_p', default=1.0, type=float, help='probability to apply temporal shift augmentation')
     parser.add_argument('--max_shift_aug', default=60, type=int, help='highest shift to apply for temporal shift augmentation')
-    parser.add_argument(
-        '--source_phase_partition_mode',
-        default='uniform',
-        choices=['uniform', 'doy_gap', 'semantic_doy_gap', 'semantic_agglomerative'],
-        help='phase partition mode for source phase compactness regularization',
-    )
-    parser.add_argument(
-        '--source_segment_partition_mode',
-        dest='source_segment_partition_mode',
-        default=None,
-        choices=['uniform', 'doy_gap', 'semantic_doy_gap', 'semantic_agglomerative'],
-        help='segment partition mode alias for v2.4.0 temporal-segment abstraction; defaults to source_phase_partition_mode when omitted',
-    )
-    parser.add_argument(
-        '--source_phase_count',
-        default=5,
-        type=int,
-        help='phase count used only when source_phase_partition_mode=uniform',
-    )
-    parser.add_argument(
-        '--source_segment_count',
-        dest='source_segment_count',
-        default=None,
-        type=int,
-        help='segment count alias for v2.4.0 temporal-segment abstraction; defaults to source_phase_count when omitted',
-    )
-    parser.add_argument(
-        '--source_phase_gap_threshold',
-        default=45,
-        type=int,
-        help='split phase candidates when consecutive source DOYs differ by more than this threshold',
-    )
-    parser.add_argument(
-        '--source_phase_min_points',
-        default=3,
-        type=int,
-        help='minimum number of source-domain time points required for a phase segment',
-    )
-    parser.add_argument(
-        '--source_phase_max_points',
-        default=8,
-        type=int,
-        help='maximum number of source-domain time points before a phase segment is split',
-    )
-    parser.add_argument(
-        '--source_phase_max_span',
-        default=120,
-        type=int,
-        help='maximum DOY span for one source phase before it is split',
-    )
-    parser.add_argument(
-        '--source_phase_min_sample_points',
-        default=2,
-        type=int,
-        help='minimum sampled time points required for one sample to contribute to a phase loss',
-    )
-    parser.add_argument(
-        '--source_segment_semantic_quantile',
-        default=0.75,
-        type=float,
-        help='quantile threshold for selecting semantic split candidates in semantic_doy_gap segment partition mode',
-    )
-    parser.add_argument(
-        '--source_segment_semantic_max_samples_per_class',
-        default=128,
-        type=int,
-        help='maximum number of source samples per class used to estimate semantic boundary scores',
-    )
-    parser.add_argument(
-        '--source_segment_semantic_curvature_trade_off',
-        default=0.5,
-        type=float,
-        help='trade-off weight for curvature when constructing semantic boundary scores in semantic_doy_gap mode',
-    )
-    parser.add_argument(
-        '--source_segment_semantic_energy_trade_off',
-        default=0.25,
-        type=float,
-        help='trade-off weight for local energy change when constructing semantic boundary scores in semantic_doy_gap mode',
-    )
-    parser.add_argument(
-        '--source_segment_semantic_similarity_trade_off',
-        default=0.25,
-        type=float,
-        help='trade-off weight for local cosine dissimilarity when constructing semantic boundary scores in semantic_doy_gap mode',
-    )
-    parser.add_argument(
-        '--source_segment_semantic_max_extra_cuts_per_base',
-        default=2,
-        type=int,
-        help='maximum number of semantic split candidates inserted inside each gap-based base segment',
-    )
-    parser.add_argument(
-        '--source_segment_semantic_merge_boundary_trade_off',
-        default=0.5,
-        type=float,
-        help='trade-off weight for preserving high-score boundaries during semantic agglomerative segmentation',
-    )
-    parser.add_argument(
-        '--source_segment_semantic_aggl_min_points',
-        default=3,
-        type=int,
-        help='minimum preferred segment length used when allocating semantic agglomerative segment capacity',
-    )
-    parser.add_argument(
-        '--source_segment_semantic_aggl_target_slack',
-        default=1,
-        type=int,
-        help='allow semantic agglomerative segmentation to end within target_count +/- this slack',
-    )
-    parser.add_argument(
-        '--source_segment_semantic_aggl_merge_cost_tolerance',
-        default=1.15,
-        type=float,
-        help='relative tolerance on initial merge costs when deciding whether semantic agglomerative merging should continue past the upper target count',
-    )
-    parser.add_argument(
-        '--source_segment_semantic_aggl_dynamics_trade_off',
-        default=0.35,
-        type=float,
-        help='trade-off weight for local dynamics similarity in semantic agglomerative merge cost',
-    )
-    parser.add_argument(
-        '--source_structure_loss_version',
-        default='compactness',
-        choices=['compactness', 'multi_component', 'profiled_components', 'trend_residual', 'trend_seasonal_residual', 'segment_trend_residual', 'segment_transition_residual', 'segment_transition_semantic', 'segment_boundary_window_residual', 'v275_raw_global_compactness', 'v276_raw_timepoint_compactness', 'v276_raw_smoothed_timepoint_compactness', 'v303_time_permuted_smoothed_timepoint_compactness', 'v276_raw_trimmed_global_compactness', 'v277_raw_lowfreq_dct_k2_compactness', 'v277_raw_lowfreq_dct_k4_compactness', 'v277_raw_lowfreq_dct_k8_compactness', 'v283a_umsc_dual_075_025_compactness', 'v283a_umsc_dual_050_050_compactness', 'v283b_umsc_triscale_060_020_020_compactness', 'v284_elastic_smoothed_timepoint_compactness'],
-        help='source-side structural loss version: compactness, legacy multi-component losses, v2.7.5 raw global encoder compactness, or v2.7.6 raw compactness variants',
-    )
-    parser.add_argument(
-        '--source_structure_feature_target',
-        default='auto',
-        choices=['auto', 'raw', 'none'],
-        help='feature stream used by source structure loss: auto/none disables TimeMatch-stage structure; raw shapes the encoder output',
-    )
-    parser.add_argument(
-        '--source_structure_detach_features',
-        default=False,
-        type=bool_flag,
-        help='detach features before source structure loss for gradient-path control experiments',
-    )
-    parser.add_argument(
-        '--source_structure_intra_trade_off',
-        default=1.0,
-        type=float,
-        help='component weight for intra-phase compactness in source structure loss',
-    )
-    parser.add_argument(
-        '--source_structure_lambda_schedule',
-        default='constant',
-        choices=['constant', 'linear_decay', 'warmup_then_constant', 'cosine_decay'],
-        help='source-stage schedule for source_structure_intra_trade_off; default constant preserves legacy behavior',
-    )
-    parser.add_argument(
-        '--source_structure_lambda_base',
-        default=-1.0,
-        type=float,
-        help='base source-structure lambda for scheduled source-stage training; negative falls back to source_structure_intra_trade_off',
-    )
-    parser.add_argument(
-        '--source_structure_lambda_final',
-        default=-1.0,
-        type=float,
-        help='final source-structure lambda for decay schedules; negative falls back to base lambda',
-    )
-    parser.add_argument(
-        '--source_structure_lambda_decay_start_epoch',
-        default=0,
-        type=int,
-        help='1-based epoch where linear decay starts; used by source_structure_lambda_schedule=linear_decay',
-    )
-    parser.add_argument(
-        '--source_structure_lambda_warmup_epochs',
-        default=0,
-        type=int,
-        help='number of initial source epochs with lambda=0 for warmup_then_constant schedule',
-    )
-    parser.add_argument(
-        '--source_structure_lambda_max_epoch',
-        default=0,
-        type=int,
-        help='max epoch used by source-structure lambda schedules; 0 falls back to total source epochs',
-    )
-    parser.add_argument(
-        '--source_structure_amplitude_trade_off',
-        default=0.25,
-        type=float,
-        help='component weight for amplitude-spread suppression in v2.3.2 multi-component source structure loss',
-    )
-    parser.add_argument(
-        '--source_structure_interphase_trade_off',
-        default=0.25,
-        type=float,
-        help='component weight for adjacent inter-phase smoothness in v2.3.2 multi-component source structure loss',
-    )
-    parser.add_argument(
-        '--source_structure_shape_trade_off',
-        default=0.15,
-        type=float,
-        help='shape-regularization weight in profiled source structure loss variants',
-    )
-    parser.add_argument(
-        '--source_structure_trend_trade_off',
-        default=0.05,
-        type=float,
-        help='trend-smoothness regularization weight in trend-residual source structure loss variants',
-    )
-    parser.add_argument(
-        '--source_structure_season_trade_off',
-        default=0.02,
-        type=float,
-        help='seasonal-pattern regularization weight in trend-seasonal-residual source structure loss variants',
-    )
-    parser.add_argument(
-        '--source_structure_segment_inter_trade_off',
-        default=0.02,
-        type=float,
-        help='adjacent inter-segment transition regularization weight in v2.4.1 segment-transition-residual source structure loss',
-    )
-    parser.add_argument(
-        '--source_structure_boundary_window_trade_off',
-        default=0.02,
-        type=float,
-        help='boundary-centered local window regularization weight in v2.4.3 boundary-window segment source structure loss',
-    )
-    parser.add_argument(
-        '--source_structure_boundary_window_size',
-        default=2,
-        type=int,
-        help='half-window size per side used for v2.4.3 boundary-centered local segment transition windows',
-    )
-    parser.add_argument(
-        '--source_structure_compact_distance',
-        default='mse',
-        choices=['mse', 'normalized_mse'],
-        help='distance used for intra compactness: mse keeps legacy Euclidean scale, normalized_mse applies MSE after L2-normalizing features',
-    )
-    parser.add_argument(
-        '--source_structure_time_smooth_kernel_size',
-        default=3,
-        type=int,
-        help='odd temporal smoothing kernel size for v276_raw_smoothed_timepoint_compactness; 1 disables smoothing',
-    )
-    parser.add_argument(
-        '--source_structure_time_permutation_seed',
-        default=0,
-        type=int,
-        help='fixed pseudo-time permutation seed for v303 time-permuted smoothed-timepoint compactness diagnostic',
-    )
-    parser.add_argument(
-        '--source_structure_elastic_radius',
-        default=0,
-        type=int,
-        help='local temporal matching radius for v284 elastic smoothed-timepoint compactness',
-    )
-    parser.add_argument(
-        '--source_structure_elastic_eta',
-        default=0.1,
-        type=float,
-        help='relative temporal-offset penalty weight for v284 elastic smoothed-timepoint compactness',
-    )
-    parser.add_argument(
-        '--source_structure_elastic_softmin_tau',
-        default=0.1,
-        type=float,
-        help='relative softmin temperature for v284 elastic smoothed-timepoint compactness',
-    )
-    parser.add_argument(
-        '--source_structure_elastic_detach_center',
-        default=False,
-        type=bool_flag,
-        help='detach class temporal prototype in v284 elastic smoothed-timepoint compactness',
-    )
-    parser.add_argument(
-        '--source_structure_norm_preserve_trade_off',
-        default=0.0,
-        type=float,
-        help='source-only penalty weight preserving per-sample feature norm around a detached source-batch/class mean within compactness groups',
-    )
-    parser.add_argument(
-        '--source_structure_norm_preserve_target',
-        default='min_mean',
-        choices=['min_mean', 'fixed', 'batch_mean', 'class_mean', 'detached_mean', 'none'],
-        help='source-only norm anchor: min_mean/fixed use source_structure_norm_preserve_value; batch_mean/class_mean only control within-batch norm spread',
-    )
-    parser.add_argument(
-        '--source_structure_norm_preserve_value',
-        default=1.0,
-        type=float,
-        help='fixed norm value or minimum mean norm used by source_structure_norm_preserve_target',
-    )
-    parser.add_argument(
-        '--source_structure_grad_diagnostic',
-        default=False,
-        type=bool_flag,
-        help='print source-stage gradient topology diagnostics for structure mechanism analysis',
-    )
-    parser.add_argument(
-        '--source_structure_grad_diag_steps',
-        default='1,10,50,100,200,500',
-        type=str,
-        help='comma-separated 1-based source-training global steps where gradient diagnostics are printed',
-    )
+    add_source_structure_args(parser)
+
     # Specific parameters for each training method
     subparsers = parser.add_subparsers(dest='method')
 
@@ -883,76 +585,15 @@ if __name__ == '__main__':
         help="fixed sampling seed for trajectory diagnostics so per-epoch drift is not pixel-sampling noise",
     )
 
-    # Experimental archived v3.2.1 local-shift diagnostic.
-    timematch_local_shift = subparsers.add_parser(
-        'timematch_local_shift',
-        description='experimental archived local-shift diagnostic; not active main method',
-    )
-    timematch_local_shift.add_argument('--weights', type=str, required=True, help='path to source trained model weights')
-    timematch_local_shift.add_argument('--lr', default=0.0001, type=float, help='Learning rate')
-    timematch_local_shift.add_argument("--pseudo_threshold", default=0.9, type=float, help='confidence threshold for assigning pseudo labels')
-    timematch_local_shift.add_argument("--ema_decay", default=0.9999, type=float, help='decay rate for mean teacher')
-    timematch_local_shift.add_argument("--trade_off", type=float, default=2.0, help='weight for unsupervised loss')
-    timematch_local_shift.add_argument("--estimate_shift", type=bool_flag, default=True, help='whether to account for temporal shift')
-    timematch_local_shift.add_argument('--epochs', default=20, type=int, help='Number of epochs per fold')
-    timematch_local_shift.add_argument("--steps_per_epoch", type=int, default=500, help='n steps per epoch')
-    timematch_local_shift.add_argument("--balance_source", type=bool_flag, default=True, help='class balanced batches for source')
-    timematch_local_shift.add_argument("--use_focal_loss", type=bool_flag, default=True, help='use focal loss or cross entropy')
-    timematch_local_shift.add_argument("--shift_source", type=bool_flag, default=True, help='whether to apply the global source-to-target shift to source batches')
-    timematch_local_shift.add_argument("--sample_size", type=int, default=100, help='number of batches to sample for estimating shift')
-    timematch_local_shift.add_argument("--max_temporal_shift", type=int, default=60, help='maximum temporal shift to consider')
-    timematch_local_shift.add_argument("--domain_specific_bn", type=bool_flag, default=True, help='kept for CLI compatibility')
-    timematch_local_shift.add_argument("--shift_estimator", type=str, default='AM', choices=['AM', 'IS', 'ACC', 'ENT', 'F1'])
-    timematch_local_shift.add_argument(
-        "--timematch_topk_shifts",
-        type=int,
-        default=3,
-        help="top-k shifts recorded by shift diagnostics",
-    )
-    timematch_local_shift.add_argument(
-        "--timematch_diagnostic_task",
-        default="",
-        type=str,
-        help="optional human-readable task id for diagnostic logs",
-    )
-    timematch_local_shift.add_argument('--run_validation', default=True, action='store_true', help='whether to run validation each epoch')
-    timematch_local_shift.add_argument("--output_student", type=bool_flag, default=True, help='output student or teacher')
-    timematch_local_shift.add_argument("--source_stage_reference_path", default="", type=str)
-    timematch_local_shift.add_argument("--local_shift_kmax", default=8, type=int)
-    timematch_local_shift.add_argument("--local_shift_min_stage_len", default=3, type=int)
-    timematch_local_shift.add_argument("--local_shift_topm", default=3, type=int)
-    timematch_local_shift.add_argument("--local_shift_change_threshold", default=None, type=float)
-    timematch_local_shift.add_argument("--local_shift_change_quantile", default=0.75, type=float)
-    timematch_local_shift.add_argument("--local_shift_nms_radius", default=2, type=int)
-    timematch_local_shift.add_argument("--local_shift_time_weight", default=1.0, type=float)
-    timematch_local_shift.add_argument("--local_shift_duration_weight", default=0.2, type=float)
-    timematch_local_shift.add_argument("--local_shift_feature_weight", default=0.5, type=float)
-    timematch_local_shift.add_argument("--local_shift_clip", default=20.0, type=float)
-    timematch_local_shift.add_argument("--local_shift_detach_correspondence", default=True, type=bool_flag)
-    timematch_local_shift.add_argument("--local_shift_compute_alignment_in_global_only", default=False, type=bool_flag)
-    timematch_local_shift.add_argument("--local_shift_log_path", default="", type=str)
-    timematch_local_shift.add_argument("--local_shift_equiv_debug_steps", default=0, type=int)
-    timematch_local_shift.add_argument("--local_shift_equiv_debug_path", default="", type=str)
-    timematch_local_shift.add_argument("--local_shift_debug", action="store_true")
-    timematch_local_shift.add_argument(
-        "--local_shift_mode",
-        default="residual",
-        choices=[
-            "base_equiv",
-            "global_forward",
-            "global_only",
-            "residual",
-            "residual_raw",
-            "residual_zero_mean",
-            "residual_scaled_zero_mean_alpha05",
-            "residual_gated_scaled_zero_mean_alpha05_top065",
-        ],
-        help="equivalence/profiling modes for v3.2.1 local shift",
-    )
-    # Source-only + source phase compactness regularization
-    sourcephasecompact = subparsers.add_parser('sourcephasecompact')
+    # Source-only raw-global research baseline.
+    source_structure = subparsers.add_parser('source_structure')
+
 
     cfg = parser.parse_args()
+    try:
+        validate_source_structure_config(cfg)
+    except ValueError as exc:
+        parser.error(str(exc))
 
 
     # Setup folders based on name
@@ -971,4 +612,3 @@ if __name__ == '__main__':
             f.write(json.dumps(vars(cfg), indent=4))
     print(cfg)
     main(cfg)
-

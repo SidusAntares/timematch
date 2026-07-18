@@ -1,3 +1,9 @@
+"""Historical source-structure experiment implementations.
+
+This module is retained for experiment reproducibility. It is not imported by
+the active plain/raw-global research baseline.
+"""
+
 import math
 
 import torch
