@@ -31,6 +31,7 @@ class PixelSetData(data.Dataset):
         indices=None,
         with_extra=False,
         closed_set=False,
+        ignore_labels=False,
     ):
         super(PixelSetData, self).__init__()
 
@@ -43,6 +44,7 @@ class PixelSetData(data.Dataset):
         self.transform = transform
         self.with_extra = with_extra
         self.closed_set = closed_set
+        self.ignore_labels = ignore_labels
 
         self.classes = classes
         self.class_to_idx = {cls: idx for idx, cls in enumerate(classes)}
@@ -102,26 +104,31 @@ class PixelSetData(data.Dataset):
             if indices is not None:
                 if not parcel_idx in indices:
                     continue
-            crop_code = parcel["label"]
-            if country == "austria":
-                crop_code = int(crop_code)
             parcel_path = os.path.join(data_folder, f"{parcel_idx}.zarr")
-            if crop_code not in code_to_class_name:
-                unknown_crop_codes.add(crop_code)
-            class_name = code_to_class_name.get(crop_code, "unknown")
-            if self.closed_set and class_name not in class_to_idx:
-                excluded_class_counts[class_name] += 1
-                continue
-
-            if class_name in class_to_idx:
-                class_index = class_to_idx[class_name]
+            if self.ignore_labels:
+                class_index = -1
+                parcel_metadata = dict(parcel)
+                parcel_metadata.pop("label", None)
             else:
-                class_index = class_to_idx["unknown"]
+                crop_code = parcel["label"]
+                if country == "austria":
+                    crop_code = int(crop_code)
+                if crop_code not in code_to_class_name:
+                    unknown_crop_codes.add(crop_code)
+                class_name = code_to_class_name.get(crop_code, "unknown")
+                if self.closed_set and class_name not in class_to_idx:
+                    excluded_class_counts[class_name] += 1
+                    continue
+                if class_name in class_to_idx:
+                    class_index = class_to_idx[class_name]
+                else:
+                    class_index = class_to_idx["unknown"]
+                parcel_metadata = parcel
             extra = parcel['geometric_features']
 
             item = (parcel_path, parcel_idx, class_index, extra)
             instances.append(item)
-            new_parcel_metadata.append(parcel)
+            new_parcel_metadata.append(parcel_metadata)
 
         for crop_code in unknown_crop_codes:
             print(
@@ -150,7 +157,8 @@ class PixelSetData(data.Dataset):
         return date_positions
 
 
-def count_pixelset_samples(data_root, dataset_name, classes, closed_set=False, indices=None):
+def count_pixelset_samples(data_root, dataset_name, classes, closed_set=False, indices=None,
+                           ignore_labels=False):
     folder = os.path.join(data_root, dataset_name)
     meta_folder = os.path.join(folder, "meta")
     country = dataset_name.split("/")[-3]
@@ -161,6 +169,9 @@ def count_pixelset_samples(data_root, dataset_name, classes, closed_set=False, i
 
     for parcel_idx, parcel in enumerate(metadata["parcels"]):
         if indices is not None and parcel_idx not in indices:
+            continue
+        if ignore_labels:
+            count += 1
             continue
         crop_code = parcel["label"]
         if country == "austria":

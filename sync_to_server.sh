@@ -3,12 +3,18 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_NAME="$(basename "$PROJECT_DIR")"
+REMOTE_PROJECT_NAME="${REMOTE_PROJECT_NAME:-timematch_cluda_pse}"
+
+if [[ ! "$REMOTE_PROJECT_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "[ERROR] REMOTE_PROJECT_NAME must be a single safe folder name" >&2
+    exit 2
+fi
 
 REMOTE_USER="${REMOTE_USER:-user}"
 REMOTE_HOST="${REMOTE_HOST:-10.150.10.38}"
 REMOTE_BASE_DIR="${REMOTE_BASE_DIR:-/data/user}"
-REMOTE_PROJECT_DIR="${REMOTE_BASE_DIR}/${PROJECT_NAME}"
-ARCHIVE_PATH="$(mktemp "/tmp/${PROJECT_NAME}_sync_XXXXXX.tar.gz")"
+REMOTE_PROJECT_DIR="${REMOTE_BASE_DIR}/${REMOTE_PROJECT_NAME}"
+ARCHIVE_PATH="$(mktemp "/tmp/${REMOTE_PROJECT_NAME}_sync_XXXXXX.tar.gz")"
 ARCHIVE_NAME="$(basename "$ARCHIVE_PATH")"
 
 echo "[INFO] Project directory: ${PROJECT_DIR}"
@@ -36,6 +42,7 @@ tar \
     --exclude="${PROJECT_NAME}/*.out" \
     --exclude="${PROJECT_NAME}/*.err" \
     --exclude="${PROJECT_NAME}/*.tmp" \
+    --transform="s,^${PROJECT_NAME},${REMOTE_PROJECT_NAME}," \
     -czf "$ARCHIVE_PATH" \
     "$PROJECT_NAME"
 
@@ -45,7 +52,6 @@ scp "$ARCHIVE_PATH" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_BASE_DIR}/"
 
 ssh "${REMOTE_USER}@${REMOTE_HOST}" "
     set -euo pipefail
-    mkdir -p '${REMOTE_PROJECT_DIR}'
     tar -xzf '${REMOTE_BASE_DIR}/${ARCHIVE_NAME}' -C '${REMOTE_BASE_DIR}'
     rm -f '${REMOTE_BASE_DIR}/${ARCHIVE_NAME}'
 "

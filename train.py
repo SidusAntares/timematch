@@ -40,6 +40,9 @@ from dataset import PixelSetData, count_pixelset_samples, create_evaluation_load
 from evaluation import evaluation, validation
 from methods.source_structure.configs import add_source_structure_args, validate_source_structure_config
 from methods.source_structure.train_source_structure import train_source_structure
+from methods.cluda.config import CLUDAConfig, add_cluda_args, add_cluda_model_args
+from methods.cluda.model import CLUDATCNClassifier
+from methods.cluda.trainer import train_cluda_full
 from models.stclassifier import PseLTae, PseTae, PseTempCNN, PseGru
 from timematch import train_timematch
 from transforms import (
@@ -83,6 +86,11 @@ def main(config):
     print('Using classes:', source_classes)
     cfg.classes = source_classes
     cfg.num_classes = len(source_classes)
+    if not config.eval:
+        # Persist resolved ordered classes so source-initialized methods can
+        # verify predictor semantics, not only tensor shapes.
+        with open(os.path.join(config.output_dir, 'train_config.json'), 'w') as file:
+            file.write(json.dumps(vars(config), indent=4))
 
     # Randomly assign parcels to train/val/test
     indices = {
@@ -92,6 +100,7 @@ def main(config):
             config.target,
             source_classes,
             closed_set=config.closed_set,
+            ignore_labels=config.method == 'cluda',
         ),
     }
     folds = create_train_val_test_folds([config.source, config.target], config.num_folds, indices, config.val_ratio, config.test_ratio)
@@ -108,6 +117,9 @@ def main(config):
 
         sample_pixels_val = config.sample_pixels_val or (config.eval and config.temporal_shift)
         val_loader, test_loader = create_evaluation_loaders(config.target, splits, config, sample_pixels_val)
+        # CLUDA baselines must never select checkpoints using target validation labels.
+        if config.model == 'cludatcn':
+            val_loader, _ = create_evaluation_loaders(config.source, splits, config, sample_pixels_val)
 
         if config.model == 'pseltae':
             model = PseLTae(input_dim=config.input_dim, num_classes=config.num_classes, with_extra=config.with_extra)
@@ -117,6 +129,19 @@ def main(config):
             model = PseTempCNN(input_dim=config.input_dim, num_classes=config.num_classes, with_extra=config.with_extra)
         elif config.model == 'psegru':
             model = PseGru(input_dim=config.input_dim, num_classes=config.num_classes, with_extra=config.with_extra)
+        elif config.model == 'cludatcn':
+            cluda_config = CLUDAConfig.from_namespace(config)
+            model = CLUDATCNClassifier(
+                input_dim=config.input_dim,
+                num_classes=config.num_classes,
+                channels=cluda_config.channels,
+                hidden_dim=cluda_config.hidden_dim,
+                kernel_size=cluda_config.kernel_size,
+                stride=cluda_config.stride,
+                dilation_factor=cluda_config.dilation_factor,
+                dropout=cluda_config.dropout,
+                max_temporal_shift=cluda_config.max_temporal_shift,
+            )
         else:
             raise NotImplementedError()
         
@@ -146,6 +171,8 @@ def main(config):
                 train_jumbot(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'alda':
                 train_alda(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
+            elif config.method == 'cluda':
+                train_cluda_full(model, config, writer, val_loader, device, best_model_path, fold_num, splits)
             elif config.method == 'source_structure':
                 if config.source_structure_mode == 'off':
                     train_supervised(model, config, writer, splits, val_loader, device, best_model_path)
@@ -434,7 +461,8 @@ if __name__ == '__main__':
     parser.add_argument('--focal_loss_gamma', default=1.0, type=float, help='gamma value for focal loss')
     parser.add_argument('--num_pixels', default=64, type=int, help='Number of pixels to sample from the input sample')
     parser.add_argument('--seq_length', default=30, type=int, help='Number of time steps to sample from the input sample')
-    parser.add_argument('--model', default='pseltae', choices=['psetae', 'pseltae', 'psetcnn', 'psegru'])
+    parser.add_argument('--model', default='pseltae', choices=['psetae', 'pseltae', 'psetcnn', 'psegru', 'cludatcn'])
+    add_cluda_model_args(parser)
     parser.add_argument('--input_dim', default=10, type=int, help='Number of channels of input sample')
     parser.add_argument('--with_extra', default=False, type=bool_flag, help='whether to input extra geometric features to the PSE')
     parser.add_argument('--tensorboard_log_dir', default='runs')
@@ -486,6 +514,10 @@ if __name__ == '__main__':
     alda.add_argument('--lr', default=0.001, type=float, help='Learning rate')
     alda.add_argument("--trade_off", default=1.0, type=float, help='weight of adversarial loss')
     alda.add_argument("--pseudo_threshold", default=0.7, type=float, help='confidence threshold for assigning pseudo labels')
+
+    # Full CLUDA. This is an independent trainer and never delegates to train_dann().
+    cluda = subparsers.add_parser('cluda')
+    add_cluda_args(cluda)
 
 
     # TimeMatch
